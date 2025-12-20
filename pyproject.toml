@@ -154,6 +154,7 @@ max-public-methods = 30
 [tool.codespell]
 ignore-words-list = "chec,arrang,livetime"
 
+[tool.pytest.ini_options]
 minversion = "6.0"
 norecursedirs = [
   "build",
@@ -210,4 +211,3 @@ showcontent = true
 [tool.towncrier.fragment.doc]
 name = "Documentation"
 showcontent = true
-
