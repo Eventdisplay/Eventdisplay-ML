@@ -34,12 +34,15 @@ _logger = logging.getLogger(__name__)
 def load_and_flatten_data(input_files, n_tel, max_events):
     """Load and flatten ROOT data for the requested telescope multiplicity."""
     _logger.info(f"\n--- Loading and Flattening Data for n_tel = {n_tel} ---")
-    _logger.info(f"Max events to process: {max_events if max_events else 'All available'}")
+    _logger.info(
+        "Max events to process: "
+        f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
+    )
 
     branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_training_variables()]
 
     dfs = []
-    if max_events:
+    if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
     else:
         max_events_per_file = None
