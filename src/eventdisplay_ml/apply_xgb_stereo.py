@@ -278,6 +278,7 @@ def apply_models(df, models_or_dir, selection_mask=None):
         with the index of ``df``.
     pred_erec : numpy.ndarray
         Array of predicted Erec values for each event in the chunk, aligned
+        with the index of ``df``.
     """
     n_events = len(df)
     pred_xoff = np.full(n_events, np.nan, dtype=np.float32)
