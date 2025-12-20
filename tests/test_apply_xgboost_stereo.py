@@ -65,9 +65,7 @@ def test_apply_models_with_selection_mask(monkeypatch):
     # Selection: require telescopes 1,2,3 or len==4
     selection_mask = mod.filter_by_telescope_selection(df, [1, 2, 3])
 
-    # Monkeypatch model loading and existence checks
-    monkeypatch.setattr(mod.os.path, "exists", lambda p: True)
-
+    # Monkeypatch model loading
     # Always return a DummyModel; value differentiates by n_tel if desired
     def fake_load(path):
         if "ntel4" in path:
