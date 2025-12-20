@@ -82,18 +82,23 @@ def apply_image_selection(df, selected_indices):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    for var_name in xgb_all_training_variables():
+    def _pad_to_four(arr_like):
+        if isinstance(arr_like, (list, np.ndarray)):
+            arr = np.asarray(arr_like, dtype=np.float32)
+            pad = max(0, 4 - arr.shape[0])
+            if pad:
+                arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
+            return arr
+        return arr_like
+
+    pad_vars = [
+        *xgb_per_telescope_training_variables(),
+        "fpointing_dx",
+        "fpointing_dy",
+    ]
+    for var_name in pad_vars:
         if var_name in df.columns:
-            df[var_name] = df[var_name].apply(
-                lambda x: np.pad(
-                    np.array(x),
-                    (0, 4 - len(x)),
-                    mode="constant",
-                    constant_values=np.nan,
-                )
-                if isinstance(x, (list, np.ndarray))
-                else x
-            )
+            df[var_name] = df[var_name].apply(_pad_to_four)
 
     return df
 
