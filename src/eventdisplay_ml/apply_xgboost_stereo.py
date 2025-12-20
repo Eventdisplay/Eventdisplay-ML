@@ -14,7 +14,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import uproot
-from training_variables import xgb_training_variables
+from training_variables import xgb_all_training_variables as xgb_training_variables
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger("applyXGBoostforStereoAnalysis")
