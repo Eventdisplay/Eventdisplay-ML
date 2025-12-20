@@ -198,6 +198,8 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         df_flat[f"loss_dist{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         df_flat[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
         df_flat[f"size_{i}"] = np.log10(df_flat[f"size_{i}"] + 1e-6)  # avoid log(0)
+        df_flat[f"E_{i}"] = np.log10(df_flat[f"E_{i}"] + 1e-6)        # match training preprocessing
+        df_flat[f"ES_{i}"] = np.log10(df_flat[f"ES_{i}"] + 1e-6)      # match training preprocessing
         # pointing corrections
         df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
         df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
