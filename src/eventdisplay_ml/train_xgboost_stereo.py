@@ -1,6 +1,5 @@
 """
-Train XGBoost Multi-Target BDTs for Direction and Energy Reconstruction
-========================================================================
+Train XGBoost Multi-Target BDTs for direction and energy reconstruction.
 
 Uses x,y offsets calculated from intersection and dispBDT methods plus
 image parameters to train multi-target regression BDTs to predict x,y offsets.
@@ -8,12 +7,11 @@ image parameters to train multi-target regression BDTs to predict x,y offsets.
 Uses energy related values to estimate event energy.
 
 Separate BDTs are trained for 2, 3, and 4 telescope multiplicity events.
-
 """
 
 import argparse
 import logging
-import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -33,10 +31,7 @@ _logger = logging.getLogger("trainXGBoostforStereoAnalysis")
 
 
 def load_and_flatten_data(input_files, n_tel, max_events):
-    """
-    Reads the data from ROOT files, filters for the required multiplicity (n_tel),
-    and flattens the telescope-array features into a Pandas DataFrame.
-    """
+    """Load and flatten ROOT data for the requested telescope multiplicity."""
     _logger.info(f"\n--- Loading and Flattening Data for n_tel = {n_tel} ---")
     _logger.info(f"Max events to process: {max_events if max_events > 0 else 'All available'}")
 
@@ -44,7 +39,8 @@ def load_and_flatten_data(input_files, n_tel, max_events):
         "MCxoff",
         "MCyoff",
         "MCe0",
-    ] + [var for var in xgb_all_training_variables()]
+        *xgb_all_training_variables(),
+    ]
 
     dfs = []
     if max_events > 0:
@@ -83,9 +79,7 @@ def load_and_flatten_data(input_files, n_tel, max_events):
     # Compute weights (not used in training, but for monitoring)
     # - R (to reflect physical sky area)
     # - E (to balance energy distribution)
-    sample_weights = (
-        np.sqrt(data_tree["MCxoff"] ** 2 + data_tree["MCyoff"] ** 2)  # * data_tree["MCe0"]
-    )
+    sample_weights = np.sqrt(data_tree["MCxoff"] ** 2 + data_tree["MCyoff"] ** 2)
 
     df_flat = flatten_data_vectorized(data_tree, n_tel, xgb_per_telescope_training_variables())
 
@@ -111,8 +105,7 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         tel_list_matrix = np.array(df["DispTelList_T"].tolist())
 
     for var_name in training_variables:
-        # Convert the column of arrays to a 2D numpy matrix
-        # Shape: (n_events, max_n_tel)
+        # Data matrix has shape (n_events, max_n_tel)
         try:
             data_matrix = np.vstack(df[var_name].values)
         except ValueError:
@@ -169,7 +162,7 @@ def flatten_data_vectorized(df, n_tel, training_variables):
 
 def train(df, n_tel, output_dir, train_test_fraction):
     """
-    Trains a single XGBoost model for multi-target regression (Xoff, Yoff).
+    Train a single XGBoost model for multi-target regression (Xoff, Yoff).
 
     Parameters
     ----------
@@ -182,22 +175,22 @@ def train(df, n_tel, output_dir, train_test_fraction):
         _logger.warning(f"Skipping training for n_tel={n_tel} due to empty data.")
         return
 
-    # Features (X) and targets (Y)
-    X_cols = [col for col in df.columns if col not in ["MCxoff", "MCyoff", "MCe0", "sample_weight"]]
-    X = df[X_cols]
-    Y = df[["MCxoff", "MCyoff", "MCe0"]]
+    # Separate feature and target columns
+    x_cols = [col for col in df.columns if col not in ["MCxoff", "MCyoff", "MCe0", "sample_weight"]]
+    x_data = df[x_cols]
+    y_data = df[["MCxoff", "MCyoff", "MCe0"]]
 
-    _logger.info(f"Training variables ({len(X_cols)}): {X_cols}")
+    _logger.info(f"Training variables ({len(x_cols)}): {x_cols}")
 
-    X_train, X_test, Y_train, Y_test, W_train, _ = train_test_split(
-        X,
-        Y,
+    x_train, x_test, y_train, y_test, w_train, _ = train_test_split(
+        x_data,
+        y_data,
         df["sample_weight"],
         test_size=1.0 - train_test_fraction,
         random_state=None,
     )
 
-    _logger.info(f"n_tel={n_tel}: Training events: {len(X_train)}, Testing events: {len(X_test)}")
+    _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
 
     # Parse TMVA options (simplified mapping to XGBoost parameters)
     # The default TMVA string is:
@@ -211,68 +204,52 @@ def train(df, n_tel, output_dir, train_test_fraction):
         "max_depth": 5,
         "min_child_weight": 1.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
         "objective": "reg:squarederror",
-        # https://xgboosting.com/configure-xgboost-regpseudohubererror-objective/
-        # "objective": "reg:pseudohubererror",
         "n_jobs": 4,
         "random_state": None,
         "tree_method": "hist",
         "subsample": 0.7,  # Default sensible value
         "colsample_bytree": 0.7,  # Default sensible value
     }
-    rf_params = {
-        "n_estimators": 1000,
-        "max_depth": None,
-        "max_features": "sqrt",
-        "min_samples_leaf": 5,
-        "n_jobs": 4,
-        "random_state": None,
-    }
-    # Configure models
-    # - xgboost default approach
     configs = {
         "xgboost": xgb.XGBRegressor(**xgb_params),
-        # "random_forest": RandomForestRegressor(**rf_params),
     }
     _logger.info(
-        f"Sample weights (not(!) used in training) - min: {W_train.min():.6f}, "
-        f"max: {W_train.max():.6f}, mean: {W_train.mean():.6f}"
+        f"Sample weights (not(!) used in training) - min: {w_train.min():.6f}, "
+        f"max: {w_train.max():.6f}, mean: {w_train.mean():.6f}"
     )
 
     for name, estimator in configs.items():
         _logger.info(f"Training with {name} for n_tel={n_tel}...")
-        _logger.info(f"parameters: {xgb_params if name == 'xgboost' else rf_params}")
+        _logger.info(f"parameters: {xgb_params}")
         model = MultiOutputRegressor(estimator)
-        model.fit(X_train, Y_train)
+        model.fit(x_train, y_train)
 
-        output_filename = os.path.join(output_dir, f"dispdir_bdt_ntel{n_tel}_{name}.joblib")
+        output_filename = Path(output_dir) / f"dispdir_bdt_ntel{n_tel}_{name}.joblib"
         dump(model, output_filename)
         _logger.info(f"{name} model saved to: {output_filename}")
 
-        evaluate_model(model, X_test, Y_test, df, X_cols, Y, name)
+        evaluate_model(model, x_test, y_test, df, x_cols, y_data, name)
 
 
-def evaluate_model(model, X_test, Y_test, df, X_cols, Y, name):
-    """
-    Evaluates the trained model on the test set and prints performance metrics.
-
-    """
-    score = model.score(X_test, Y_test)
+def evaluate_model(model, x_test, y_test, df, x_cols, y_data, name):
+    """Evaluate the trained model on the test set and log performance metrics."""
+    score = model.score(x_test, y_test)
     _logger.info(f"XGBoost Multi-Target R^2 Score (Testing Set): {score:.4f}")
-    Y_pred = model.predict(X_test)
-    mse_x = mean_squared_error(Y_test["MCxoff"], Y_pred[:, 0])
-    mse_y = mean_squared_error(Y_test["MCyoff"], Y_pred[:, 1])
+    y_pred = model.predict(x_test)
+    mse_x = mean_squared_error(y_test["MCxoff"], y_pred[:, 0])
+    mse_y = mean_squared_error(y_test["MCyoff"], y_pred[:, 1])
     _logger.info(f"{name} MSE (X_off): {mse_x:.4f}, MSE (Y_off): {mse_y:.4f}")
-    mae_x = mean_absolute_error(Y_test["MCxoff"], Y_pred[:, 0])
-    mae_y = mean_absolute_error(Y_test["MCyoff"], Y_pred[:, 1])
+    mae_x = mean_absolute_error(y_test["MCxoff"], y_pred[:, 0])
+    mae_y = mean_absolute_error(y_test["MCyoff"], y_pred[:, 1])
     _logger.info(f"{name} MAE (X_off): {mae_x:.4f}, MAE (Y_off): {mae_y:.4f}")
 
-    feature_importance(model, X_cols, Y.columns, name)
+    feature_importance(model, x_cols, y_data.columns, name)
     if name == "xgboost":
-        shap_feature_importance(model, X_test, Y.columns)
+        shap_feature_importance(model, x_test, y_data.columns)
 
     angular_resolution(
-        Y_pred,
-        Y_test,
+        y_pred,
+        y_test,
         df,
         percentiles=[68, 90, 95],
         log_e_min=-1,
@@ -282,18 +259,16 @@ def evaluate_model(model, X_test, Y_test, df, X_cols, Y, name):
     )
 
 
-def angular_resolution(Y_pred, Y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
-    """
-    Computes and logs the angular resolution based on predicted and true offsets.
-    """
+def angular_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
+    """Compute and log the angular resolution based on predicted and true offsets."""
     results_df = pd.DataFrame(
         {
-            "MCxoff_true": Y_test["MCxoff"].values,
-            "MCyoff_true": Y_test["MCyoff"].values,
-            "MCxoff_pred": Y_pred[:, 0],
-            "MCyoff_pred": Y_pred[:, 1],
-            "MCe0_pred": Y_pred[:, 2],
-            "MCe0": df.loc[Y_test.index, "MCe0"].values,
+            "MCxoff_true": y_test["MCxoff"].values,
+            "MCyoff_true": y_test["MCyoff"].values,
+            "MCxoff_pred": y_pred[:, 0],
+            "MCyoff_pred": y_pred[:, 1],
+            "MCe0_pred": y_pred[:, 2],
+            "MCe0": df.loc[y_test.index, "MCe0"].values,
         }
     )
 
@@ -311,7 +286,7 @@ def angular_resolution(Y_pred, Y_test, df, percentiles, log_e_min, log_e_max, n_
     results_df.dropna(subset=["E_bin"], inplace=True)
 
     g = results_df.groupby("E_bin", observed=False)
-    mean_logE_by_bin = g["LogE"].mean().round(3)
+    mean_loge_by_bin = g["LogE"].mean().round(3)
 
     def percentile_series(col, p):
         return g[col].quantile(p / 100)
@@ -319,8 +294,8 @@ def angular_resolution(Y_pred, Y_test, df, percentiles, log_e_min, log_e_max, n_
     for col, label in [("DeltaTheta", "Theta"), ("DeltaMCe0", "DeltaE")]:
         data = {f"{label}_{p}%": percentile_series(col, p).values for p in percentiles}
 
-        output_df = pd.DataFrame(data, index=mean_logE_by_bin.index)
-        output_df.insert(0, "Mean Log10(E)", mean_logE_by_bin.values)
+        output_df = pd.DataFrame(data, index=mean_loge_by_bin.index)
+        output_df.insert(0, "Mean Log10(E)", mean_loge_by_bin.values)
         output_df.index.name = "Log10(E) Bin Range"
         output_df = output_df.dropna()
 
@@ -328,32 +303,31 @@ def angular_resolution(Y_pred, Y_test, df, percentiles, log_e_min, log_e_max, n_
         _logger.info(
             f"Calculated over {n_bins} bins between Log10(E) = {log_e_min} and {log_e_max}"
         )
-        _logger.info("\n" + output_df.to_markdown(floatfmt=".4f"))
+        _logger.info(f"\n{output_df.to_markdown(floatfmt='.4f')}")
 
 
-def feature_importance(model, X_cols, target_names, name=None):
-    """
-    Prints feature importance from the trained XGBoost model.
-    """
+def feature_importance(model, x_cols, target_names, name=None):
+    """Log feature importance from the trained XGBoost model."""
     _logger.info("--- XGBoost Multi-Regression Feature Importance ---")
     for i, estimator in enumerate(model.estimators_):
         target = target_names[i]
         _logger.info(f"\n### {name} Importance for Target: **{target}**")
 
         importances = estimator.feature_importances_
-        importance_df = pd.DataFrame({"Feature": X_cols, "Importance": importances})
+        importance_df = pd.DataFrame({"Feature": x_cols, "Importance": importances})
 
         importance_df = importance_df.sort_values(by="Importance", ascending=False)
-        _logger.info("\n" + importance_df.head(15).to_markdown(index=False))
+        _logger.info(f"\n{importance_df.head(15).to_markdown(index=False)}")
 
 
-def shap_feature_importance(model, X, target_names, max_points=20000, n_top=25):
+def shap_feature_importance(model, x_data, target_names, max_points=20000, n_top=25):
     """
-    Uses XGBoost's builtin SHAP (pred_contribs=True).
-    Avoids SHAP.TreeExplainer compatibility issues with XGBoost ≥1.7.
+    Use XGBoost's builtin SHAP (pred_contribs=True).
+
+    Avoid SHAP.TreeExplainer compatibility issues with XGBoost ≥1.7.
     """
     # Subsample
-    X_sample = X.sample(n=min(len(X), max_points), random_state=0)
+    x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=0)
 
     # Loop through estimators (one per target)
     for i, est in enumerate(model.estimators_):
@@ -361,7 +335,7 @@ def shap_feature_importance(model, X, target_names, max_points=20000, n_top=25):
 
         # Builtin XGBoost SHAP values (n_samples, n_features+1)
         # Last column is the bias term → drop it
-        shap_vals = est.get_booster().predict(xgb.DMatrix(X_sample), pred_contribs=True)
+        shap_vals = est.get_booster().predict(xgb.DMatrix(x_sample), pred_contribs=True)
         shap_vals = shap_vals[:, :-1]  # drop bias column
 
         # Global importance: mean(|SHAP|)
@@ -370,10 +344,11 @@ def shap_feature_importance(model, X, target_names, max_points=20000, n_top=25):
 
         _logger.info(f"\n=== Builtin XGBoost SHAP Importance for {target} ===")
         for j in idx[:n_top]:
-            _logger.info(f"{X.columns[j]:25s}  {imp[j]:.6e}")
+            _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
 
 
 def main():
+    """Parse CLI arguments and run the training pipeline."""
     parser = argparse.ArgumentParser(
         description=("Train XGBoost Multi-Target BDTs for Stereo Analysis (Direction, Energy).")
     )
@@ -401,19 +376,20 @@ def main():
             f"Error: Input file list not found: {args.input_file_list}"
         ) from exc
 
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    output_dir = Path(args.output_dir)
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
 
     _logger.info("--- XGBoost Multi-Target Training ---")
     _logger.info(f"Input files: {len(input_files)}")
     _logger.info(f"Telescope multiplicity: {args.ntel}")
-    _logger.info(f"Output directory: {args.output_dir}")
+    _logger.info(f"Output directory: {output_dir}")
     _logger.info(
         f"Train vs test fraction: {args.train_test_fraction}, Max events: {args.max_events}"
     )
 
     df_flat = load_and_flatten_data(input_files, args.ntel, args.max_events)
-    train(df_flat, args.ntel, args.output_dir, args.train_test_fraction)
+    train(df_flat, args.ntel, output_dir, args.train_test_fraction)
     _logger.info("\nXGBoost model trained successfully.")
 
 

@@ -1,5 +1,5 @@
 """
-Evaluate XGBoost BDTs for stereo reconstruction (direction, energy)
+Evaluate XGBoost BDTs for stereo reconstruction (direction, energy).
 
 This script applies trained XGBoost models to predict Xoff and Yoff
 for each event in an input ROOT file. The output ROOT file contains
@@ -8,8 +8,7 @@ one row per input event, maintaining the original event order.
 
 import argparse
 import logging
-import os
-import time
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -32,7 +31,8 @@ def get_branch_list():
         "Yoff_intersect",
         "fpointing_dx",
         "fpointing_dy",
-    ] + [var for var in xgb_training_variables()]
+        *xgb_training_variables(),
+    ]
 
 
 def parse_image_selection(image_selection_str):
@@ -127,6 +127,7 @@ def filter_by_telescope_selection(df, selected_indices):
 def flatten_data_vectorized(df, n_tel, training_variables):
     """
     Vectorized flattening of telescope array columns.
+
     Significantly faster than row-by-row iteration.
     """
     flat_features = {}
@@ -161,8 +162,6 @@ def flatten_data_vectorized(df, n_tel, training_variables):
     tel_list_matrix = to_dense_array(df[tel_list_col])
 
     for var_name in training_variables:
-        # Convert the column of arrays to a 2D numpy matrix
-        # Shape: (n_events, max_n_tel)
         data_matrix = to_dense_array(df[var_name])
 
         for i in range(n_tel):
@@ -233,9 +232,10 @@ def load_models(model_dir):
         exist in ``model_dir`` are included.
     """
     models = {}
+    model_dir_path = Path(model_dir)
     for n_tel in range(2, 5):
-        model_filename = os.path.join(model_dir, f"dispdir_bdt_ntel{n_tel}_xgboost.joblib")
-        if os.path.exists(model_filename):
+        model_filename = model_dir_path / f"dispdir_bdt_ntel{n_tel}_xgboost.joblib"
+        if model_filename.exists():
             _logger.info(f"Loading model: {model_filename}")
             models[n_tel] = joblib.load(model_filename)
         else:
@@ -292,7 +292,8 @@ def apply_models(df, models_or_dir, selection_mask=None):
 
         _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
 
-        training_vars_with_pointing = xgb_training_variables() + [
+        training_vars_with_pointing = [
+            *xgb_training_variables(),
             "fpointing_dx",
             "fpointing_dy",
         ]
@@ -304,10 +305,10 @@ def apply_models(df, models_or_dir, selection_mask=None):
             excluded_columns.append(f"fpointing_dy_{n}")
 
         feature_cols = [col for col in df_flat.columns if col not in excluded_columns]
-        X = df_flat[feature_cols]
+        x_features = df_flat[feature_cols]
 
         model = models[n_tel]
-        predictions = model.predict(X)
+        predictions = model.predict(x_features)
 
         for i, idx in enumerate(group_df.index):
             pred_xoff[idx] = predictions[i, 0]
@@ -329,8 +330,7 @@ def process_file_chunked(
     chunk_size=500000,
 ):
     """
-    Stream events from an input ROOT file in chunks, apply XGBoost models,
-    and write direction predictions to an output ROOT file.
+    Stream events from an input ROOT file in chunks, apply XGBoost models, write events.
 
     Parameters
     ----------
@@ -413,6 +413,7 @@ def process_file_chunked(
 
 
 def main():
+    """Parse CLI arguments and run inference on an input ROOT file."""
     parser = argparse.ArgumentParser(
         description=("Apply XGBoost Multi-Target BDTs for Stereo Reconstruction")
     )
@@ -459,7 +460,6 @@ def main():
     )
     args = parser.parse_args()
 
-    start_time = time.time()
     _logger.info("--- XGBoost Multi-Target Stereo Analysis Evaluation ---")
     _logger.info(f"Input file: {args.input_file}")
     _logger.info(f"Model directory: {args.model_dir}")
@@ -475,9 +475,6 @@ def main():
         max_events=args.max_events,
         chunk_size=args.chunk_size,
     )
-
-    elapsed_time = time.time() - start_time
-    _logger.info(f"Processing complete. Total time: {elapsed_time:.2f} seconds")
 
 
 if __name__ == "__main__":
