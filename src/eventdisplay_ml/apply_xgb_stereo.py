@@ -14,8 +14,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import uproot
-
-from .training_variables import xgb_training_variables
+from training_variables import xgb_training_variables
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger("applyXGBoostforStereoAnalysis")
@@ -152,6 +151,8 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         Handles uproot's awkward-style variable-length arrays from ROOT files
         by converting to plain Python lists first to avoid per-element iteration overhead.
         """
+        # Convert to a plain Python list first to avoid per-element iteration overhead
+        # when dealing with uproot's awkward-style variable-length arrays
         arrays = col.tolist() if hasattr(col, "tolist") else list(col)
         try:
             return np.vstack(arrays)
@@ -199,8 +200,6 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         df_flat[f"loss_dist{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         df_flat[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
         df_flat[f"size_{i}"] = np.log10(df_flat[f"size_{i}"] + 1e-6)  # avoid log(0)
-        df_flat[f"E_{i}"] = np.log10(df_flat[f"E_{i}"] + 1e-6)  # match training preprocessing
-        df_flat[f"ES_{i}"] = np.log10(df_flat[f"ES_{i}"] + 1e-6)  # match training preprocessing
         # pointing corrections
         df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
         df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
@@ -212,10 +211,6 @@ def flatten_data_vectorized(df, n_tel, training_variables):
     df_flat["Diff_Xoff"] = (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32)
     df_flat["Diff_Yoff"] = (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32)
 
-    # Array-level features used during training
-    df_flat["Erec"] = df["Erec"].astype(np.float32)
-    df_flat["ErecS"] = df["ErecS"].astype(np.float32)
-    df_flat["EmissionHeight"] = df["EmissionHeight"].astype(np.float32)
     return df_flat
 
 
