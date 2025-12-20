@@ -15,25 +15,13 @@ import numpy as np
 import pandas as pd
 import uproot
 
-from eventdisplay_ml.training_variables import xgb_training_variables
+from eventdisplay_ml.training_variables import (
+    xgb_all_training_variables,
+    xgb_per_telescope_training_variables,
+)
 
 logging.basicConfig(level=logging.INFO)
-_logger = logging.getLogger("applyXGBoostforStereoAnalysis")
-
-
-def get_branch_list():
-    """Branches required for inference."""
-    return [
-        "DispNImages",
-        "DispTelList_T",
-        "Xoff",
-        "Yoff",
-        "Xoff_intersect",
-        "Yoff_intersect",
-        "fpointing_dx",
-        "fpointing_dy",
-        *xgb_training_variables(),
-    ]
+_logger = logging.getLogger(__name__)
 
 
 def parse_image_selection(image_selection_str):
@@ -94,7 +82,7 @@ def apply_image_selection(df, selected_indices):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    for var_name in xgb_training_variables():
+    for var_name in xgb_all_training_variables():
         if var_name in df.columns:
             df[var_name] = df[var_name].apply(
                 lambda x: np.pad(
@@ -191,28 +179,40 @@ def flatten_data_vectorized(df, n_tel, training_variables):
     df_flat = pd.DataFrame(flat_features, index=df.index)
 
     # Ensure all columns are float type (uproot may load as awkward arrays)
-    for col in df_flat.columns:
-        df_flat[col] = df_flat[col].astype(np.float32)
+    df_flat = df_flat.astype(np.float32)
 
+    # Compute derived features while avoiding duplicate column names
+    new_cols = {}
     for i in range(n_tel):
-        df_flat[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
-        df_flat[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
-        df_flat[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
-        df_flat[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        df_flat[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+        new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
+        new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
+        new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
+        new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+
+        # In-place updates for existing base columns to avoid duplicates
         df_flat[f"size_{i}"] = np.log10(df_flat[f"size_{i}"] + 1e-6)  # avoid log(0)
-        # pointing corrections
         df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
         df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
 
-    df_flat["Xoff_weighted_bdt"] = df["Xoff"].astype(np.float32)
-    df_flat["Yoff_weighted_bdt"] = df["Yoff"].astype(np.float32)
-    df_flat["Xoff_intersect"] = df["Xoff_intersect"].astype(np.float32)
-    df_flat["Yoff_intersect"] = df["Yoff_intersect"].astype(np.float32)
-    df_flat["Diff_Xoff"] = (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32)
-    df_flat["Diff_Yoff"] = (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32)
+    df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
-    return df_flat
+    # Add per-event scalar features in a single batch
+    extra_cols = pd.DataFrame(
+        {
+            "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
+            "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
+            "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
+            "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
+            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
+            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
+            "Erec": df["Erec"].astype(np.float32),
+            "ErecS": df["ErecS"].astype(np.float32),
+            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+        },
+        index=df.index,
+    )
+    return pd.concat([df_flat, extra_cols], axis=1)
 
 
 def load_models(model_dir):
@@ -269,11 +269,13 @@ def apply_models(df, models_or_dir, selection_mask=None):
     pred_yoff : numpy.ndarray
         Array of predicted Yoff values for each event in the chunk, aligned
         with the index of ``df``.
+    pred_erec : numpy.ndarray
+        Array of predicted Erec values for each event in the chunk, aligned
     """
     n_events = len(df)
     pred_xoff = np.full(n_events, np.nan, dtype=np.float32)
     pred_yoff = np.full(n_events, np.nan, dtype=np.float32)
-
+    pred_erec = np.full(n_events, np.nan, dtype=np.float32)
     if isinstance(models_or_dir, str):
         models = load_models(models_or_dir)
     else:
@@ -294,7 +296,7 @@ def apply_models(df, models_or_dir, selection_mask=None):
         _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
 
         training_vars_with_pointing = [
-            *xgb_training_variables(),
+            *xgb_per_telescope_training_variables(),
             "fpointing_dx",
             "fpointing_dy",
         ]
@@ -314,12 +316,14 @@ def apply_models(df, models_or_dir, selection_mask=None):
         for i, idx in enumerate(group_df.index):
             pred_xoff[idx] = predictions[i, 0]
             pred_yoff[idx] = predictions[i, 1]
+            pred_erec[idx] = predictions[i, 2]
 
     if selection_mask is not None:
         pred_xoff = np.where(selection_mask, pred_xoff, -999.0)
         pred_yoff = np.where(selection_mask, pred_yoff, -999.0)
+        pred_erec = np.where(selection_mask, pred_erec, -999.0)
 
-    return pred_xoff, pred_yoff
+    return pred_xoff, pred_yoff, pred_erec
 
 
 def process_file_chunked(
@@ -342,8 +346,7 @@ def process_file_chunked(
         ``dispdir_bdt_ntel{n_tel}_xgboost.joblib`` for different telescope
         multiplicities.
     output_file : str
-        Path to the output ROOT file to create. The file will contain a
-        "StereoAnalysis" TTree with ``Dir_Xoff`` and ``Dir_Yoff`` branches.
+        Path to the output ROOT file to create.
     image_selection : str
         String specifying which telescope indices to select, passed to
         :func:`parse_image_selection` to obtain the corresponding indices
@@ -362,7 +365,7 @@ def process_file_chunked(
         return a value.
     """
     models = load_models(model_dir)
-    branch_list = get_branch_list()
+    branch_list = [*xgb_all_training_variables(), "fpointing_dx", "fpointing_dy"]
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")
@@ -372,7 +375,7 @@ def process_file_chunked(
     with uproot.recreate(output_file) as root_file:
         tree = root_file.mktree(
             "StereoAnalysis",
-            {"Dir_Xoff": np.float32, "Dir_Yoff": np.float32},
+            {"Dir_Xoff": np.float32, "Dir_Yoff": np.float32, "Dir_Erec": np.float32},
         )
 
         total_processed = 0
@@ -398,12 +401,13 @@ def process_file_chunked(
             # index out-of-bounds when indexing chunk-sized output arrays
             df_chunk = df_chunk.reset_index(drop=True)
 
-            pred_xoff, pred_yoff = apply_models(df_chunk, models)
+            pred_xoff, pred_yoff, pred_erec = apply_models(df_chunk, models)
 
             tree.extend(
                 {
                     "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
                     "Dir_Yoff": np.asarray(pred_yoff, dtype=np.float32),
+                    "Dir_Erec": np.asarray(pred_erec, dtype=np.float32),
                 }
             )
 
@@ -444,7 +448,7 @@ def main():
             "Optional telescope selection. Can be bit-coded (e.g., 14 for telescopes 1,2,3) "
             "or comma-separated indices (e.g., '1,2,3'). "
             "Keeps events with all selected telescopes or 4-telescope events. "
-            "Default is 15 (0b1111), which selects all 4 telescopes."
+            "Default is 15, which selects all 4 telescopes."
         ),
     )
     parser.add_argument(
@@ -465,8 +469,7 @@ def main():
     _logger.info(f"Input file: {args.input_file}")
     _logger.info(f"Model directory: {args.model_dir}")
     _logger.info(f"Output file: {args.output_file}")
-    if args.image_selection:
-        _logger.info(f"Image selection: {args.image_selection}")
+    _logger.info(f"Image selection: {args.image_selection}")
 
     process_file_chunked(
         input_file=args.input_file,

@@ -28,7 +28,7 @@ from eventdisplay_ml.training_variables import (
 )
 
 logging.basicConfig(level=logging.INFO)
-_logger = logging.getLogger("trainXGBoostforStereoAnalysis")
+_logger = logging.getLogger(__name__)
 
 
 def load_and_flatten_data(input_files, n_tel, max_events):
