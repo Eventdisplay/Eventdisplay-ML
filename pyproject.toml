@@ -36,7 +36,6 @@ dependencies = [
   "pandas",
   "scikit-learn",
   "scipy",
-  "shellcheck",
   "tabulate",
   "uproot",
   "xgboost",
@@ -45,6 +44,7 @@ optional-dependencies."dev" = [
   "pre-commit",
   "pylint",
   "ruff",
+  "shellcheck",
   "towncrier",
 ]
 optional-dependencies."tests" = [
@@ -58,8 +58,8 @@ optional-dependencies."tests" = [
   "pytest-xdist",
 ]
 urls."bug tracker" = "https://github.com/Eventdisplay/Eventdisplay-ML/issues"
-urls."documentation" = "https://github.com/Eventdisplay/Eventdisplay-ML/"
-urls."repository" = "https://github.com/Eventdisplay/Eventdisplay-ML/issues"
+urls."documentation" = "https://github.com/Eventdisplay/Eventdisplay-ML"
+urls."repository" = "https://github.com/Eventdisplay/Eventdisplay-ML"
 scripts.eventdisplay-ml-train-xgb-stereo-analysis = "eventdisplay_ml.train_xgb_stereo_analysis:main"
 
 [tool.setuptools]
