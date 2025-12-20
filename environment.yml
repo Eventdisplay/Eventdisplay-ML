@@ -1,0 +1,29 @@
+---
+name: eventdisplay_ml
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - awkward
+  - awkward-pandas
+  - joblib
+  - matplotlib
+  - numpy
+  - pandas
+  - pre-commit
+  - pytest
+  - pytest-cov
+  - pytest-mock
+  - scikit-learn
+  - scipy
+  - shellcheck
+  - tabulate
+  - towncrier
+  - uproot
+  - xgboost
+
+# cheatsheet
+# create: conda env create -f environment.yml
+# activate: conda activate eventdisplay_ml
+# update (conda/mamba): conda env update -f environment.yml --prune
+# update (micromamba): micromamba update -f environment.yml
