@@ -211,6 +211,10 @@ def flatten_data_vectorized(df, n_tel, training_variables):
     df_flat["Diff_Xoff"] = (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32)
     df_flat["Diff_Yoff"] = (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32)
 
+    # Array-level features used during training
+    df_flat["Erec"] = df["Erec"].astype(np.float32)
+    df_flat["ErecS"] = df["ErecS"].astype(np.float32)
+    df_flat["EmissionHeight"] = df["EmissionHeight"].astype(np.float32)
     return df_flat
 
 
