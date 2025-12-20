@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import uproot
 
-from .training_variables import xgb_training_variables
+from eventdisplay_ml.training_variables import xgb_training_variables
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger("applyXGBoostforStereoAnalysis")
@@ -198,7 +198,7 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         df_flat[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
         df_flat[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
         df_flat[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
-        df_flat[f"loss_dist{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        df_flat[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         df_flat[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
         df_flat[f"size_{i}"] = np.log10(df_flat[f"size_{i}"] + 1e-6)  # avoid log(0)
         # pointing corrections
