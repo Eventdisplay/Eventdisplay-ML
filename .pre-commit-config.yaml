@@ -1,4 +1,5 @@
 ---
+exclude: '^tests/'
 repos:
 # Ruff
 - repo: https://github.com/astral-sh/ruff-pre-commit
