@@ -151,8 +151,6 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         Handles uproot's awkward-style variable-length arrays from ROOT files
         by converting to plain Python lists first to avoid per-element iteration overhead.
         """
-        # Convert to a plain Python list first to avoid per-element iteration overhead
-        # when dealing with uproot's awkward-style variable-length arrays
         arrays = col.tolist() if hasattr(col, "tolist") else list(col)
         try:
             return np.vstack(arrays)
