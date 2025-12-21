@@ -28,23 +28,21 @@ from eventdisplay_ml.training_variables import (
 )
 
 logging.basicConfig(level=logging.INFO)
-_logger = logging.getLogger("trainXGBoostforStereoAnalysis")
+_logger = logging.getLogger(__name__)
 
 
 def load_and_flatten_data(input_files, n_tel, max_events):
     """Load and flatten ROOT data for the requested telescope multiplicity."""
     _logger.info(f"\n--- Loading and Flattening Data for n_tel = {n_tel} ---")
-    _logger.info(f"Max events to process: {max_events if max_events > 0 else 'All available'}")
+    _logger.info(
+        "Max events to process: "
+        f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
+    )
 
-    branch_list = [
-        "MCxoff",
-        "MCyoff",
-        "MCe0",
-        *xgb_all_training_variables(),
-    ]
+    branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_training_variables()]
 
     dfs = []
-    if max_events > 0:
+    if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
     else:
         max_events_per_file = None
@@ -79,15 +77,13 @@ def load_and_flatten_data(input_files, n_tel, max_events):
 
     # Compute weights (not used in training, but for monitoring)
     # - R (to reflect physical sky area)
-    # - E (to balance energy distribution)
-    sample_weights = np.sqrt(data_tree["MCxoff"] ** 2 + data_tree["MCyoff"] ** 2)
+    sample_weights = np.hypot(data_tree["MCxoff"], data_tree["MCyoff"])
 
     df_flat = flatten_data_vectorized(data_tree, n_tel, xgb_per_telescope_training_variables())
 
     df_flat["MCxoff"] = data_tree["MCxoff"]
     df_flat["MCyoff"] = data_tree["MCyoff"]
-    # Clamp energies to avoid log10 of non-positive values
-    df_flat["MCe0"] = np.log10(np.clip(data_tree["MCe0"], 1e-6, None))
+    df_flat["MCe0"] = np.log10(data_tree["MCe0"])
     df_flat["sample_weight"] = sample_weights
 
     df_flat.dropna(inplace=True)
@@ -248,7 +244,7 @@ def evaluate_model(model, x_test, y_test, df, x_cols, y_data, name):
     if name == "xgboost":
         shap_feature_importance(model, x_test, y_data.columns)
 
-    angular_resolution(
+    calculate_resolution(
         y_pred,
         y_test,
         df,
@@ -260,8 +256,8 @@ def evaluate_model(model, x_test, y_test, df, x_cols, y_data, name):
     )
 
 
-def angular_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
-    """Compute and log the angular resolution based on predicted and true offsets."""
+def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
+    """Compute angular and energy resolution based on predictions."""
     results_df = pd.DataFrame(
         {
             "MCxoff_true": y_test["MCxoff"].values,
@@ -322,20 +318,13 @@ def feature_importance(model, x_cols, target_names, name=None):
 
 
 def shap_feature_importance(model, x_data, target_names, max_points=20000, n_top=25):
-    """
-    Use XGBoost's builtin SHAP (pred_contribs=True).
-
-    Avoid SHAP.TreeExplainer compatibility issues with XGBoost ≥1.7.
-    """
-    # Subsample
+    """Use XGBoost's builtin SHAP."""
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=0)
-
-    # Loop through estimators (one per target)
     for i, est in enumerate(model.estimators_):
         target = target_names[i]
 
         # Builtin XGBoost SHAP values (n_samples, n_features+1)
-        # Last column is the bias term → drop it
+        # Last column is the bias term: drop it
         shap_vals = est.get_booster().predict(xgb.DMatrix(x_sample), pred_contribs=True)
         shap_vals = shap_vals[:, :-1]  # drop bias column
 
@@ -360,6 +349,7 @@ def main():
         "--train_test_fraction",
         type=float,
         help="Fraction of data for training (e.g., 0.5).",
+        default=0.5,
     )
     parser.add_argument(
         "--max_events",
