@@ -20,7 +20,8 @@ def evaluate_model(model, x_test, y_test, df, x_cols, y_data, name):
     _logger.info(f"{name} MSE (X_off): {mse_x:.4f}, MSE (Y_off): {mse_y:.4f}")
     mae_x = mean_absolute_error(y_test["MCxoff"], y_pred[:, 0])
     mae_y = mean_absolute_error(y_test["MCyoff"], y_pred[:, 1])
-    _logger.info(f"{name} MAE (X_off): {mae_x:.4f}, MAE (Y_off): {mae_y:.4f}")
+    _logger.info(f"{name} MAE (X_off): {mae_x:.4f}")
+    _logger.info(f"{name} MAE (Y_off): {mae_y:.4f}")
 
     feature_importance(model, x_cols, y_data.columns, name)
     if name == "xgboost":
