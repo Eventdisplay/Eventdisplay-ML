@@ -132,7 +132,7 @@ addopts = [
   "--cov=eventdisplay_ml",
   "--cov-report=html",
   "--cov-report=term",
-  "--cov-report=term-missing"
+  "--cov-report=term-missing",
 ]
 
 testpaths = "tests/unit_tests/"
