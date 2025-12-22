@@ -194,6 +194,10 @@ def load_training_data(input_files, n_tel, max_events):
     branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_training_variables()]
 
     dfs = []
+
+    if not input_files:
+        _logger.error("No input files provided.")
+        return pd.DataFrame()
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
     else:
