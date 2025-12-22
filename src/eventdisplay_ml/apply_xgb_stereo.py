@@ -12,9 +12,9 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-import pandas as pd
 import uproot
 
+from eventdisplay_ml.data_processing import flatten_data_vectorized
 from eventdisplay_ml.training_variables import (
     xgb_all_training_variables,
     xgb_per_telescope_training_variables,
@@ -124,127 +124,6 @@ def apply_image_selection(df, selected_indices):
     return df
 
 
-def flatten_data_vectorized(df, n_tel, training_variables):
-    """
-    Vectorized flattening of telescope array columns.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Chunk of events to process. Must contain at least the columns
-        used in ``training_variables`` plus the pointing information
-        ("fpointing_dx", "fpointing_dy") and "DispNImages".
-    n_tel : int
-        Number of telescopes to flatten for.
-    training_variables : list[str]
-        List of training variable names to flatten.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Flattened DataFrame with per-telescope columns suffixed by
-        ``_{i}`` for telescope index ``i``, and additional derived
-        features.
-    """
-    flat_features = {}
-    tel_list_col = "DispTelList_T"
-
-    def to_padded_array(arrays):
-        """Convert list of variable-length arrays to fixed-size numpy array, padding with NaN."""
-        max_len = max(len(arr) if hasattr(arr, "__len__") else 1 for arr in arrays)
-        result = np.full((len(arrays), max_len), np.nan)
-        for i, arr in enumerate(arrays):
-            if hasattr(arr, "__len__"):
-                result[i, : len(arr)] = arr
-            else:
-                result[i, 0] = arr
-        return result
-
-    def to_dense_array(col):
-        """
-        Convert a column of variable-length telescope data to a dense 2D numpy array.
-
-        Handles uproot's awkward-style variable-length arrays from ROOT files
-        by converting to plain Python lists first to avoid per-element iteration overhead.
-
-        Parameters
-        ----------
-        col : pandas.Series
-            Column containing variable-length arrays.
-
-        Returns
-        -------
-        numpy.ndarray
-            2D numpy array with shape (n_events, max_telescopes), padded with NaN.
-        """
-        arrays = col.tolist() if hasattr(col, "tolist") else list(col)
-        try:
-            return np.vstack(arrays)
-        except (ValueError, TypeError):
-            return to_padded_array(arrays)
-
-    tel_list_matrix = to_dense_array(df[tel_list_col])
-
-    for var_name in training_variables:
-        data_matrix = to_dense_array(df[var_name])
-
-        for i in range(n_tel):
-            col_name = f"{var_name}_{i}"
-
-            if var_name.startswith("Disp"):
-                # Case 1: Simple index i
-                if i < data_matrix.shape[1]:
-                    flat_features[col_name] = data_matrix[:, i]
-                else:
-                    flat_features[col_name] = np.full(len(df), np.nan)
-            else:
-                # Case 2: Index lookup via DispTelList_T
-                target_tel_indices = tel_list_matrix[:, i].astype(int)
-
-                row_indices = np.arange(len(df))
-                valid_mask = (target_tel_indices >= 0) & (target_tel_indices < data_matrix.shape[1])
-                result = np.full(len(df), np.nan)
-                result[valid_mask] = data_matrix[
-                    row_indices[valid_mask], target_tel_indices[valid_mask]
-                ]
-
-                flat_features[col_name] = result
-
-    df_flat = pd.DataFrame(flat_features, index=df.index)
-    df_flat = df_flat.astype(np.float32)
-
-    new_cols = {}
-    for i in range(n_tel):
-        new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
-        new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
-        new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
-        new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
-
-        df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
-        df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
-        df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
-        df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
-
-    df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df.index)], axis=1)
-    extra_cols = pd.DataFrame(
-        {
-            "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
-            "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-            "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
-            "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
-            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
-            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
-            "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
-            "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
-            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-        },
-        index=df.index,
-    )
-    return pd.concat([df_flat, extra_cols], axis=1)
-
-
 def load_models(model_dir):
     """
     Load XGBoost models for different telescope multiplicities from a directory.
@@ -329,7 +208,13 @@ def apply_models(df, models_or_dir, selection_mask=None):
             "fpointing_dx",
             "fpointing_dy",
         ]
-        df_flat = flatten_data_vectorized(group_df, n_tel, training_vars_with_pointing)
+        df_flat = flatten_data_vectorized(
+            group_df,
+            n_tel,
+            training_vars_with_pointing,
+            apply_pointing_corrections=True,
+            dtype=np.float32,
+        )
 
         excluded_columns = ["MCxoff", "MCyoff", "MCe0"]
         for n in range(n_tel):
