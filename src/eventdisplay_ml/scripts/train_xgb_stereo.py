@@ -18,6 +18,7 @@ from joblib import dump
 from sklearn.model_selection import train_test_split
 from sklearn.multioutput import MultiOutputRegressor
 
+from eventdisplay_ml import utils
 from eventdisplay_ml.data_processing import load_training_data
 from eventdisplay_ml.evaluate import evaluate_model
 
@@ -107,13 +108,7 @@ def main():
 
     args = parser.parse_args()
 
-    try:
-        with open(args.input_file_list) as f:
-            input_files = [line.strip() for line in f if line.strip()]
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(
-            f"Error: Input file list not found: {args.input_file_list}"
-        ) from exc
+    input_files = utils.read_input_file_list(args.input_file_list)
 
     output_dir = Path(args.output_dir)
     if not output_dir.exists():

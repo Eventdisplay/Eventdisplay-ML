@@ -113,7 +113,11 @@ def shap_feature_importance(model, x_data, target_names, max_points=20000, n_top
         # Global importance: mean(|SHAP|)
         imp = np.abs(shap_vals).mean(axis=0)
         idx = np.argsort(imp)[::-1]
+        n_features = len(x_data.columns)
 
         _logger.info(f"\n=== Builtin XGBoost SHAP Importance for {target} ===")
         for j in idx[:n_top]:
+            # Guard against mismatches between SHAP array length and feature columns
+            if j >= n_features:
+                continue
             _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
