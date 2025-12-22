@@ -28,11 +28,17 @@ def parse_image_selection(image_selection_str):
     """
     Parse the image_selection parameter.
 
-    Can be either:
-    - Bit-coded value (e.g., 14 = 0b1110 = telescopes 1,2,3)
-    - Comma-separated indices (e.g., "1,2,3")
+    Parameters
+    ----------
+    image_selection_str : str
+        Image selection parameter as a string. Can be either a
+        bit-coded value (e.g., 14 = 0b1110 = telescopes 1,2,3) or a
+        comma-separated indices (e.g., "1,2,3")
 
-    Returns a list of telescope indices.
+    Returns
+    -------
+    list[int] or None
+        List of telescope indices.
     """
     if not image_selection_str:
         return None
@@ -49,7 +55,6 @@ def parse_image_selection(image_selection_str):
     # Parse as bit-coded value
     try:
         bit_value = int(image_selection_str)
-        # Extract bit positions (0-indexed)
         indices = [i for i in range(4) if (bit_value >> i) & 1]
         _logger.info(f"Image selection from bit-coded value {bit_value}: {indices}")
         return indices
@@ -61,7 +66,23 @@ def parse_image_selection(image_selection_str):
 
 
 def apply_image_selection(df, selected_indices):
-    """Filter and pad telescope lists for selected indices."""
+    """
+    Filter and pad telescope lists for selected indices.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame containing telescope data.
+    selected_indices : list[int] or None
+        List of selected telescope indices. If None or all 4 telescopes
+        are selected, the DataFrame is returned unchanged.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with updated "DispTelList_T" and "DispNImages" columns,
+        and per-telescope variables padded to length 4 with NaN.
+    """
     if selected_indices is None or len(selected_indices) == 4:
         return df
 
@@ -103,26 +124,27 @@ def apply_image_selection(df, selected_indices):
     return df
 
 
-def filter_by_telescope_selection(df, selected_indices):
-    """Return a boolean mask: True when all selected telescopes are present or event has 4 images."""
-    if not selected_indices:
-        return pd.Series([True] * len(df), index=df.index)
-
-    selected_set = set(selected_indices)
-
-    def ok(tel_list):
-        if len(tel_list) >= 4:
-            return True
-        return selected_set.issubset(set(tel_list))
-
-    return df["DispTelList_T"].apply(ok)
-
-
 def flatten_data_vectorized(df, n_tel, training_variables):
     """
     Vectorized flattening of telescope array columns.
 
-    Significantly faster than row-by-row iteration.
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Chunk of events to process. Must contain at least the columns
+        used in ``training_variables`` plus the pointing information
+        ("fpointing_dx", "fpointing_dy") and "DispNImages".
+    n_tel : int
+        Number of telescopes to flatten for.
+    training_variables : list[str]
+        List of training variable names to flatten.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Flattened DataFrame with per-telescope columns suffixed by
+        ``_{i}`` for telescope index ``i``, and additional derived
+        features.
     """
     flat_features = {}
     tel_list_col = "DispTelList_T"
@@ -144,9 +166,17 @@ def flatten_data_vectorized(df, n_tel, training_variables):
 
         Handles uproot's awkward-style variable-length arrays from ROOT files
         by converting to plain Python lists first to avoid per-element iteration overhead.
+
+        Parameters
+        ----------
+        col : pandas.Series
+            Column containing variable-length arrays.
+
+        Returns
+        -------
+        numpy.ndarray
+            2D numpy array with shape (n_events, max_telescopes), padded with NaN.
         """
-        # Convert to a plain Python list first to avoid per-element iteration overhead
-        # when dealing with uproot's awkward-style variable-length arrays
         arrays = col.tolist() if hasattr(col, "tolist") else list(col)
         try:
             return np.vstack(arrays)
@@ -180,13 +210,9 @@ def flatten_data_vectorized(df, n_tel, training_variables):
 
                 flat_features[col_name] = result
 
-    # Convert dictionary to DataFrame once at the end
     df_flat = pd.DataFrame(flat_features, index=df.index)
-
-    # Ensure all columns are float type (uproot may load as awkward arrays)
     df_flat = df_flat.astype(np.float32)
 
-    # Compute derived features while avoiding duplicate column names
     new_cols = {}
     for i in range(n_tel):
         new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
@@ -195,7 +221,6 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
-        # In-place updates for existing base columns to avoid duplicates
         df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
         df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
         df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
@@ -203,8 +228,6 @@ def flatten_data_vectorized(df, n_tel, training_variables):
         df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
 
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df.index)], axis=1)
-
-    # Add per-event scalar features in a single batch
     extra_cols = pd.DataFrame(
         {
             "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
@@ -258,9 +281,7 @@ def apply_models(df, models_or_dir, selection_mask=None):
     Parameters
     ----------
     df : pandas.DataFrame
-        Chunk of events to process. Must contain at least the columns used in
-        ``xgb_training_variables()`` plus the pointing information
-        ("fpointing_dx", "fpointing_dy") and "DispNImages".
+        Chunk of events to process.
     models_or_dir : dict[int, Any] or str
         Either a preloaded models dictionary (as returned by :func:`load_models`)
         or a path to a model directory. If a string is provided, models are
@@ -401,7 +422,6 @@ def process_file_chunked(
             if df_chunk.empty:
                 continue
 
-            # Stop early if we've reached max_events limit
             if max_events is not None and total_processed >= max_events:
                 break
 
@@ -415,7 +435,7 @@ def process_file_chunked(
                 {
                     "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
                     "Dir_Yoff": np.asarray(pred_yoff, dtype=np.float32),
-                    "Dir_Erec": np.asarray(pred_erec, dtype=np.float32),
+                    "Dir_Erec": np.power(10.0, pred_erec, dtype=np.float32),
                 }
             )
 
