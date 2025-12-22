@@ -76,10 +76,6 @@ def load_and_flatten_data(input_files, n_tel, max_events):
     if data_tree.empty:
         return pd.DataFrame()
 
-    # Compute weights (not used in training, but for monitoring)
-    # - R (to reflect physical sky area)
-    sample_weights = np.hypot(data_tree["MCxoff"], data_tree["MCyoff"])
-
     df_flat = flatten_data_vectorized(
         data_tree, n_tel, xgb_per_telescope_training_variables(), apply_pointing_corrections=False
     )
@@ -87,7 +83,6 @@ def load_and_flatten_data(input_files, n_tel, max_events):
     df_flat["MCxoff"] = data_tree["MCxoff"]
     df_flat["MCyoff"] = data_tree["MCyoff"]
     df_flat["MCe0"] = np.log10(data_tree["MCe0"])
-    df_flat["sample_weight"] = sample_weights
 
     df_flat.dropna(inplace=True)
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
@@ -111,16 +106,15 @@ def train(df, n_tel, output_dir, train_test_fraction):
         return
 
     # Separate feature and target columns
-    x_cols = [col for col in df.columns if col not in ["MCxoff", "MCyoff", "MCe0", "sample_weight"]]
+    x_cols = [col for col in df.columns if col not in ["MCxoff", "MCyoff", "MCe0"]]
     x_data = df[x_cols]
     y_data = df[["MCxoff", "MCyoff", "MCe0"]]
 
     _logger.info(f"Training variables ({len(x_cols)}): {x_cols}")
 
-    x_train, x_test, y_train, y_test, w_train, _ = train_test_split(
+    x_train, x_test, y_train, y_test = train_test_split(
         x_data,
         y_data,
-        df["sample_weight"],
         test_size=1.0 - train_test_fraction,
         random_state=None,
     )
@@ -148,10 +142,6 @@ def train(df, n_tel, output_dir, train_test_fraction):
     configs = {
         "xgboost": xgb.XGBRegressor(**xgb_params),
     }
-    _logger.info(
-        f"Sample weights (not(!) used in training) - min: {w_train.min():.6f}, "
-        f"max: {w_train.max():.6f}, mean: {w_train.mean():.6f}"
-    )
 
     for name, estimator in configs.items():
         _logger.info(f"Training with {name} for n_tel={n_tel}...")
