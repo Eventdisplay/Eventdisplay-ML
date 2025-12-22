@@ -24,10 +24,8 @@ def flatten_data_vectorized(
     Parameters
     ----------
     df : pandas.DataFrame
-        Input DataFrame containing telescope data. Must include columns for
-        all variables in ``training_variables``, plus "DispTelList_T".
-        If ``apply_pointing_corrections`` is True, must also contain
-        "fpointing_dx" and "fpointing_dy".
+        Input DataFrame containing telescope data. If apply_pointing_corrections
+        is True, must also contain "fpointing_dx" and "fpointing_dy".
     n_tel : int
         Number of telescopes to flatten for.
     training_variables : list[str]
