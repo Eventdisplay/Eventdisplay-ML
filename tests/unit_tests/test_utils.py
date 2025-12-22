@@ -2,7 +2,7 @@
 
 import pytest
 
-from eventdisplay_ml.utils import read_input_file_list
+from eventdisplay_ml.utils import parse_image_selection, read_input_file_list
 
 
 def test_read_input_file_list_success(tmp_path):
@@ -48,3 +48,33 @@ def test_read_input_file_list_file_not_found():
     """Test FileNotFoundError is raised when file does not exist."""
     with pytest.raises(FileNotFoundError, match="Error: Input file list not found"):
         read_input_file_list("/nonexistent/path/file.txt")
+
+
+def test_parse_image_selection_comma_separated():
+    """Test parsing comma-separated indices."""
+    result = parse_image_selection("1, 2, 3")
+    assert result == [1, 2, 3]
+
+
+def test_parse_image_selection_bit_coded():
+    """Test parsing bit-coded value."""
+    result = parse_image_selection("14")  # 0b1110 -> indices 1, 2, 3
+    assert result == [1, 2, 3]
+
+
+def test_parse_image_selection_empty_string():
+    """Test parsing empty string returns None."""
+    result = parse_image_selection("")
+    assert result is None
+
+
+def test_parse_image_selection_invalid_comma_separated():
+    """Test ValueError is raised for invalid comma-separated input."""
+    with pytest.raises(ValueError, match="Invalid image_selection format"):
+        parse_image_selection("1, two, 3")
+
+
+def test_parse_image_selection_invalid_bit_coded():
+    """Test ValueError is raised for invalid bit-coded input."""
+    with pytest.raises(ValueError, match="Invalid image_selection format"):
+        parse_image_selection("invalid")
