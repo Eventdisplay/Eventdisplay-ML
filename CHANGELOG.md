@@ -7,6 +7,12 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v0.1.1](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.1.1) - 2025-12-22
+
+### Maintenance
+
+- Add PyPI project. ([#12](https://github.com/Eventdisplay/Eventdisplay-ML/pull/12))
+
 
 ## [v0.1.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.1.0) - 2025-12-22
 
