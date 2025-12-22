@@ -61,6 +61,6 @@ jobs:
           pip install .[tests]
 
       - name: pytest
-        shell: bash -leo pipefail {0}
+        shell: bash -eo pipefail {0}
         run: |
           pytest ./tests
