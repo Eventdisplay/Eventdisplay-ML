@@ -22,6 +22,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 from sklearn.multioutput import MultiOutputRegressor
 
+from eventdisplay_ml.data_processing import flatten_data_vectorized
 from eventdisplay_ml.training_variables import (
     xgb_all_training_variables,
     xgb_per_telescope_training_variables,
@@ -79,7 +80,9 @@ def load_and_flatten_data(input_files, n_tel, max_events):
     # - R (to reflect physical sky area)
     sample_weights = np.hypot(data_tree["MCxoff"], data_tree["MCyoff"])
 
-    df_flat = flatten_data_vectorized(data_tree, n_tel, xgb_per_telescope_training_variables())
+    df_flat = flatten_data_vectorized(
+        data_tree, n_tel, xgb_per_telescope_training_variables(), apply_pointing_corrections=False
+    )
 
     df_flat["MCxoff"] = data_tree["MCxoff"]
     df_flat["MCyoff"] = data_tree["MCyoff"]
@@ -88,69 +91,6 @@ def load_and_flatten_data(input_files, n_tel, max_events):
 
     df_flat.dropna(inplace=True)
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
-
-    return df_flat
-
-
-def flatten_data_vectorized(df, n_tel, training_variables):
-    """Vectorized flattening of telescope array columns."""
-    flat_features = {}
-
-    try:
-        tel_list_matrix = np.vstack(df["DispTelList_T"].values)
-    except ValueError:
-        tel_list_matrix = np.array(df["DispTelList_T"].tolist())
-
-    for var_name in training_variables:
-        # Data matrix has shape (n_events, max_n_tel)
-        try:
-            data_matrix = np.vstack(df[var_name].values)
-        except ValueError:
-            data_matrix = np.array(df[var_name].tolist())
-
-        for i in range(n_tel):
-            col_name = f"{var_name}_{i}"
-
-            if var_name.startswith("Disp"):
-                # Case 1: Simple index i
-                if i < data_matrix.shape[1]:
-                    flat_features[col_name] = data_matrix[:, i]
-                else:
-                    flat_features[col_name] = np.full(len(df), np.nan)
-            else:
-                # Case 2: Index lookup via DispTelList_T
-                target_tel_indices = tel_list_matrix[:, i].astype(int)
-
-                row_indices = np.arange(len(df))
-                valid_mask = (target_tel_indices >= 0) & (target_tel_indices < data_matrix.shape[1])
-                result = np.full(len(df), np.nan)
-                result[valid_mask] = data_matrix[
-                    row_indices[valid_mask], target_tel_indices[valid_mask]
-                ]
-
-                flat_features[col_name] = result
-
-    df_flat = pd.DataFrame(flat_features, index=df.index)
-
-    for i in range(n_tel):
-        df_flat[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
-        df_flat[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
-        df_flat[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
-        df_flat[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        df_flat[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
-        df_flat[f"size_{i}"] = np.log10(df_flat[f"size_{i}"] + 1e-6)
-        df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
-
-    df_flat["Xoff_weighted_bdt"] = df["Xoff"]
-    df_flat["Yoff_weighted_bdt"] = df["Yoff"]
-    df_flat["Xoff_intersect"] = df["Xoff_intersect"]
-    df_flat["Yoff_intersect"] = df["Yoff_intersect"]
-    df_flat["Diff_Xoff"] = df["Xoff"] - df["Xoff_intersect"]
-    df_flat["Diff_Yoff"] = df["Yoff"] - df["Yoff_intersect"]
-    df_flat["Erec"] = np.log10(np.clip(df["Erec"], 1e-6, None))
-    df_flat["ErecS"] = np.log10(np.clip(df["ErecS"], 1e-6, None))
-    df_flat["EmissionHeight"] = df["EmissionHeight"]
 
     return df_flat
 
