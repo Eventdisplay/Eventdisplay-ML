@@ -39,3 +39,28 @@ jobs:
         run: |
           pip install pre-commit
           SKIP=no-commit-to-branch pre-commit run --all-files
+
+  unit_tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Pip install
+        run: |
+          pip install .[tests]
+
+      - name: pytest
+        shell: bash -leo pipefail {0}
+        run: |
+          pytest ./tests
