@@ -63,15 +63,6 @@ def apply_image_selection(df, selected_indices):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    def _pad_to_four(arr_like):
-        if isinstance(arr_like, (list, np.ndarray)):
-            arr = np.asarray(arr_like, dtype=np.float32)
-            pad = max(0, 4 - arr.shape[0])
-            if pad:
-                arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
-            return arr
-        return arr_like
-
     pad_vars = [
         *xgb_per_telescope_training_variables(),
         "fpointing_dx",
@@ -82,6 +73,17 @@ def apply_image_selection(df, selected_indices):
             df[var_name] = df[var_name].apply(_pad_to_four)
 
     return df
+
+
+def _pad_to_four(arr_like):
+    """Pad a per-telescope array-like to length 4 with NaN values."""
+    if isinstance(arr_like, (list, np.ndarray)):
+        arr = np.asarray(arr_like, dtype=np.float32)
+        pad = max(0, 4 - arr.shape[0])
+        if pad:
+            arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
+        return arr
+    return arr_like
 
 
 def load_models(model_dir):
