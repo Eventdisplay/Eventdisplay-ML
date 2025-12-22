@@ -258,9 +258,7 @@ def apply_models(df, models_or_dir, selection_mask=None):
     Parameters
     ----------
     df : pandas.DataFrame
-        Chunk of events to process. Must contain at least the columns used in
-        ``xgb_training_variables()`` plus the pointing information
-        ("fpointing_dx", "fpointing_dy") and "DispNImages".
+        Chunk of events to process.
     models_or_dir : dict[int, Any] or str
         Either a preloaded models dictionary (as returned by :func:`load_models`)
         or a path to a model directory. If a string is provided, models are
@@ -415,7 +413,7 @@ def process_file_chunked(
                 {
                     "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
                     "Dir_Yoff": np.asarray(pred_yoff, dtype=np.float32),
-                    "Dir_Erec": np.asarray(pred_erec, dtype=np.float32),
+                    "Dir_Erec": np.power(10.0, pred_erec, dtype=np.float32),
                 }
             )
 
