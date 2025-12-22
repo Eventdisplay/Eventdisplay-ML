@@ -129,8 +129,10 @@ norecursedirs = [
 ]
 addopts = [
   "-v",
-  "--cov-report=xml",
+  "--cov=eventdisplay_ml",
+  "--cov-report=html",
   "--cov-report=term",
+  "--cov-report=term-missing"
 ]
 
 testpaths = "tests/unit_tests/"

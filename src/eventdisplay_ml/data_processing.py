@@ -50,44 +50,10 @@ def flatten_data_vectorized(
     flat_features = {}
     tel_list_col = "DispTelList_T"
 
-    def to_padded_array(arrays):
-        """Convert list of variable-length arrays to fixed-size numpy array, padding with NaN."""
-        max_len = max(len(arr) if hasattr(arr, "__len__") else 1 for arr in arrays)
-        result = np.full((len(arrays), max_len), np.nan)
-        for i, arr in enumerate(arrays):
-            if hasattr(arr, "__len__"):
-                result[i, : len(arr)] = arr
-            else:
-                result[i, 0] = arr
-        return result
-
-    def to_dense_array(col):
-        """
-        Convert a column of variable-length telescope data to a dense 2D numpy array.
-
-        Handles uproot's awkward-style variable-length arrays from ROOT files
-        by converting to plain Python lists first to avoid per-element iteration overhead.
-
-        Parameters
-        ----------
-        col : pandas.Series
-            Column containing variable-length arrays.
-
-        Returns
-        -------
-        numpy.ndarray
-            2D numpy array with shape (n_events, max_telescopes), padded with NaN.
-        """
-        arrays = col.tolist() if hasattr(col, "tolist") else list(col)
-        try:
-            return np.vstack(arrays)
-        except (ValueError, TypeError):
-            return to_padded_array(arrays)
-
-    tel_list_matrix = to_dense_array(df[tel_list_col])
+    tel_list_matrix = _to_dense_array(df[tel_list_col])
 
     for var_name in training_variables:
-        data_matrix = to_dense_array(df[var_name])
+        data_matrix = _to_dense_array(df[var_name])
 
         for i in range(n_tel):
             col_name = f"{var_name}_{i}"
@@ -151,3 +117,39 @@ def flatten_data_vectorized(
     )
 
     return pd.concat([df_flat, extra_cols], axis=1)
+
+
+def _to_padded_array(arrays):
+    """Convert list of variable-length arrays to fixed-size numpy array, padding with NaN."""
+    max_len = max(len(arr) if hasattr(arr, "__len__") else 1 for arr in arrays)
+    result = np.full((len(arrays), max_len), np.nan)
+    for i, arr in enumerate(arrays):
+        if hasattr(arr, "__len__"):
+            result[i, : len(arr)] = arr
+        else:
+            result[i, 0] = arr
+    return result
+
+
+def _to_dense_array(col):
+    """
+    Convert a column of variable-length telescope data to a dense 2D numpy array.
+
+    Handles uproot's awkward-style variable-length arrays from ROOT files
+    by converting to plain Python lists first to avoid per-element iteration overhead.
+
+    Parameters
+    ----------
+    col : pandas.Series
+        Column containing variable-length arrays.
+
+    Returns
+    -------
+    numpy.ndarray
+        2D numpy array with shape (n_events, max_telescopes), padded with NaN.
+    """
+    arrays = col.tolist() if hasattr(col, "tolist") else list(col)
+    try:
+        return np.vstack(arrays)
+    except (ValueError, TypeError):
+        return _to_padded_array(arrays)
