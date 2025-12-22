@@ -4,8 +4,18 @@ Shared data processing utilities for XGBoost stereo analysis.
 Provides common functions for flattening and preprocessing telescope array data.
 """
 
+import logging
+
 import numpy as np
 import pandas as pd
+import uproot
+
+from eventdisplay_ml.training_variables import (
+    xgb_all_training_variables,
+    xgb_per_telescope_training_variables,
+)
+
+_logger = logging.getLogger(__name__)
 
 
 def flatten_data_vectorized(
@@ -53,7 +63,14 @@ def flatten_data_vectorized(
     tel_list_matrix = _to_dense_array(df[tel_list_col])
 
     for var_name in training_variables:
-        data_matrix = _to_dense_array(df[var_name])
+        if var_name in df:
+            data_matrix = _to_dense_array(df[var_name])
+        else:
+            _logger.debug(
+                "Training variable %s missing in input data; filling with NaN values.",
+                var_name,
+            )
+            data_matrix = np.full((len(df), n_tel), np.nan)
 
         for i in range(n_tel):
             col_name = f"{var_name}_{i}"
@@ -153,3 +170,71 @@ def _to_dense_array(col):
         return np.vstack(arrays)
     except (ValueError, TypeError):
         return _to_padded_array(arrays)
+
+
+def load_training_data(input_files, n_tel, max_events):
+    """
+    Load and flatten training data from the mscw file for the requested telescope multiplicity.
+
+    Parameters
+    ----------
+    input_files : list[str]
+        List of input mscw ROOT files.
+    n_tel : int
+        Telescope multiplicity to filter on.
+    max_events : int
+        Maximum number of events to load. If <= 0, load all available events.
+    """
+    _logger.info(f"\n--- Loading and Flattening Data for n_tel = {n_tel} ---")
+    _logger.info(
+        "Max events to process: "
+        f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
+    )
+
+    branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_training_variables()]
+
+    dfs = []
+    if max_events is not None and max_events > 0:
+        max_events_per_file = max_events // len(input_files)
+    else:
+        max_events_per_file = None
+
+    for f in input_files:
+        try:
+            with uproot.open(f) as root_file:
+                if "data" in root_file:
+                    _logger.info(f"Processing file: {f}")
+                    tree = root_file["data"]
+                    df = tree.arrays(branch_list, library="pd")
+                    df = df[df["DispNImages"] == n_tel]
+                    _logger.info(f"Number of events after n_tel filter: {len(df)}")
+                    if max_events_per_file and len(df) > max_events_per_file:
+                        df = df.sample(n=max_events_per_file, random_state=42)
+                    if not df.empty:
+                        dfs.append(df)
+                else:
+                    _logger.warning(f"File: {f} does not contain a 'data' tree.")
+        except Exception as e:
+            _logger.error(f"Error opening or reading file {f}: {e}")
+
+    if len(dfs) == 0:
+        _logger.error("No data loaded from input files.")
+        return pd.DataFrame()
+
+    data_tree = pd.concat(dfs, ignore_index=True)
+    _logger.info(f"Total events for n_tel={n_tel}: {len(data_tree)}")
+
+    df_flat = flatten_data_vectorized(
+        data_tree, n_tel, xgb_per_telescope_training_variables(), apply_pointing_corrections=False
+    )
+
+    df_flat["MCxoff"] = data_tree["MCxoff"]
+    df_flat["MCyoff"] = data_tree["MCyoff"]
+    df_flat["MCe0"] = np.log10(data_tree["MCe0"])
+
+    # Keep events even if some optional training variables are missing; only drop
+    # columns that are entirely NaN (e.g., missing branches like DispXoff_T).
+    df_flat.dropna(axis=1, how="all", inplace=True)
+    _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
+
+    return df_flat
