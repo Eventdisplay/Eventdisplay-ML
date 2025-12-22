@@ -130,10 +130,8 @@ def flatten_data_vectorized(df, n_tel, training_variables):
 
                 flat_features[col_name] = result
 
-    # Convert dictionary to DataFrame once at the end
     df_flat = pd.DataFrame(flat_features, index=df.index)
 
-    # Additional derived features to support finding certain event classes
     for i in range(n_tel):
         df_flat[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
         df_flat[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
