@@ -36,8 +36,9 @@ def flatten_data_vectorized(
         If True, apply pointing offset corrections to cen_x and cen_y.
         Set to True for inference, False for training. Default is False.
     dtype : numpy.dtype, optional
-        Data type to cast flattened features to. If None, no explicit casting
-        is performed. Use np.float32 for memory efficiency in inference.
+        Data type to cast flattened features to. If None, the main flattened
+        features are not explicitly cast, but extra derived columns are created
+        with dtype ``np.float32``. Use np.float32 for memory efficiency in inference.
 
     Returns
     -------
