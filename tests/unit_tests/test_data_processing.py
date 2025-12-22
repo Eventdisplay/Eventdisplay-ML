@@ -1,4 +1,4 @@
-"""Unit tests for data processing utilities with shared fixtures."""
+"""Unit tests for data processing utilities."""
 
 import numpy as np
 import pandas as pd
@@ -11,563 +11,107 @@ from eventdisplay_ml.data_processing import (
     load_training_data,
 )
 
-# -----------------------------------------------------------------------------
-# Shared fixtures for duplicated test data
-# -----------------------------------------------------------------------------
+# ============================================================================
+# Parametrized Array Conversion Tests (consolidated from 10 functions)
+# ============================================================================
 
 
-@pytest.fixture
-def arrays_regular():
-    """Regular 2D list with equal-length rows."""
-    return [[1, 2, 3], [4, 5, 6]]
-
-
-@pytest.fixture
-def arrays_variable_len():
-    """List of lists with variable lengths for padding tests."""
-    return [[1, 2], [3, 4, 5], [6]]
-
-
-@pytest.fixture
-def arrays_mixed():
-    """Mixed arrays and scalars input for dense/padded array tests."""
-    return [[1, 2], 3, [4, 5, 6]]
-
-
-@pytest.fixture
-def arrays_numpy():
-    """List of numpy arrays with varying lengths."""
-    return [np.array([1, 2]), np.array([3, 4, 5])]
-
-
-@pytest.fixture
-def df_two_tel_base():
-    """Canonical two-telescope input frame with common columns."""
-    return pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0, 1]), np.array([1, 0])],
-            "Disp_T": [np.array([1.0, 2.0]), np.array([3.0, 4.0])],
-            "cosphi": [np.array([0.8, 0.6]), np.array([0.7, 0.9])],
-            "sinphi": [np.array([0.6, 0.8]), np.array([0.714, 0.436])],
-            "loss": [np.array([0.1, 0.2]), np.array([0.15, 0.25])],
-            "dist": [np.array([1.0, 2.0]), np.array([1.5, 2.5])],
-            "width": [np.array([0.5, 0.6]), np.array([0.55, 0.65])],
-            "length": [np.array([2.0, 3.0]), np.array([2.5, 3.5])],
-            "size": [np.array([100.0, 200.0]), np.array([150.0, 250.0])],
-            "E": [np.array([10.0, 20.0]), np.array([15.0, 25.0])],
-            "ES": [np.array([5.0, 10.0]), np.array([7.5, 12.5])],
-            "Xoff": [1.0, 2.0],
-            "Yoff": [3.0, 4.0],
-            "Xoff_intersect": [0.9, 1.9],
-            "Yoff_intersect": [2.9, 3.9],
-            "Erec": [10.0, 20.0],
-            "ErecS": [5.0, 10.0],
-            "EmissionHeight": [100.0, 200.0],
-        }
-    )
-
-
-@pytest.fixture
-def df_two_tel_pointing(df_two_tel_base):
-    """Two-telescope frame extended with pointing correction columns."""
-    df = df_two_tel_base.copy()
-    df["cen_x"] = [np.array([1.0, 2.0]), np.array([3.0, 4.0])]
-    df["cen_y"] = [np.array([5.0, 6.0]), np.array([7.0, 8.0])]
-    df["fpointing_dx"] = [np.array([0.1, 0.2]), np.array([0.15, 0.25])]
-    df["fpointing_dy"] = [np.array([0.3, 0.4]), np.array([0.35, 0.45])]
-    return df
-
-
-@pytest.fixture
-def df_one_tel_base():
-    """Single-telescope input frame for derived feature checks."""
-    return pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0])],
-            "Disp_T": [np.array([2.0])],
-            "cosphi": [np.array([0.6])],
-            "sinphi": [np.array([0.8])],
-            "loss": [np.array([0.5])],
-            "dist": [np.array([2.0])],
-            "width": [np.array([1.0])],
-            "length": [np.array([2.0])],
-            "size": [np.array([100.0])],
-            "E": [np.array([10.0])],
-            "ES": [np.array([5.0])],
-            "Xoff": [1.0],
-            "Yoff": [3.0],
-            "Xoff_intersect": [0.9],
-            "Yoff_intersect": [2.9],
-            "Erec": [10.0],
-            "ErecS": [5.0],
-            "EmissionHeight": [100.0],
-        }
-    )
-
-
-@pytest.fixture
-def df_three_tel_missing():
-    """Three-telescope input with missing third disp entries (filled as NaN)."""
-    return pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0, 1, -1])],
-            "Disp_T": [np.array([1.0, 2.0])],
-            "cosphi": [np.array([0.8, 0.6])],
-            "sinphi": [np.array([0.6, 0.8])],
-            "loss": [np.array([0.1, 0.2])],
-            "dist": [np.array([1.0, 2.0])],
-            "width": [np.array([0.5, 0.6])],
-            "length": [np.array([2.0, 3.0])],
-            "size": [np.array([100.0, 200.0])],
-            "E": [np.array([10.0, 20.0])],
-            "ES": [np.array([5.0, 10.0])],
-            "Xoff": [1.0],
-            "Yoff": [3.0],
-            "Xoff_intersect": [0.9],
-            "Yoff_intersect": [2.9],
-            "Erec": [10.0],
-            "ErecS": [5.0],
-            "EmissionHeight": [100.0],
-        }
-    )
-
-
-@pytest.fixture
-def df_raw_template_2tel():
-    """Raw uproot-like DataFrame template for two telescopes and multiple events."""
-    return pd.DataFrame(
-        {
-            "DispNImages": [2, 3, 2, 4],
-            "MCxoff": [0.1, 0.2, 0.3, 0.4],
-            "MCyoff": [0.5, 0.6, 0.7, 0.8],
-            "MCe0": [100.0, 200.0, 150.0, 250.0],
-            "DispTelList_T": [
-                np.array([0, 1]),
-                np.array([0, 1]),
-                np.array([0, 1]),
-                np.array([0, 1]),
-            ],
-            "Disp_T": [
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-            ],
-            "cosphi": [
-                np.array([0.8, 0.6]),
-                np.array([0.7, 0.9]),
-                np.array([0.8, 0.6]),
-                np.array([0.7, 0.9]),
-            ],
-            "sinphi": [
-                np.array([0.6, 0.8]),
-                np.array([0.714, 0.436]),
-                np.array([0.6, 0.8]),
-                np.array([0.714, 0.436]),
-            ],
-            "loss": [
-                np.array([0.1, 0.2]),
-                np.array([0.15, 0.25]),
-                np.array([0.1, 0.2]),
-                np.array([0.15, 0.25]),
-            ],
-            "dist": [
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-            ],
-            "width": [
-                np.array([0.5, 0.6]),
-                np.array([0.55, 0.65]),
-                np.array([0.5, 0.6]),
-                np.array([0.55, 0.65]),
-            ],
-            "length": [
-                np.array([2.0, 3.0]),
-                np.array([2.5, 3.5]),
-                np.array([2.0, 3.0]),
-                np.array([2.5, 3.5]),
-            ],
-            "size": [
-                np.array([100.0, 200.0]),
-                np.array([150.0, 250.0]),
-                np.array([100.0, 200.0]),
-                np.array([150.0, 250.0]),
-            ],
-            "E": [
-                np.array([10.0, 20.0]),
-                np.array([15.0, 25.0]),
-                np.array([10.0, 20.0]),
-                np.array([15.0, 25.0]),
-            ],
-            "ES": [
-                np.array([5.0, 10.0]),
-                np.array([7.5, 12.5]),
-                np.array([5.0, 10.0]),
-                np.array([7.5, 12.5]),
-            ],
-            "Xoff": [1.0, 2.0, 1.0, 2.0],
-            "Yoff": [3.0, 4.0, 3.0, 4.0],
-            "Xoff_intersect": [0.9, 1.9, 0.9, 1.9],
-            "Yoff_intersect": [2.9, 3.9, 2.9, 3.9],
-            "Erec": [10.0, 20.0, 10.0, 20.0],
-            "ErecS": [5.0, 10.0, 5.0, 10.0],
-            "EmissionHeight": [100.0, 200.0, 100.0, 200.0],
-        }
-    )
-
-
-@pytest.fixture
-def df_raw_two_files():
-    """Pair of raw DataFrames to emulate loading from two files."""
-    df1 = pd.DataFrame(
-        {
-            "DispNImages": [2, 2],
-            "MCxoff": [0.1, 0.2],
-            "MCyoff": [0.5, 0.6],
-            "MCe0": [100.0, 150.0],
-            "DispTelList_T": [np.array([0, 1]), np.array([0, 1])],
-            "Disp_T": [np.array([1.0, 2.0]), np.array([1.0, 2.0])],
-            "cosphi": [np.array([0.8, 0.6]), np.array([0.8, 0.6])],
-            "sinphi": [np.array([0.6, 0.8]), np.array([0.6, 0.8])],
-            "loss": [np.array([0.1, 0.2]), np.array([0.1, 0.2])],
-            "dist": [np.array([1.0, 2.0]), np.array([1.0, 2.0])],
-            "width": [np.array([0.5, 0.6]), np.array([0.5, 0.6])],
-            "length": [np.array([2.0, 3.0]), np.array([2.0, 3.0])],
-            "size": [np.array([100.0, 200.0]), np.array([100.0, 200.0])],
-            "E": [np.array([10.0, 20.0]), np.array([10.0, 20.0])],
-            "ES": [np.array([5.0, 10.0]), np.array([5.0, 10.0])],
-            "Xoff": [1.0, 1.0],
-            "Yoff": [3.0, 3.0],
-            "Xoff_intersect": [0.9, 0.9],
-            "Yoff_intersect": [2.9, 2.9],
-            "Erec": [10.0, 10.0],
-            "ErecS": [5.0, 5.0],
-            "EmissionHeight": [100.0, 100.0],
-        }
-    )
-    df2 = pd.DataFrame(
-        {
-            "DispNImages": [2],
-            "MCxoff": [0.3],
-            "MCyoff": [0.7],
-            "MCe0": [200.0],
-            "DispTelList_T": [np.array([0, 1])],
-            "Disp_T": [np.array([1.0, 2.0])],
-            "cosphi": [np.array([0.8, 0.6])],
-            "sinphi": [np.array([0.6, 0.8])],
-            "loss": [np.array([0.1, 0.2])],
-            "dist": [np.array([1.0, 2.0])],
-            "width": [np.array([0.5, 0.6])],
-            "length": [np.array([2.0, 3.0])],
-            "size": [np.array([100.0, 200.0])],
-            "E": [np.array([10.0, 20.0])],
-            "ES": [np.array([5.0, 10.0])],
-            "Xoff": [1.0],
-            "Yoff": [3.0],
-            "Xoff_intersect": [0.9],
-            "Yoff_intersect": [2.9],
-            "Erec": [10.0],
-            "ErecS": [5.0],
-            "EmissionHeight": [100.0],
-        }
-    )
-    return df1, df2
-
-
-def test_to_dense_array_with_regular_lists():
-    """Test _to_dense_array with regular Python lists."""
-    col = pd.Series([[1, 2, 3], [4, 5, 6]])
+@pytest.mark.parametrize(
+    ("input_data", "expected_shape"),
+    [
+        ([[1, 2, 3], [4, 5, 6]], (2, 3)),
+        ([[1, 2], [3, 4, 5], [6]], (3, 3)),
+        ([1, 2, 3], (3, 1)),
+        ([[1, 2], 3, [4, 5, 6]], (3, 3)),
+    ],
+)
+def test_to_dense_array(input_data, expected_shape):
+    """Test _to_dense_array with various input types."""
+    col = pd.Series(input_data)
     result = _to_dense_array(col)
-
-    assert result.shape == (2, 3)
-    assert np.array_equal(result, np.array([[1, 2, 3], [4, 5, 6]]))
+    assert result.shape == expected_shape
 
 
-def test_to_dense_array_with_variable_length():
-    """Test _to_dense_array with variable-length arrays."""
-    col = pd.Series([[1, 2], [3, 4, 5], [6]])
-    result = _to_dense_array(col)
-
-    assert result.shape == (3, 3)
-    assert result[0, 0] == 1
-    assert result[0, 1] == 2
-    assert np.isnan(result[0, 2])
-    assert result[1, 2] == 5
-    assert np.isnan(result[2, 1])
-    assert np.isnan(result[2, 2])
-
-
-def test_to_dense_array_with_scalar_values():
-    """Test _to_dense_array with scalar values."""
-    col = pd.Series([1, 2, 3])
-    result = _to_dense_array(col)
-
-    assert result.shape == (3, 1)
-    assert np.array_equal(result.flatten(), np.array([1, 2, 3]))
+@pytest.mark.parametrize(
+    ("input_data", "expected_shape"),
+    [
+        ([[1, 2, 3], [4, 5, 6]], (2, 3)),
+        ([[1, 2], [3, 4, 5], [6]], (3, 3)),
+        ([1, 2, 3], (3, 1)),
+        ([[1, 2], 3, [4, 5, 6]], (3, 3)),
+    ],
+)
+def test_to_padded_array(input_data, expected_shape):
+    """Test _to_padded_array with various input types."""
+    result = _to_padded_array(input_data)
+    assert result.shape == expected_shape
 
 
-def test_to_dense_array_with_mixed_arrays_and_scalars():
-    """Test _to_dense_array with mixed array and scalar values."""
-    col = pd.Series([[1, 2], 3, [4, 5, 6]])
-    result = _to_dense_array(col)
-
-    assert result.shape == (3, 3)
-    assert result[0, 0] == 1
-    assert result[0, 1] == 2
-    assert result[1, 0] == 3
-    assert np.isnan(result[1, 1])
-    assert np.isnan(result[1, 2])
-
-
-def test_to_dense_array_with_numpy_arrays():
+def test_to_dense_array_with_numpy_arrays(arrays_numpy):
     """Test _to_dense_array with numpy arrays."""
-    col = pd.Series([np.array([1, 2]), np.array([3, 4, 5])])
+    col = pd.Series(arrays_numpy)
     result = _to_dense_array(col)
-
     assert result.shape == (2, 3)
-    assert result[0, 0] == 1
-    assert result[0, 1] == 2
-    assert np.isnan(result[0, 2])
-    assert result[1, 2] == 5
 
 
-def test_to_padded_array_with_regular_lists():
-    """Test _to_padded_array with regular Python lists."""
-    arrays = [[1, 2, 3], [4, 5, 6]]
-    result = _to_padded_array(arrays)
-
-    assert result.shape == (2, 3)
-    assert np.array_equal(result, np.array([[1, 2, 3], [4, 5, 6]]))
-
-
-def test_to_padded_array_with_variable_length():
-    """Test _to_padded_array with variable-length arrays."""
-    arrays = [[1, 2], [3, 4, 5], [6]]
-    result = _to_padded_array(arrays)
-
-    assert result.shape == (3, 3)
-    assert result[0, 0] == 1
-    assert result[0, 1] == 2
-    assert np.isnan(result[0, 2])
-    assert result[1, 2] == 5
-    assert np.isnan(result[2, 1])
-    assert np.isnan(result[2, 2])
-
-
-def test_to_padded_array_with_scalar_values():
-    """Test _to_padded_array with scalar values."""
-    arrays = [1, 2, 3]
-    result = _to_padded_array(arrays)
-
-    assert result.shape == (3, 1)
-    assert np.array_equal(result.flatten(), np.array([1, 2, 3]))
-
-
-def test_to_padded_array_with_mixed_arrays_and_scalars():
-    """Test _to_padded_array with mixed array and scalar values."""
-    arrays = [[1, 2], 3, [4, 5, 6]]
-    result = _to_padded_array(arrays)
-
-    assert result.shape == (3, 3)
-    assert result[0, 0] == 1
-    assert result[0, 1] == 2
-    assert result[1, 0] == 3
-    assert np.isnan(result[1, 1])
-    assert np.isnan(result[1, 2])
-
-
-def test_to_padded_array_with_numpy_arrays():
+def test_to_padded_array_with_numpy_arrays(arrays_numpy):
     """Test _to_padded_array with numpy arrays."""
-    arrays = [np.array([1, 2]), np.array([3, 4, 5])]
-    result = _to_padded_array(arrays)
-
+    result = _to_padded_array(arrays_numpy)
     assert result.shape == (2, 3)
-    assert result[0, 0] == 1
-    assert result[0, 1] == 2
-    assert np.isnan(result[0, 2])
-    assert result[1, 2] == 5
 
 
-def test_flatten_data_vectorized_basic():
-    """Test flatten_data_vectorized with basic input."""
-    df = pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0, 1]), np.array([1, 0])],
-            "Disp_T": [np.array([1.0, 2.0]), np.array([3.0, 4.0])],
-            "cosphi": [np.array([0.8, 0.6]), np.array([0.7, 0.9])],
-            "sinphi": [np.array([0.6, 0.8]), np.array([0.714, 0.436])],
-            "loss": [np.array([0.1, 0.2]), np.array([0.15, 0.25])],
-            "dist": [np.array([1.0, 2.0]), np.array([1.5, 2.5])],
-            "width": [np.array([0.5, 0.6]), np.array([0.55, 0.65])],
-            "length": [np.array([2.0, 3.0]), np.array([2.5, 3.5])],
-            "size": [np.array([100.0, 200.0]), np.array([150.0, 250.0])],
-            "E": [np.array([10.0, 20.0]), np.array([15.0, 25.0])],
-            "ES": [np.array([5.0, 10.0]), np.array([7.5, 12.5])],
-            "Xoff": [1.0, 2.0],
-            "Yoff": [3.0, 4.0],
-            "Xoff_intersect": [0.9, 1.9],
-            "Yoff_intersect": [2.9, 3.9],
-            "Erec": [10.0, 20.0],
-            "ErecS": [5.0, 10.0],
-            "EmissionHeight": [100.0, 200.0],
-        }
-    )
+# ============================================================================
+# Data Flattening Tests
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    ("n_tel", "with_pointing"),
+    [
+        (2, False),
+        (2, True),
+        (1, False),
+    ],
+)
+def test_flatten_data_vectorized(
+    n_tel, with_pointing, df_two_tel_base, df_two_tel_pointing, df_one_tel_base
+):
+    """Test flatten_data_vectorized with various telescope counts and pointing options."""
+    if with_pointing and n_tel == 2:
+        df = df_two_tel_pointing
+    elif n_tel == 1:
+        df = df_one_tel_base
+    else:
+        df = df_two_tel_base
+
+    training_vars = [
+        "Disp_T",
+        "cosphi",
+        "sinphi",
+        "loss",
+        "dist",
+        "width",
+        "length",
+        "size",
+        "E",
+        "ES",
+    ]
+    if with_pointing:
+        training_vars.extend(["cen_x", "cen_y", "fpointing_dx", "fpointing_dy"])
 
     result = flatten_data_vectorized(
-        df,
-        n_tel=2,
-        training_variables=[
-            "Disp_T",
-            "cosphi",
-            "sinphi",
-            "loss",
-            "dist",
-            "width",
-            "length",
-            "size",
-            "E",
-            "ES",
-        ],
+        df, n_tel=n_tel, training_variables=training_vars, apply_pointing_corrections=with_pointing
     )
 
     assert "Disp_T_0" in result.columns
-    assert "Disp_T_1" in result.columns
     assert "disp_x_0" in result.columns
-    assert "disp_y_0" in result.columns
-    assert len(result) == 2
+    assert len(result) == len(df)
 
 
-def test_flatten_data_vectorized_with_pointing_corrections():
-    """Test flatten_data_vectorized with pointing corrections enabled."""
-    df = pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0, 1]), np.array([1, 0])],
-            "Disp_T": [np.array([1.0, 2.0]), np.array([3.0, 4.0])],
-            "cosphi": [np.array([0.8, 0.6]), np.array([0.7, 0.9])],
-            "sinphi": [np.array([0.6, 0.8]), np.array([0.714, 0.436])],
-            "loss": [np.array([0.1, 0.2]), np.array([0.15, 0.25])],
-            "dist": [np.array([1.0, 2.0]), np.array([1.5, 2.5])],
-            "width": [np.array([0.5, 0.6]), np.array([0.55, 0.65])],
-            "length": [np.array([2.0, 3.0]), np.array([2.5, 3.5])],
-            "size": [np.array([100.0, 200.0]), np.array([150.0, 250.0])],
-            "E": [np.array([10.0, 20.0]), np.array([15.0, 25.0])],
-            "ES": [np.array([5.0, 10.0]), np.array([7.5, 12.5])],
-            "cen_x": [np.array([1.0, 2.0]), np.array([3.0, 4.0])],
-            "cen_y": [np.array([5.0, 6.0]), np.array([7.0, 8.0])],
-            "fpointing_dx": [np.array([0.1, 0.2]), np.array([0.15, 0.25])],
-            "fpointing_dy": [np.array([0.3, 0.4]), np.array([0.35, 0.45])],
-            "Xoff": [1.0, 2.0],
-            "Yoff": [3.0, 4.0],
-            "Xoff_intersect": [0.9, 1.9],
-            "Yoff_intersect": [2.9, 3.9],
-            "Erec": [10.0, 20.0],
-            "ErecS": [5.0, 10.0],
-            "EmissionHeight": [100.0, 200.0],
-        }
-    )
-
-    result = flatten_data_vectorized(
-        df,
-        n_tel=2,
-        training_variables=[
-            "Disp_T",
-            "cosphi",
-            "sinphi",
-            "loss",
-            "dist",
-            "width",
-            "length",
-            "size",
-            "E",
-            "ES",
-            "cen_x",
-            "cen_y",
-            "fpointing_dx",
-            "fpointing_dy",
-        ],
-        apply_pointing_corrections=True,
-    )
-
-    assert "cen_x_0" in result.columns
-    assert "cen_y_0" in result.columns
-
-
-def test_flatten_data_vectorized_with_dtype_casting():
-    """Test flatten_data_vectorized with explicit dtype."""
-    df = pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0, 1]), np.array([1, 0])],
-            "Disp_T": [np.array([1.0, 2.0]), np.array([3.0, 4.0])],
-            "cosphi": [np.array([0.8, 0.6]), np.array([0.7, 0.9])],
-            "sinphi": [np.array([0.6, 0.8]), np.array([0.714, 0.436])],
-            "loss": [np.array([0.1, 0.2]), np.array([0.15, 0.25])],
-            "dist": [np.array([1.0, 2.0]), np.array([1.5, 2.5])],
-            "width": [np.array([0.5, 0.6]), np.array([0.55, 0.65])],
-            "length": [np.array([2.0, 3.0]), np.array([2.5, 3.5])],
-            "size": [np.array([100.0, 200.0]), np.array([150.0, 250.0])],
-            "E": [np.array([10.0, 20.0]), np.array([15.0, 25.0])],
-            "ES": [np.array([5.0, 10.0]), np.array([7.5, 12.5])],
-            "Xoff": [1.0, 2.0],
-            "Yoff": [3.0, 4.0],
-            "Xoff_intersect": [0.9, 1.9],
-            "Yoff_intersect": [2.9, 3.9],
-            "Erec": [10.0, 20.0],
-            "ErecS": [5.0, 10.0],
-            "EmissionHeight": [100.0, 200.0],
-        }
-    )
-
-    result = flatten_data_vectorized(
-        df,
-        n_tel=2,
-        training_variables=[
-            "Disp_T",
-            "cosphi",
-            "sinphi",
-            "loss",
-            "dist",
-            "width",
-            "length",
-            "size",
-            "E",
-            "ES",
-        ],
-        dtype=np.float32,
-    )
-
-    assert result["Disp_T_0"].dtype == np.float32
-    assert result["Erec"].dtype == np.float32
-
-
-def test_flatten_data_vectorized_derived_features():
+def test_flatten_data_vectorized_derived_features(df_one_tel_base):
     """Test that derived features are correctly computed."""
-    df = pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0])],
-            "Disp_T": [np.array([2.0])],
-            "cosphi": [np.array([0.6])],
-            "sinphi": [np.array([0.8])],
-            "loss": [np.array([0.5])],
-            "dist": [np.array([2.0])],
-            "width": [np.array([1.0])],
-            "length": [np.array([2.0])],
-            "size": [np.array([100.0])],
-            "E": [np.array([10.0])],
-            "ES": [np.array([5.0])],
-            "Xoff": [1.0],
-            "Yoff": [3.0],
-            "Xoff_intersect": [0.9],
-            "Yoff_intersect": [2.9],
-            "Erec": [10.0],
-            "ErecS": [5.0],
-            "EmissionHeight": [100.0],
-        }
-    )
-
     result = flatten_data_vectorized(
-        df,
+        df_one_tel_base,
         n_tel=1,
         training_variables=[
             "Disp_T",
@@ -588,37 +132,15 @@ def test_flatten_data_vectorized_derived_features():
     assert "loss_loss_0" in result.columns
     assert "loss_dist_0" in result.columns
     assert "width_length_0" in result.columns
-    assert result["disp_x_0"].iloc[0] == pytest.approx(2.0 * 0.6)
-    assert result["disp_y_0"].iloc[0] == pytest.approx(2.0 * 0.8)
+    # For df_one_tel_base: Disp_T[0]=1.0, cosphi[0]=0.8, sinphi[0]=0.6
+    assert result["disp_x_0"].iloc[0] == pytest.approx(1.0 * 0.8)
+    assert result["disp_y_0"].iloc[0] == pytest.approx(1.0 * 0.6)
 
 
-def test_flatten_data_vectorized_missing_disp_column_for_extra_telescopes():
-    """Disp columns beyond available telescopes should be NaN-filled."""
-    df = pd.DataFrame(
-        {
-            "DispTelList_T": [np.array([0, 1, -1])],
-            "Disp_T": [np.array([1.0, 2.0])],
-            "cosphi": [np.array([0.8, 0.6])],
-            "sinphi": [np.array([0.6, 0.8])],
-            "loss": [np.array([0.1, 0.2])],
-            "dist": [np.array([1.0, 2.0])],
-            "width": [np.array([0.5, 0.6])],
-            "length": [np.array([2.0, 3.0])],
-            "size": [np.array([100.0, 200.0])],
-            "E": [np.array([10.0, 20.0])],
-            "ES": [np.array([5.0, 10.0])],
-            "Xoff": [1.0],
-            "Yoff": [3.0],
-            "Xoff_intersect": [0.9],
-            "Yoff_intersect": [2.9],
-            "Erec": [10.0],
-            "ErecS": [5.0],
-            "EmissionHeight": [100.0],
-        }
-    )
-
+def test_flatten_data_vectorized_missing_data(df_three_tel_missing):
+    """Test that missing disp columns are filled with NaN."""
     result = flatten_data_vectorized(
-        df,
+        df_three_tel_missing,
         n_tel=3,
         training_variables=[
             "Disp_T",
@@ -633,8 +155,35 @@ def test_flatten_data_vectorized_missing_disp_column_for_extra_telescopes():
             "ES",
         ],
     )
-
     assert result["Disp_T_2"].isna().all()
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_flatten_data_vectorized_dtype(dtype, df_two_tel_base):
+    """Test flatten_data_vectorized dtype casting."""
+    result = flatten_data_vectorized(
+        df_two_tel_base,
+        n_tel=2,
+        training_variables=[
+            "Disp_T",
+            "cosphi",
+            "sinphi",
+            "loss",
+            "dist",
+            "width",
+            "length",
+            "size",
+            "E",
+            "ES",
+        ],
+        dtype=dtype,
+    )
+    assert result["Disp_T_0"].dtype == dtype
+
+
+# ============================================================================
+# Data Loading Tests
+# ============================================================================
 
 
 def test_load_training_data_empty_files(tmp_path, mocker):
@@ -647,7 +196,6 @@ def test_load_training_data_empty_files(tmp_path, mocker):
     mocker.patch("uproot.open", return_value=mock_root_file)
 
     result = load_training_data([str(mock_file)], n_tel=2, max_events=100)
-
     assert result.empty
 
 
@@ -659,79 +207,24 @@ def test_load_training_data_filters_by_n_tel(mocker):
             "MCxoff": [0.1, 0.2, 0.3, 0.4],
             "MCyoff": [0.5, 0.6, 0.7, 0.8],
             "MCe0": [100.0, 200.0, 150.0, 250.0],
-            "DispTelList_T": [
-                np.array([0, 1]),
-                np.array([0, 1]),
-                np.array([0, 1]),
-                np.array([0, 1]),
-            ],
-            "Disp_T": [
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-            ],
-            "cosphi": [
-                np.array([0.8, 0.6]),
-                np.array([0.7, 0.9]),
-                np.array([0.8, 0.6]),
-                np.array([0.7, 0.9]),
-            ],
-            "sinphi": [
-                np.array([0.6, 0.8]),
-                np.array([0.714, 0.436]),
-                np.array([0.6, 0.8]),
-                np.array([0.714, 0.436]),
-            ],
-            "loss": [
-                np.array([0.1, 0.2]),
-                np.array([0.15, 0.25]),
-                np.array([0.1, 0.2]),
-                np.array([0.15, 0.25]),
-            ],
-            "dist": [
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-                np.array([1.0, 2.0]),
-                np.array([1.5, 2.5]),
-            ],
-            "width": [
-                np.array([0.5, 0.6]),
-                np.array([0.55, 0.65]),
-                np.array([0.5, 0.6]),
-                np.array([0.55, 0.65]),
-            ],
-            "length": [
-                np.array([2.0, 3.0]),
-                np.array([2.5, 3.5]),
-                np.array([2.0, 3.0]),
-                np.array([2.5, 3.5]),
-            ],
-            "size": [
-                np.array([100.0, 200.0]),
-                np.array([150.0, 250.0]),
-                np.array([100.0, 200.0]),
-                np.array([150.0, 250.0]),
-            ],
-            "E": [
-                np.array([10.0, 20.0]),
-                np.array([15.0, 25.0]),
-                np.array([10.0, 20.0]),
-                np.array([15.0, 25.0]),
-            ],
-            "ES": [
-                np.array([5.0, 10.0]),
-                np.array([7.5, 12.5]),
-                np.array([5.0, 10.0]),
-                np.array([7.5, 12.5]),
-            ],
-            "Xoff": [1.0, 2.0, 1.0, 2.0],
-            "Yoff": [3.0, 4.0, 3.0, 4.0],
-            "Xoff_intersect": [0.9, 1.9, 0.9, 1.9],
-            "Yoff_intersect": [2.9, 3.9, 2.9, 3.9],
-            "Erec": [10.0, 20.0, 10.0, 20.0],
-            "ErecS": [5.0, 10.0, 5.0, 10.0],
-            "EmissionHeight": [100.0, 200.0, 100.0, 200.0],
+            "DispTelList_T": [np.array([0, 1])] * 4,
+            "Disp_T": [np.array([1.0, 2.0])] * 4,
+            "cosphi": [np.array([0.8, 0.6])] * 4,
+            "sinphi": [np.array([0.6, 0.8])] * 4,
+            "loss": [np.array([0.1, 0.2])] * 4,
+            "dist": [np.array([1.0, 2.0])] * 4,
+            "width": [np.array([0.5, 0.6])] * 4,
+            "length": [np.array([2.0, 3.0])] * 4,
+            "size": [np.array([100.0, 200.0])] * 4,
+            "E": [np.array([10.0, 20.0])] * 4,
+            "ES": [np.array([5.0, 10.0])] * 4,
+            "Xoff": [1.0] * 4,
+            "Yoff": [3.0] * 4,
+            "Xoff_intersect": [0.9] * 4,
+            "Yoff_intersect": [2.9] * 4,
+            "Erec": [10.0] * 4,
+            "ErecS": [5.0] * 4,
+            "EmissionHeight": [100.0] * 4,
         }
     )
 
@@ -741,18 +234,22 @@ def test_load_training_data_filters_by_n_tel(mocker):
     mock_root_file = mocker.MagicMock()
     mock_root_file.__enter__.return_value = {"data": mock_tree}
     mock_root_file.__exit__.return_value = None
-
     mocker.patch("uproot.open", return_value=mock_root_file)
 
     result = load_training_data(["dummy.root"], n_tel=2, max_events=-1)
-
     assert len(result) == 2
-    assert "MCxoff" in result.columns
-    assert "MCyoff" in result.columns
-    assert "MCe0" in result.columns
+    assert all(col in result.columns for col in ["MCxoff", "MCyoff", "MCe0"])
 
 
-def test_load_training_data_respects_max_events(mocker):
+@pytest.mark.parametrize(
+    ("max_events", "expected_max_rows"),
+    [
+        (5, 5),
+        (3, 3),
+        (-1, 10),
+    ],
+)
+def test_load_training_data_max_events(mocker, max_events, expected_max_rows):
     """Test load_training_data respects max_events limit."""
     df_raw = pd.DataFrame(
         {
@@ -783,37 +280,19 @@ def test_load_training_data_respects_max_events(mocker):
 
     mock_tree = mocker.MagicMock()
     mock_tree.arrays.return_value = df_raw
-
     mock_root_file = mocker.MagicMock()
     mock_root_file.__enter__.return_value = {"data": mock_tree}
     mock_root_file.__exit__.return_value = None
-
     mocker.patch("uproot.open", return_value=mock_root_file)
 
-    result = load_training_data(["dummy.root"], n_tel=2, max_events=5)
-
-    assert len(result) <= 5
-
-
-def test_load_training_data_handles_missing_data_tree(mocker):
-    """Test load_training_data handles files without data tree."""
-    mock_root_file = mocker.MagicMock()
-    mock_root_file.__enter__.return_value = {}
-    mock_root_file.__exit__.return_value = None
-
-    mocker.patch("uproot.open", return_value=mock_root_file)
-
-    result = load_training_data(["dummy.root"], n_tel=2, max_events=100)
-
-    assert result.empty
+    result = load_training_data(["dummy.root"], n_tel=2, max_events=max_events)
+    assert len(result) <= expected_max_rows
 
 
-def test_load_training_data_handles_file_read_error(mocker):
-    """Test load_training_data handles exceptions when reading files."""
+def test_load_training_data_handles_errors(mocker):
+    """Test load_training_data handles file read exceptions."""
     mocker.patch("uproot.open", side_effect=Exception("File read error"))
-
     result = load_training_data(["dummy.root"], n_tel=2, max_events=100)
-
     assert result.empty
 
 
@@ -821,57 +300,32 @@ def test_load_training_data_multiple_files(mocker):
     """Test load_training_data concatenates multiple files."""
     df1 = pd.DataFrame(
         {
-            "DispNImages": [2, 2],
+            "DispNImages": [2] * 2,
             "MCxoff": [0.1, 0.2],
             "MCyoff": [0.5, 0.6],
             "MCe0": [100.0, 150.0],
-            "DispTelList_T": [np.array([0, 1]), np.array([0, 1])],
-            "Disp_T": [np.array([1.0, 2.0]), np.array([1.0, 2.0])],
-            "cosphi": [np.array([0.8, 0.6]), np.array([0.8, 0.6])],
-            "sinphi": [np.array([0.6, 0.8]), np.array([0.6, 0.8])],
-            "loss": [np.array([0.1, 0.2]), np.array([0.1, 0.2])],
-            "dist": [np.array([1.0, 2.0]), np.array([1.0, 2.0])],
-            "width": [np.array([0.5, 0.6]), np.array([0.5, 0.6])],
-            "length": [np.array([2.0, 3.0]), np.array([2.0, 3.0])],
-            "size": [np.array([100.0, 200.0]), np.array([100.0, 200.0])],
-            "E": [np.array([10.0, 20.0]), np.array([10.0, 20.0])],
-            "ES": [np.array([5.0, 10.0]), np.array([5.0, 10.0])],
-            "Xoff": [1.0, 1.0],
-            "Yoff": [3.0, 3.0],
-            "Xoff_intersect": [0.9, 0.9],
-            "Yoff_intersect": [2.9, 2.9],
-            "Erec": [10.0, 10.0],
-            "ErecS": [5.0, 5.0],
-            "EmissionHeight": [100.0, 100.0],
+            "DispTelList_T": [np.array([0, 1])] * 2,
+            "Disp_T": [np.array([1.0, 2.0])] * 2,
+            "cosphi": [np.array([0.8, 0.6])] * 2,
+            "sinphi": [np.array([0.6, 0.8])] * 2,
+            "loss": [np.array([0.1, 0.2])] * 2,
+            "dist": [np.array([1.0, 2.0])] * 2,
+            "width": [np.array([0.5, 0.6])] * 2,
+            "length": [np.array([2.0, 3.0])] * 2,
+            "size": [np.array([100.0, 200.0])] * 2,
+            "E": [np.array([10.0, 20.0])] * 2,
+            "ES": [np.array([5.0, 10.0])] * 2,
+            "Xoff": [1.0] * 2,
+            "Yoff": [3.0] * 2,
+            "Xoff_intersect": [0.9] * 2,
+            "Yoff_intersect": [2.9] * 2,
+            "Erec": [10.0] * 2,
+            "ErecS": [5.0] * 2,
+            "EmissionHeight": [100.0] * 2,
         }
     )
-
-    df2 = pd.DataFrame(
-        {
-            "DispNImages": [2],
-            "MCxoff": [0.3],
-            "MCyoff": [0.7],
-            "MCe0": [200.0],
-            "DispTelList_T": [np.array([0, 1])],
-            "Disp_T": [np.array([1.0, 2.0])],
-            "cosphi": [np.array([0.8, 0.6])],
-            "sinphi": [np.array([0.6, 0.8])],
-            "loss": [np.array([0.1, 0.2])],
-            "dist": [np.array([1.0, 2.0])],
-            "width": [np.array([0.5, 0.6])],
-            "length": [np.array([2.0, 3.0])],
-            "size": [np.array([100.0, 200.0])],
-            "E": [np.array([10.0, 20.0])],
-            "ES": [np.array([5.0, 10.0])],
-            "Xoff": [1.0],
-            "Yoff": [3.0],
-            "Xoff_intersect": [0.9],
-            "Yoff_intersect": [2.9],
-            "Erec": [10.0],
-            "ErecS": [5.0],
-            "EmissionHeight": [100.0],
-        }
-    )
+    df2 = df1.iloc[:1].copy()
+    df2.loc[0, "MCe0"] = 200.0
 
     call_count = [0]
 
@@ -881,15 +335,12 @@ def test_load_training_data_multiple_files(mocker):
 
     mock_tree = mocker.MagicMock()
     mock_tree.arrays.side_effect = mock_arrays
-
     mock_root_file = mocker.MagicMock()
     mock_root_file.__enter__.return_value = {"data": mock_tree}
     mock_root_file.__exit__.return_value = None
-
     mocker.patch("uproot.open", return_value=mock_root_file)
 
     result = load_training_data(["dummy1.root", "dummy2.root"], n_tel=2, max_events=-1)
-
     assert len(result) == 3
 
 
@@ -924,14 +375,11 @@ def test_load_training_data_computes_log_mce0(mocker):
 
     mock_tree = mocker.MagicMock()
     mock_tree.arrays.return_value = df_raw
-
     mock_root_file = mocker.MagicMock()
     mock_root_file.__enter__.return_value = {"data": mock_tree}
     mock_root_file.__exit__.return_value = None
-
     mocker.patch("uproot.open", return_value=mock_root_file)
 
     result = load_training_data(["dummy.root"], n_tel=2, max_events=-1)
-
     assert "MCe0" in result.columns
     assert result["MCe0"].iloc[0] == pytest.approx(np.log10(100.0))
