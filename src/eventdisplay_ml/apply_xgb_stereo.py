@@ -1,7 +1,7 @@
 """
 Evaluate XGBoost BDTs for stereo reconstruction (direction, energy).
 
-applies trained XGBoost models to predict Xoff, Yoff, and energy
+Applies trained XGBoost models to predict Xoff, Yoff, and energy
 for each event from an input mscw file. The output ROOT file contains
 one row per input event, maintaining the original event order.
 """
