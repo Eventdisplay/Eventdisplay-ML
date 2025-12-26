@@ -1,5 +1,5 @@
 """
-Shared data processing utilities for XGBoost stereo analysis.
+Shared data processing utilities for XGBoost analysis.
 
 Provides common functions for flattening and preprocessing telescope array data.
 """

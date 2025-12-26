@@ -18,7 +18,7 @@ from sklearn.model_selection import train_test_split
 
 from eventdisplay_ml import utils
 from eventdisplay_ml.data_processing import load_training_data
-from eventdisplay_ml.evaluate import evaluate_classification_model
+from eventdisplay_ml.evaluate import evaluate_classification_model, write_efficiency_csv
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
@@ -77,6 +77,12 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
         _logger.info(f"{name} model saved to: {output_filename}")
 
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
+        write_efficiency_csv(
+            model,
+            x_test,
+            y_test,
+            Path(output_dir) / f"classify_ntel{n_tel}_{name}_bin{energy_bin_number}.csv",
+        )
 
 
 def main():

@@ -10,6 +10,33 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 _logger = logging.getLogger(__name__)
 
 
+def write_efficiency_csv(model, x_test, y_test, output_file):
+    """Write signal and background efficiency as a function of threshold to CSV."""
+    y_pred_proba = model.predict_proba(x_test)[:, 1]
+    thresholds = np.linspace(0, 1, 101)
+
+    n_signal = (y_test == 1).sum()
+    n_background = (y_test == 0).sum()
+
+    eff_signal = []
+    eff_background = []
+
+    for t in thresholds:
+        pred = y_pred_proba >= t
+        eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else 0)
+        eff_background.append(((pred) & (y_test == 0)).sum() / n_background if n_background else 0)
+
+    pd.DataFrame(
+        {
+            "threshold": thresholds,
+            "signal_efficiency": eff_signal,
+            "background_efficiency": eff_background,
+        }
+    ).to_csv(output_file, index=False)
+
+    _logger.info(f"Wrote signal and background efficiency CSV files to {output_file}")
+
+
 def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
     """Evaluate the trained model on the test set and log performance metrics."""
     y_pred_proba = model.predict_proba(x_test)[:, 1]
