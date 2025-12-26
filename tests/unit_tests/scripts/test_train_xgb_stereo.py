@@ -31,7 +31,7 @@ def empty_df():
 
 
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.dump")
-@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_model")
+@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_regression_model")
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.MultiOutputRegressor")
 def test_train_with_valid_data(mock_multi_output, mock_evaluate, mock_dump, sample_df, tmp_path):
     """Test train function with valid data."""
@@ -47,7 +47,7 @@ def test_train_with_valid_data(mock_multi_output, mock_evaluate, mock_dump, samp
 
 
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.dump")
-@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_model")
+@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_regression_model")
 def test_train_with_empty_data(mock_evaluate, mock_dump, empty_df, caplog):
     """Test train function with empty DataFrame."""
     train(empty_df, n_tel=2, output_dir="/tmp", train_test_fraction=0.7)
@@ -58,7 +58,7 @@ def test_train_with_empty_data(mock_evaluate, mock_dump, empty_df, caplog):
 
 
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.dump")
-@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_model")
+@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_regression_model")
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.MultiOutputRegressor")
 def test_train_output_filename(mock_multi_output, mock_evaluate, mock_dump, sample_df, tmp_path):
     """Test that output filename is correctly formatted."""
@@ -74,7 +74,7 @@ def test_train_output_filename(mock_multi_output, mock_evaluate, mock_dump, samp
 
 
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.dump")
-@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_model")
+@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_regression_model")
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.MultiOutputRegressor")
 def test_train_feature_selection(mock_multi_output, mock_evaluate, mock_dump, sample_df, tmp_path):
     """Test that features are correctly separated from targets."""
@@ -94,7 +94,7 @@ def test_train_feature_selection(mock_multi_output, mock_evaluate, mock_dump, sa
 
 
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.dump")
-@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_model")
+@patch("eventdisplay_ml.scripts.train_xgb_stereo.evaluate_regression_model")
 @patch("eventdisplay_ml.scripts.train_xgb_stereo.MultiOutputRegressor")
 def test_train_test_split_fraction(
     mock_multi_output, mock_evaluate, mock_dump, sample_df, tmp_path

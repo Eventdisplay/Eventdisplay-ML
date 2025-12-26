@@ -9,7 +9,7 @@ import pytest
 
 from eventdisplay_ml.evaluate import (
     calculate_resolution,
-    evaluate_model,
+    evaluate_regression_model,
     feature_importance,
     shap_feature_importance,
 )
@@ -183,8 +183,8 @@ def test_calculate_resolution_deltas_computed_correctly(caplog):
 # ============================================================================
 
 
-def test_evaluate_model_basic(caplog):
-    """Test evaluate_model logs R^2 score and metrics."""
+def test_evaluate_regression_model_basic(caplog):
+    """Test evaluate_regression_model logs R^2 score and metrics."""
     caplog.set_level(logging.INFO)
 
     mock_model = MagicMock()
@@ -215,7 +215,7 @@ def test_evaluate_model_basic(caplog):
     df = pd.DataFrame({"MCe0": [1.0, 1.1]}, index=[0, 1])
     y_data = pd.DataFrame({"target_1": [1, 2], "target_2": [3, 4]})
 
-    evaluate_model(
+    evaluate_regression_model(
         mock_model, x_test, y_test, df, ["feat_1", "feat_2", "feat_3"], y_data, "test_model"
     )
 
@@ -232,8 +232,8 @@ def test_evaluate_model_basic(caplog):
         ("random_forest", False),
     ],
 )
-def test_evaluate_model_shap_conditional(caplog, model_name, has_xgb):
-    """Test evaluate_model calls SHAP only for XGBoost models."""
+def test_evaluate_regression_model_shap_conditional(caplog, model_name, has_xgb):
+    """Test evaluate_regression_model calls SHAP only for XGBoost models."""
     caplog.set_level(logging.INFO)
 
     mock_model = MagicMock()
@@ -253,7 +253,7 @@ def test_evaluate_model_shap_conditional(caplog, model_name, has_xgb):
     df = pd.DataFrame({"MCe0": [1.0]}, index=[0])
     y_data = pd.DataFrame({"target": [1]})
 
-    evaluate_model(mock_model, x_test, y_test, df, ["x", "y", "z"], y_data, model_name)
+    evaluate_regression_model(mock_model, x_test, y_test, df, ["x", "y", "z"], y_data, model_name)
 
     if has_xgb:
         assert "Builtin XGBoost SHAP Importance" in caplog.text
@@ -261,8 +261,8 @@ def test_evaluate_model_shap_conditional(caplog, model_name, has_xgb):
         assert "Builtin XGBoost SHAP Importance" not in caplog.text
 
 
-def test_evaluate_model_calls_resolution(caplog):
-    """Test evaluate_model calls calculate_resolution."""
+def test_evaluate_regression_model_calls_resolution(caplog):
+    """Test evaluate_regression_model calls calculate_resolution."""
     caplog.set_level(logging.INFO)
 
     mock_model = MagicMock()
@@ -278,7 +278,7 @@ def test_evaluate_model_calls_resolution(caplog):
     df = pd.DataFrame({"MCe0": [0.5, 1.0]}, index=[0, 1])
     y_data = pd.DataFrame({"target": [1, 2]})
 
-    evaluate_model(mock_model, x_test, y_test, df, ["m", "n", "o"], y_data, "test_model")
+    evaluate_regression_model(mock_model, x_test, y_test, df, ["m", "n", "o"], y_data, "test_model")
 
     assert "DeltaTheta Resolution vs. Log10(MCe0)" in caplog.text
     assert "DeltaMCe0 Resolution vs. Log10(MCe0)" in caplog.text

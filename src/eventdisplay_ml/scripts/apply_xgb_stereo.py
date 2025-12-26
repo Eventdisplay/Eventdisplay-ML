@@ -16,7 +16,7 @@ import uproot
 
 from eventdisplay_ml.data_processing import flatten_data_vectorized
 from eventdisplay_ml.training_variables import (
-    xgb_all_training_variables,
+    xgb_all_regression_training_variables,
     xgb_per_telescope_training_variables,
 )
 from eventdisplay_ml.utils import parse_image_selection
@@ -241,7 +241,7 @@ def process_file_chunked(
         return a value.
     """
     models = load_models(model_dir)
-    branch_list = [*xgb_all_training_variables(), "fpointing_dx", "fpointing_dy"]
+    branch_list = [*xgb_all_regression_training_variables(), "fpointing_dx", "fpointing_dy"]
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")

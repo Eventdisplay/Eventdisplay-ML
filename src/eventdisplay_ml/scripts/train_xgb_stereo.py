@@ -20,7 +20,7 @@ from sklearn.multioutput import MultiOutputRegressor
 
 from eventdisplay_ml import utils
 from eventdisplay_ml.data_processing import load_training_data
-from eventdisplay_ml.evaluate import evaluate_model
+from eventdisplay_ml.evaluate import evaluate_regression_model
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ def train(df, n_tel, output_dir, train_test_fraction):
         dump(model, output_filename)
         _logger.info(f"{name} model saved to: {output_filename}")
 
-        evaluate_model(model, x_test, y_test, df, x_cols, y_data, name)
+        evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
 
 
 def main():
@@ -124,7 +124,7 @@ def main():
 
     df_flat = load_training_data(input_files, args.ntel, args.max_events)
     train(df_flat, args.ntel, output_dir, args.train_test_fraction)
-    _logger.info("\nXGBoost model trained successfully.")
+    _logger.info("XGBoost model trained successfully.")
 
 
 if __name__ == "__main__":

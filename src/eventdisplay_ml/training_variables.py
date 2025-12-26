@@ -29,7 +29,7 @@ def xgb_per_telescope_training_variables():
     ]
 
 
-def xgb_array_training_variables():
+def xgb_regression_training_variables():
     """Array-level training variables for XGB."""
     return [
         "DispNImages",
@@ -44,6 +44,24 @@ def xgb_array_training_variables():
     ]
 
 
-def xgb_all_training_variables():
+def xgb_classification_training_variables():
+    """Training variables for XGB classification."""
+    return [
+        "DispNImages",
+        "DispTelList_T",
+        "Erec",
+        "ErecS",
+        "EmissionHeight",
+        "MSCW",
+        "MSCL",
+    ]
+
+
+def xgb_all_regression_training_variables():
     """All training variables for XGB."""
-    return xgb_per_telescope_training_variables() + xgb_array_training_variables()
+    return xgb_per_telescope_training_variables() + xgb_regression_training_variables()
+
+
+def xgb_all_classification_training_variables():
+    """All training variables for XGB classification."""
+    return xgb_per_telescope_training_variables() + xgb_classification_training_variables()

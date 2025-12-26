@@ -11,7 +11,8 @@ import pandas as pd
 import uproot
 
 from eventdisplay_ml.training_variables import (
-    xgb_all_training_variables,
+    xgb_all_classification_training_variables,
+    xgb_all_regression_training_variables,
     xgb_per_telescope_training_variables,
 )
 
@@ -22,6 +23,7 @@ def flatten_data_vectorized(
     df,
     n_tel,
     training_variables,
+    analysis_type,
     apply_pointing_corrections=False,
     dtype=None,
 ):
@@ -118,20 +120,32 @@ def flatten_data_vectorized(
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
     cast_type = dtype if dtype is not None else np.float32
-    extra_cols = pd.DataFrame(
-        {
-            "Xoff_weighted_bdt": df["Xoff"].astype(cast_type),
-            "Yoff_weighted_bdt": df["Yoff"].astype(cast_type),
-            "Xoff_intersect": df["Xoff_intersect"].astype(cast_type),
-            "Yoff_intersect": df["Yoff_intersect"].astype(cast_type),
-            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(cast_type),
-            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(cast_type),
-            "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(cast_type),
-            "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(cast_type),
-            "EmissionHeight": df["EmissionHeight"].astype(cast_type),
-        },
-        index=df.index,
-    )
+    if analysis_type == "stereo_analysis":
+        extra_cols = pd.DataFrame(
+            {
+                "Xoff_weighted_bdt": df["Xoff"].astype(cast_type),
+                "Yoff_weighted_bdt": df["Yoff"].astype(cast_type),
+                "Xoff_intersect": df["Xoff_intersect"].astype(cast_type),
+                "Yoff_intersect": df["Yoff_intersect"].astype(cast_type),
+                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(cast_type),
+                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(cast_type),
+                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(cast_type),
+                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(cast_type),
+                "EmissionHeight": df["EmissionHeight"].astype(cast_type),
+            },
+            index=df.index,
+        )
+    else:  # classification
+        extra_cols = pd.DataFrame(
+            {
+                "MSCW": df["MSCW"].astype(cast_type),
+                "MSCL": df["MSCL"].astype(cast_type),
+                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(cast_type),
+                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(cast_type),
+                "EmissionHeight": df["EmissionHeight"].astype(cast_type),
+            },
+            index=df.index,
+        )
 
     return pd.concat([df_flat, extra_cols], axis=1)
 
@@ -172,7 +186,7 @@ def _to_dense_array(col):
         return _to_padded_array(arrays)
 
 
-def load_training_data(input_files, n_tel, max_events):
+def load_training_data(input_files, n_tel, max_events, analysis_type="stereo_analysis"):
     """
     Load and flatten training data from the mscw file for the requested telescope multiplicity.
 
@@ -185,13 +199,21 @@ def load_training_data(input_files, n_tel, max_events):
     max_events : int
         Maximum number of events to load. If <= 0, load all available events.
     """
-    _logger.info(f"\n--- Loading and Flattening Data for n_tel = {n_tel} ---")
+    _logger.info(f"\n--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
         "Max events to process: "
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
 
-    branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_training_variables()]
+    event_cut = f"(DispNImages == {n_tel})"
+    if analysis_type == "stereo_analysis":
+        branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_regression_training_variables()]
+    elif analysis_type in ("signal_classification", "background_classification"):
+        branch_list = [*xgb_all_classification_training_variables()]
+        event_cut += "& (MSCW > -2) & (MSCW < 2) & (MSCL > -2) & (MSCL < 5)"
+        event_cut += "& (EmissionHeight>0) & (EmissionHeight<50)"
+    else:
+        raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
     dfs = []
 
@@ -209,9 +231,8 @@ def load_training_data(input_files, n_tel, max_events):
                 if "data" in root_file:
                     _logger.info(f"Processing file: {f}")
                     tree = root_file["data"]
-                    df = tree.arrays(branch_list, library="pd")
-                    df = df[df["DispNImages"] == n_tel]
-                    _logger.info(f"Number of events after n_tel filter: {len(df)}")
+                    df = tree.arrays(branch_list, cut=event_cut, library="pd")
+                    _logger.info(f"Number of events after filter {event_cut}: {len(df)}")
                     if max_events_per_file and len(df) > max_events_per_file:
                         df = df.sample(n=max_events_per_file, random_state=42)
                     if not df.empty:
@@ -229,12 +250,17 @@ def load_training_data(input_files, n_tel, max_events):
     _logger.info(f"Total events for n_tel={n_tel}: {len(data_tree)}")
 
     df_flat = flatten_data_vectorized(
-        data_tree, n_tel, xgb_per_telescope_training_variables(), apply_pointing_corrections=False
+        data_tree,
+        n_tel,
+        xgb_per_telescope_training_variables(),
+        analysis_type,
+        apply_pointing_corrections=False,
     )
 
-    df_flat["MCxoff"] = data_tree["MCxoff"]
-    df_flat["MCyoff"] = data_tree["MCyoff"]
-    df_flat["MCe0"] = np.log10(data_tree["MCe0"])
+    if analysis_type == "stereo_analysis":
+        df_flat["MCxoff"] = data_tree["MCxoff"]
+        df_flat["MCyoff"] = data_tree["MCyoff"]
+        df_flat["MCe0"] = np.log10(data_tree["MCe0"])
 
     # Keep events even if some optional training variables are missing; only drop
     # columns that are entirely NaN (e.g., missing branches like DispXoff_T).
