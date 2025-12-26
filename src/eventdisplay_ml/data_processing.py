@@ -110,8 +110,10 @@ def flatten_data_vectorized(
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
         df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
-        df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
+        if "E_{i}" in df_flat:
+            df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
+        if "ES_{i}" in df_flat:
+            df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
 
         if apply_pointing_corrections:
             df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
@@ -140,9 +142,11 @@ def flatten_data_vectorized(
             {
                 "MSCW": df["MSCW"].astype(cast_type),
                 "MSCL": df["MSCL"].astype(cast_type),
-                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(cast_type),
-                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(cast_type),
+                "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(cast_type),
                 "EmissionHeight": df["EmissionHeight"].astype(cast_type),
+                "EmissionHeightChi2": np.log10(
+                    np.clip(df["EmissionHeightChi2"], 1e-6, None)
+                ).astype(cast_type),
             },
             index=df.index,
         )
@@ -186,7 +190,9 @@ def _to_dense_array(col):
         return _to_padded_array(arrays)
 
 
-def load_training_data(input_files, n_tel, max_events, analysis_type="stereo_analysis"):
+def load_training_data(
+    input_files, n_tel, max_events, analysis_type="stereo_analysis", erec_range=None
+):
     """
     Load and flatten training data from the mscw file for the requested telescope multiplicity.
 
@@ -198,6 +204,10 @@ def load_training_data(input_files, n_tel, max_events, analysis_type="stereo_ana
         Telescope multiplicity to filter on.
     max_events : int
         Maximum number of events to load. If <= 0, load all available events.
+    analysis_type : str, optional
+        Type of analysis: "stereo_analysis", "signal_classification", or "background_classification".
+    erec_range : tuple(float, float), optional
+        Range of log10(Erec/TeV) for event selection: (min, max)
     """
     _logger.info(f"\n--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
@@ -210,8 +220,11 @@ def load_training_data(input_files, n_tel, max_events, analysis_type="stereo_ana
         branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_regression_training_variables()]
     elif analysis_type in ("signal_classification", "background_classification"):
         branch_list = [*xgb_all_classification_training_variables()]
-        event_cut += "& (MSCW > -2) & (MSCW < 2) & (MSCL > -2) & (MSCL < 5)"
+        event_cut += "& (Erec > 0) & (MSCW > -2) & (MSCW < 2) & (MSCL > -2) & (MSCL < 5)"
         event_cut += "& (EmissionHeight>0) & (EmissionHeight<50)"
+        if erec_range is not None:
+            e_min, e_max = (10**v for v in erec_range)
+            event_cut += f"& (Erec >= {e_min}) & (Erec <= {e_max})"
     else:
         raise ValueError(f"Unknown analysis_type: {analysis_type}")
 

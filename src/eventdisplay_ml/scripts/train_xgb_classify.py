@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
 
-def train(signal_df, background_df, n_tel, output_dir, train_test_fraction):
+def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, energy_bin_number):
     """
     Train a single XGBoost model for gamma/hadron classification.
 
@@ -35,6 +35,7 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction):
     - n_tel: Telescope multiplicity.
     - output_dir: Directory to save the trained model.
     - train_test_fraction: Fraction of data to use for training.
+    - energy_bin_number: Energy bin number for selection.
     """
     if signal_df.empty or background_df.empty:
         _logger.warning(
@@ -69,7 +70,9 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction):
         _logger.info(f"parameters: {xgb_params}")
         model.fit(x_train, y_train)
 
-        output_filename = Path(output_dir) / f"classify_bdt_ntel{n_tel}_{name}.joblib"
+        output_filename = (
+            Path(output_dir) / f"classify_bdt_ntel{n_tel}_{name}_bin{energy_bin_number}.joblib"
+        )
         dump(model, output_filename)
         _logger.info(f"{name} model saved to: {output_filename}")
 
@@ -98,6 +101,20 @@ def main():
         type=int,
         help="Maximum number of events to process across all files.",
     )
+    parser.add_argument(
+        "--erec_range",
+        type=float,
+        nargs=2,
+        metavar=("MIN", "MAX"),
+        help="log10(Erec/TeV) range for event selection: min max",
+        default=[-2.0, 3.0],
+    )
+    parser.add_argument(
+        "--energy_bin_number",
+        type=int,
+        help="Energy bin number for selection (optional).",
+        default=0,
+    )
 
     args = parser.parse_args()
 
@@ -116,9 +133,14 @@ def main():
     _logger.info(
         f"Train vs test fraction: {args.train_test_fraction}, Max events: {args.max_events}"
     )
+    _logger.info(f"Bin {args.energy_bin_number} log10(Erec/TeV) range: {args.erec_range}")
 
     signal_events = load_training_data(
-        input_signal_files, args.ntel, args.max_events, analysis_type="signal_classification"
+        input_signal_files,
+        args.ntel,
+        args.max_events,
+        analysis_type="signal_classification",
+        erec_range=args.erec_range,
     )
 
     background_events = load_training_data(
@@ -126,9 +148,17 @@ def main():
         args.ntel,
         args.max_events,
         analysis_type="background_classification",
+        erec_range=args.erec_range,
     )
 
-    train(signal_events, background_events, args.ntel, output_dir, args.train_test_fraction)
+    train(
+        signal_events,
+        background_events,
+        args.ntel,
+        output_dir,
+        args.train_test_fraction,
+        args.energy_bin_number,
+    )
 
     _logger.info("XGBoost model trained successfully.")
 

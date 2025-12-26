@@ -49,9 +49,9 @@ def xgb_classification_training_variables():
     return [
         "DispNImages",
         "DispTelList_T",
-        "Erec",
-        "ErecS",
+        "EChi2S",
         "EmissionHeight",
+        "EmissionHeightChi2",
         "MSCW",
         "MSCL",
     ]
@@ -64,4 +64,9 @@ def xgb_all_regression_training_variables():
 
 def xgb_all_classification_training_variables():
     """All training variables for XGB classification."""
-    return xgb_per_telescope_training_variables() + xgb_classification_training_variables()
+    var_per_telescope = xgb_per_telescope_training_variables()
+    # no energies for classification
+    var_per_telescope.remove("E")
+    var_per_telescope.remove("ES")
+
+    return var_per_telescope + xgb_classification_training_variables()
