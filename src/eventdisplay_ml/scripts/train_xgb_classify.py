@@ -71,7 +71,7 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
         model.fit(x_train, y_train)
 
         output_filename = (
-            Path(output_dir) / f"classify_bdt_ntel{n_tel}_{name}_bin{energy_bin_number}.joblib"
+            Path(output_dir) / f"classify_bdt_{name}_ntel{n_tel}_bin{energy_bin_number}.joblib"
         )
         dump(model, output_filename)
         _logger.info(f"{name} model saved to: {output_filename}")

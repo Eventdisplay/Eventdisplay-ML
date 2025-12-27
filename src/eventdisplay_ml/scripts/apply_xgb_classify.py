@@ -1,9 +1,11 @@
 """
-Evaluate XGBoost BDTs for stereo reconstruction (direction, energy).
+Apply XGBoost classification model.
 
-Applies trained XGBoost models to predict Xoff, Yoff, and energy
-for each event from an input mscw file. The output ROOT file contains
-one row per input event, maintaining the original event order.
+Applies trained XGBoost classification models to input data and outputs
+for each event the predicted signal probability.
+
+Takes into account telescope multiplicity and training in energy bins.
+
 """
 
 import argparse
@@ -13,8 +15,11 @@ import numpy as np
 import uproot
 
 from eventdisplay_ml.data_processing import apply_image_selection
-from eventdisplay_ml.models import apply_regression_models, load_regression_models
-from eventdisplay_ml.training_variables import xgb_all_regression_training_variables
+from eventdisplay_ml.models import (
+    apply_classification_models,
+    load_classification_models,
+)
+from eventdisplay_ml.training_variables import xgb_all_classification_training_variables
 from eventdisplay_ml.utils import parse_image_selection
 
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +29,7 @@ _logger = logging.getLogger(__name__)
 def process_file_chunked(
     input_file,
     models,
+    model_parameters,
     output_file,
     image_selection,
     max_events=None,
@@ -37,7 +43,9 @@ def process_file_chunked(
     input_file : str
         Path to the input ROOT file containing a "data" TTree.
     models : dict
-        Dictionary of loaded XGBoost models for regression.
+        Dictionary of loaded XGBoost models for classification.
+    model_parameters : dict
+        Model parameters defining energy and zenith angle bins.
     output_file : str
         Path to the output ROOT file to create.
     image_selection : str
@@ -57,19 +65,19 @@ def process_file_chunked(
         This function writes results directly to ``output_file`` and does not
         return a value.
     """
-    branch_list = [*xgb_all_regression_training_variables(), "fpointing_dx", "fpointing_dy"]
+    branch_list = ["Erec", *xgb_all_classification_training_variables()]
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")
     if max_events:
         _logger.info(f"Maximum events to process: {max_events}")
 
-    with uproot.recreate(output_file) as root_file:
-        tree = root_file.mktree(
-            "StereoAnalysis",
-            {"Dir_Xoff": np.float32, "Dir_Yoff": np.float32, "Dir_Erec": np.float32},
-        )
+    bin_centers = np.array(
+        [(b["E_min"] + b["E_max"]) / 2 for b in model_parameters["energy_bins_log10_tev"]]
+    )
 
+    with uproot.recreate(output_file) as root_file:
+        tree = root_file.mktree("Classification", {"IsGamma": np.float32})
         total_processed = 0
 
         for df_chunk in uproot.iterate(
@@ -82,7 +90,7 @@ def process_file_chunked(
                 continue
 
             df_chunk = apply_image_selection(
-                df_chunk, selected_indices, analysis_type="stereo_analysis"
+                df_chunk, selected_indices, analysis_type="classification"
             )
             if df_chunk.empty:
                 continue
@@ -90,17 +98,22 @@ def process_file_chunked(
             if max_events is not None and total_processed >= max_events:
                 break
 
+            # energy bins (closest center)
+            valid_energy_mask = df_chunk["Erec"].values > 0
+            df_chunk["e_bin"] = -1
+            log_e = np.log10(df_chunk.loc[valid_energy_mask, "Erec"].values)
+            distances = np.abs(log_e[:, np.newaxis] - bin_centers)
+            df_chunk.loc[valid_energy_mask, "e_bin"] = np.argmin(distances, axis=1)
+
             # Reset index to local chunk indices (0, 1, 2, ...) to avoid
             # index out-of-bounds when indexing chunk-sized output arrays
             df_chunk = df_chunk.reset_index(drop=True)
 
-            pred_xoff, pred_yoff, pred_erec = apply_regression_models(df_chunk, models)
+            pred_proba = apply_classification_models(df_chunk, models)
 
             tree.extend(
                 {
-                    "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
-                    "Dir_Yoff": np.asarray(pred_yoff, dtype=np.float32),
-                    "Dir_Erec": np.power(10.0, pred_erec, dtype=np.float32),
+                    "IsGamma": np.asarray(pred_proba, dtype=np.float32),
                 }
             )
 
@@ -111,10 +124,8 @@ def process_file_chunked(
 
 
 def main():
-    """Apply XGBoost stereo models to input data."""
-    parser = argparse.ArgumentParser(
-        description=("Apply XGBoost Multi-Target BDTs for Stereo Reconstruction")
-    )
+    """Apply XGBoost classification."""
+    parser = argparse.ArgumentParser(description=("Apply XGBoost Classification"))
     parser.add_argument(
         "--input-file",
         required=True,
@@ -126,6 +137,11 @@ def main():
         required=True,
         metavar="MODEL_DIR",
         help="Directory containing XGBoost models",
+    )
+    parser.add_argument(
+        "--model-parameters",
+        type=str,
+        help=("Path to model parameter file (JSON) defining which models to load. "),
     )
     parser.add_argument(
         "--output-file",
@@ -158,16 +174,19 @@ def main():
     )
     args = parser.parse_args()
 
-    _logger.info("--- XGBoost Multi-Target Stereo Analysis Evaluation ---")
+    _logger.info("--- XGBoost Classification Evaluation ---")
     _logger.info(f"Input file: {args.input_file}")
     _logger.info(f"Model directory: {args.model_dir}")
     _logger.info(f"Output file: {args.output_file}")
     _logger.info(f"Image selection: {args.image_selection}")
 
+    models, model_par = load_classification_models(args.model_dir, args.model_parameters)
+
     process_file_chunked(
         input_file=args.input_file,
-        models=load_regression_models(args.model_dir),
         output_file=args.output_file,
+        models=models,
+        model_parameters=model_par,
         image_selection=args.image_selection,
         max_events=args.max_events,
         chunk_size=args.chunk_size,

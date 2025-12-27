@@ -122,7 +122,9 @@ def main():
         f"Train vs test fraction: {args.train_test_fraction}, Max events: {args.max_events}"
     )
 
-    df_flat = load_training_data(input_files, args.ntel, args.max_events)
+    df_flat = load_training_data(
+        input_files, args.ntel, args.max_events, analysis_type="stereo_analysis"
+    )
     train(df_flat, args.ntel, output_dir, args.train_test_fraction)
     _logger.info("XGBoost model trained successfully.")
 

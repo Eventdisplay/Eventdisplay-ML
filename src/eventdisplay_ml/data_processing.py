@@ -281,3 +281,69 @@ def load_training_data(
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
 
     return df_flat
+
+
+def apply_image_selection(df, selected_indices, analysis_type):
+    """
+    Filter and pad telescope lists for selected indices.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame containing telescope data.
+    selected_indices : list[int] or None
+        List of selected telescope indices. If None or all 4 telescopes
+        are selected, the DataFrame is returned unchanged.
+    analysis_type : str, optional
+        Type of analysis (e.g., "stereo_analysis")
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with updated "DispTelList_T" and "DispNImages" columns,
+        and per-telescope variables padded to length 4 with NaN.
+    """
+    if selected_indices is None or len(selected_indices) == 4:
+        return df
+
+    selected_set = set(selected_indices)
+
+    def calculate_intersection(tel_list):
+        return [tel_idx for tel_idx in tel_list if tel_idx in selected_set]
+
+    df = df.copy()
+    df["DispTelList_T_new"] = df["DispTelList_T"].apply(calculate_intersection)
+    df["DispNImages_new"] = df["DispTelList_T_new"].apply(len)
+
+    _logger.info(
+        f"\n{df[['DispNImages', 'DispTelList_T', 'DispNImages_new', 'DispTelList_T_new']].head(20).to_string()}"
+    )
+
+    df["DispTelList_T"] = df["DispTelList_T_new"]
+    df["DispNImages"] = df["DispNImages_new"]
+    df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
+
+    if analysis_type == "stereo_analysis":
+        pad_vars = [
+            *xgb_per_telescope_training_variables(),
+            "fpointing_dx",
+            "fpointing_dy",
+        ]
+    else:
+        pad_vars = xgb_per_telescope_training_variables()
+    for var_name in pad_vars:
+        if var_name in df.columns:
+            df[var_name] = df[var_name].apply(_pad_to_four)
+
+    return df
+
+
+def _pad_to_four(arr_like):
+    """Pad a per-telescope array-like to length 4 with NaN values."""
+    if isinstance(arr_like, (list, np.ndarray)):
+        arr = np.asarray(arr_like, dtype=np.float32)
+        pad = max(0, 4 - arr.shape[0])
+        if pad:
+            arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
+        return arr
+    return arr_like
