@@ -92,7 +92,7 @@ def load_regression_models(model_dir):
     return models
 
 
-def apply_regression_models(df, models_or_dir, selection_mask=None):
+def apply_regression_models(df, models):
     """
     Apply trained XGBoost models for stereo analysis to a DataFrame chunk.
 
@@ -100,12 +100,8 @@ def apply_regression_models(df, models_or_dir, selection_mask=None):
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
-    models_or_dir : dict[int, Any] or str
-        Either a preloaded models dictionary (as returned by :func:`load_models`)
-        or a path to a model directory. If a string is provided, models are
-        loaded on the fly to satisfy test expectations.
-    selection_mask : pandas.Series or None
-        Optional mask; False entries are marked with -999 in outputs.
+    models : dict
+        Preloaded models dictionary (as returned by :func:`load_models`).
 
     Returns
     -------
@@ -120,64 +116,22 @@ def apply_regression_models(df, models_or_dir, selection_mask=None):
         with the index of ``df``.
     """
     n_events = len(df)
-    pred_xoff = np.full(n_events, np.nan, dtype=np.float32)
-    pred_yoff = np.full(n_events, np.nan, dtype=np.float32)
-    pred_erec = np.full(n_events, np.nan, dtype=np.float32)
-    if isinstance(models_or_dir, str):
-        models = load_regression_models(models_or_dir)
-    else:
-        models = models_or_dir
+    preds = np.full((n_events, 3), np.nan, dtype=np.float32)
 
     grouped = df.groupby("DispNImages")
 
     for n_tel, group_df in grouped:
         n_tel = int(n_tel)
-        if int(n_tel) < 2:
-            continue
-        if n_tel not in models:
-            _logger.warning(
-                f"No model available for n_tel={n_tel}, skipping {len(group_df)} events"
-            )
+        if n_tel < 2 or n_tel not in models:
+            _logger.warning(f"No model for n_tel={n_tel}")
             continue
 
         _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
 
-        training_vars_with_pointing = [
-            *xgb_per_telescope_training_variables(),
-            "fpointing_dx",
-            "fpointing_dy",
-        ]
-        df_flat = flatten_data_vectorized(
-            group_df,
-            n_tel,
-            training_vars_with_pointing,
-            analysis_type="stereo_analysis",
-            apply_pointing_corrections=True,
-            dtype=np.float32,
-        )
+        x_features = features(group_df, n_tel, analysis_type="stereo_analysis")
+        preds[group_df.index] = models[n_tel].predict(x_features)
 
-        excluded_columns = ["MCxoff", "MCyoff", "MCe0"]
-        for n in range(n_tel):
-            excluded_columns.append(f"fpointing_dx_{n}")
-            excluded_columns.append(f"fpointing_dy_{n}")
-
-        feature_cols = [col for col in df_flat.columns if col not in excluded_columns]
-        x_features = df_flat[feature_cols]
-
-        model = models[n_tel]
-        predictions = model.predict(x_features)
-
-        for i, idx in enumerate(group_df.index):
-            pred_xoff[idx] = predictions[i, 0]
-            pred_yoff[idx] = predictions[i, 1]
-            pred_erec[idx] = predictions[i, 2]
-
-    if selection_mask is not None:
-        pred_xoff = np.where(selection_mask, pred_xoff, -999.0)
-        pred_yoff = np.where(selection_mask, pred_yoff, -999.0)
-        pred_erec = np.where(selection_mask, pred_erec, -999.0)
-
-    return pred_xoff, pred_yoff, pred_erec
+    return preds[:, 0], preds[:, 1], preds[:, 2]
 
 
 def apply_classification_models(df, models):
@@ -190,8 +144,6 @@ def apply_classification_models(df, models):
         Chunk of events to process.
     models: dict
         Preloaded models dictionary
-    model_parameters : dict
-        Model parameters defining energy and zenith angle bins.
 
     Returns
     -------
@@ -202,50 +154,59 @@ def apply_classification_models(df, models):
     class_probability = np.full(len(df), np.nan, dtype=np.float32)
 
     # 1. Group by Number of Images (n_tel)
-    grouped_ntel = df.groupby("DispNImages")
-
-    for n_tel, group_ntel_df in grouped_ntel:
+    for n_tel, group_ntel_df in df.groupby("DispNImages"):
         n_tel = int(n_tel)
         if n_tel < 2 or n_tel not in models:
+            _logger.warning(f"No model for n_tel={n_tel}")
             continue
 
         # 2. Group by Energy Bin (e_bin)
-        grouped_ebin = group_ntel_df.groupby("e_bin")
-
-        for e_bin, group_df in grouped_ebin:
+        for e_bin, group_df in group_ntel_df.groupby("e_bin"):
             e_bin = int(e_bin)
-
             if e_bin == -1:
                 continue
-
             if e_bin not in models[n_tel]:
                 _logger.warning(f"No model for n_tel={n_tel}, e_bin={e_bin}")
                 continue
 
             _logger.info(f"Processing {len(group_df)} events: n_tel={n_tel}, bin={e_bin}")
 
-            # Prepare features (same logic as your regression)
-            training_vars = xgb_per_telescope_training_variables()
-            df_flat = flatten_data_vectorized(
-                group_df,
-                n_tel,
-                training_vars,
-                analysis_type="classification",
-                apply_pointing_corrections=False,
-                dtype=np.float32,
-            )
-
-            excluded = ["label", "class", "Erec", "MCe0"]
-            for n in range(n_tel):
-                excluded.append(f"E_{n}")
-                excluded.append(f"ES_{n}")
-            feature_cols = [col for col in df_flat.columns if col not in excluded]
-            x_features = df_flat[feature_cols]
-
-            model = models[n_tel][e_bin]
-            probs = model.predict_proba(x_features)[:, 1]
-
-            for i, idx in enumerate(group_df.index):
-                class_probability[idx] = probs[i]
+            x_features = features(group_df, n_tel, analysis_type="classification")
+            class_probability[group_df.index] = models[n_tel][e_bin].predict_proba(x_features)[:, 1]
 
     return class_probability
+
+
+def features(group_df, ntel, analysis_type):
+    """Get flattened features for a group of events with given telescope multiplicity."""
+    if analysis_type == "stereo_analysis":
+        training_vars = [*xgb_per_telescope_training_variables(), "fpointing_dx", "fpointing_dy"]
+    else:
+        training_vars = xgb_per_telescope_training_variables()
+
+    df_flat = flatten_data_vectorized(
+        group_df,
+        ntel,
+        training_vars,
+        analysis_type=analysis_type,
+        apply_pointing_corrections=(analysis_type == "stereo_analysis"),
+    )
+
+    excluded_columns = {"MCxoff", "MCyoff", "MCe0", "label", "class"}
+    if analysis_type == "stereo_analysis":
+        excluded_columns.update(
+            {
+                *[f"fpointing_dx_{i}" for i in range(ntel)],
+                *[f"fpointing_dy_{i}" for i in range(ntel)],
+            }
+        )
+    else:
+        excluded_columns.update(
+            {
+                "Erec",
+                *[f"E_{i}" for i in range(ntel)],
+                *[f"ES_{i}" for i in range(ntel)],
+            }
+        )
+
+    return df_flat.drop(columns=excluded_columns, errors="ignore")

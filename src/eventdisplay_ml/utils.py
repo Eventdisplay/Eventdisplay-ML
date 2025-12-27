@@ -25,6 +25,9 @@ def read_input_file_list(input_file_list):
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Error: Input file list not found: {input_file_list}") from exc
 
+    if not input_files:
+        raise ValueError(f"Error: No input files found in the list: {input_file_list}")
+
     return input_files
 
 

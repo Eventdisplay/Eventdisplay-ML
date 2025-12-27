@@ -1,5 +1,5 @@
 """
-Shared data processing utilities for XGBoost analysis.
+Data processing for XGBoost analysis.
 
 Provides common functions for flattening and preprocessing telescope array data.
 """
@@ -25,7 +25,6 @@ def flatten_data_vectorized(
     training_variables,
     analysis_type,
     apply_pointing_corrections=False,
-    dtype=None,
 ):
     """
     Vectorized flattening of telescope array columns.
@@ -45,10 +44,6 @@ def flatten_data_vectorized(
     apply_pointing_corrections : bool, optional
         If True, apply pointing offset corrections to cen_x and cen_y.
         Set to True for inference, False for training. Default is False.
-    dtype : numpy.dtype, optional
-        Data type to cast flattened features to. If None, the main flattened
-        features are not explicitly cast, but extra derived columns are created
-        with dtype ``np.float32``. Use np.float32 for memory efficiency in inference.
 
     Returns
     -------
@@ -60,27 +55,19 @@ def flatten_data_vectorized(
         Xoff_intersect, Erec, EmissionHeight, etc.).
     """
     flat_features = {}
-    tel_list_col = "DispTelList_T"
+    tel_list_matrix = _to_dense_array(df["DispTelList_T"])
+    n_evt = len(df)
 
-    tel_list_matrix = _to_dense_array(df[tel_list_col])
-
-    for var_name in training_variables:
-        if var_name in df:
-            data_matrix = _to_dense_array(df[var_name])
-        else:
-            _logger.debug(
-                "Training variable %s missing in input data; filling with NaN values.",
-                var_name,
-            )
-            data_matrix = np.full((len(df), n_tel), np.nan)
+    for var in training_variables:
+        data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
 
         for i in range(n_tel):
-            col_name = f"{var_name}_{i}"
+            col_name = f"{var}_{i}"
 
-            if var_name.startswith("Disp"):
+            if var.startswith("Disp"):
                 # Case 1: Simple index i
-                if i < data_matrix.shape[1]:
-                    flat_features[col_name] = data_matrix[:, i]
+                if i < data.shape[1]:
+                    flat_features[col_name] = data[:, i]
                 else:
                     flat_features[col_name] = np.full(len(df), np.nan)
             else:
@@ -88,18 +75,14 @@ def flatten_data_vectorized(
                 target_tel_indices = tel_list_matrix[:, i].astype(int)
 
                 row_indices = np.arange(len(df))
-                valid_mask = (target_tel_indices >= 0) & (target_tel_indices < data_matrix.shape[1])
+                valid_mask = (target_tel_indices >= 0) & (target_tel_indices < data.shape[1])
                 result = np.full(len(df), np.nan)
-                result[valid_mask] = data_matrix[
-                    row_indices[valid_mask], target_tel_indices[valid_mask]
-                ]
+                result[valid_mask] = data[row_indices[valid_mask], target_tel_indices[valid_mask]]
 
                 flat_features[col_name] = result
 
     df_flat = pd.DataFrame(flat_features, index=df.index)
-
-    if dtype is not None:
-        df_flat = df_flat.astype(dtype)
+    df_flat = df_flat.astype(np.float32)
 
     new_cols = {}
     for i in range(n_tel):
@@ -121,32 +104,31 @@ def flatten_data_vectorized(
 
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
-    cast_type = dtype if dtype is not None else np.float32
     if analysis_type == "stereo_analysis":
         extra_cols = pd.DataFrame(
             {
-                "Xoff_weighted_bdt": df["Xoff"].astype(cast_type),
-                "Yoff_weighted_bdt": df["Yoff"].astype(cast_type),
-                "Xoff_intersect": df["Xoff_intersect"].astype(cast_type),
-                "Yoff_intersect": df["Yoff_intersect"].astype(cast_type),
-                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(cast_type),
-                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(cast_type),
-                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(cast_type),
-                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(cast_type),
-                "EmissionHeight": df["EmissionHeight"].astype(cast_type),
+                "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
+                "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
+                "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
+                "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
+                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
+                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
+                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
+                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
+                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
             },
             index=df.index,
         )
     else:  # classification
         extra_cols = pd.DataFrame(
             {
-                "MSCW": df["MSCW"].astype(cast_type),
-                "MSCL": df["MSCL"].astype(cast_type),
-                "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(cast_type),
-                "EmissionHeight": df["EmissionHeight"].astype(cast_type),
+                "MSCW": df["MSCW"].astype(np.float32),
+                "MSCL": df["MSCL"].astype(np.float32),
+                "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(np.float32),
+                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
                 "EmissionHeightChi2": np.log10(
                     np.clip(df["EmissionHeightChi2"], 1e-6, None)
-                ).astype(cast_type),
+                ).astype(np.float32),
             },
             index=df.index,
         )
@@ -218,21 +200,28 @@ def load_training_data(
     event_cut = f"(DispNImages == {n_tel})"
     if analysis_type == "stereo_analysis":
         branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_regression_training_variables()]
+
     elif analysis_type in ("signal_classification", "background_classification"):
         branch_list = [*xgb_all_classification_training_variables()]
-        event_cut += "& (Erec > 0) & (MSCW > -2) & (MSCW < 2) & (MSCL > -2) & (MSCL < 5)"
-        event_cut += "& (EmissionHeight>0) & (EmissionHeight<50)"
+        cuts = [
+            "Erec > 0",
+            "MSCW > -2",
+            "MSCW < 2",
+            "MSCL > -2",
+            "MSCL < 5",
+            "EmissionHeight > 0",
+            "EmissionHeight < 50",
+        ]
         if erec_range is not None:
             e_min, e_max = (10**v for v in erec_range)
-            event_cut += f"& (Erec >= {e_min}) & (Erec <= {e_max})"
+            cuts += [f"Erec >= {e_min}", f"Erec <= {e_max}"]
+        event_cut += " & " + " & ".join(f"({c})" for c in cuts)
+
     else:
         raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
     dfs = []
 
-    if not input_files:
-        _logger.error("No input files provided.")
-        return pd.DataFrame()
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
     else:
@@ -253,11 +242,10 @@ def load_training_data(
                 else:
                     _logger.warning(f"File: {f} does not contain a 'data' tree.")
         except Exception as e:
-            _logger.error(f"Error opening or reading file {f}: {e}")
+            raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
     if len(dfs) == 0:
-        _logger.error("No data loaded from input files.")
-        return pd.DataFrame()
+        raise ValueError("No data loaded from input files.")
 
     data_tree = pd.concat(dfs, ignore_index=True)
     _logger.info(f"Total events for n_tel={n_tel}: {len(data_tree)}")
@@ -275,8 +263,6 @@ def load_training_data(
         df_flat["MCyoff"] = data_tree["MCyoff"]
         df_flat["MCe0"] = np.log10(data_tree["MCe0"])
 
-    # Keep events even if some optional training variables are missing; only drop
-    # columns that are entirely NaN (e.g., missing branches like DispXoff_T).
     df_flat.dropna(axis=1, how="all", inplace=True)
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
 
@@ -324,13 +310,10 @@ def apply_image_selection(df, selected_indices, analysis_type):
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
     if analysis_type == "stereo_analysis":
-        pad_vars = [
-            *xgb_per_telescope_training_variables(),
-            "fpointing_dx",
-            "fpointing_dy",
-        ]
+        pad_vars = [*xgb_per_telescope_training_variables(), "fpointing_dx", "fpointing_dy"]
     else:
         pad_vars = xgb_per_telescope_training_variables()
+
     for var_name in pad_vars:
         if var_name in df.columns:
             df[var_name] = df[var_name].apply(_pad_to_four)

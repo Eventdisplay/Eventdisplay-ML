@@ -30,7 +30,7 @@ def xgb_per_telescope_training_variables():
 
 
 def xgb_regression_training_variables():
-    """Array-level training variables for XGB."""
+    """Array-level training variables for XGB regression."""
     return [
         "DispNImages",
         "DispTelList_T",
@@ -45,7 +45,7 @@ def xgb_regression_training_variables():
 
 
 def xgb_classification_training_variables():
-    """Training variables for XGB classification."""
+    """Array-level training variables for XGB classification."""
     return [
         "DispNImages",
         "DispTelList_T",
@@ -58,7 +58,7 @@ def xgb_classification_training_variables():
 
 
 def xgb_all_regression_training_variables():
-    """All training variables for XGB."""
+    """All training variables for XGB regression."""
     return xgb_per_telescope_training_variables() + xgb_regression_training_variables()
 
 
