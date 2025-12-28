@@ -40,8 +40,8 @@ def test_read_input_file_list_empty_file(tmp_path):
     test_file = tmp_path / "input_files.txt"
     test_file.write_text("")
 
-    result = read_input_file_list(str(test_file))
-    assert result == []
+    with pytest.raises(ValueError, match="Error: No input files found in the list"):
+        read_input_file_list(str(test_file))
 
 
 def test_read_input_file_list_file_not_found():

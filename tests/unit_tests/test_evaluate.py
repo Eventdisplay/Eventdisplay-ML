@@ -85,7 +85,7 @@ def test_feature_importance(caplog, n_targets, n_features):
 
     feature_importance(mock_model, x_cols, target_names, name="test_model")
 
-    assert "XGBoost Multi-Regression Feature Importance" in caplog.text
+    assert "XGBoost Feature Importance" in caplog.text
     for target in target_names:
         assert f"Importance for Target: **{target}**" in caplog.text
 

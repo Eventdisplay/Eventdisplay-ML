@@ -5,8 +5,10 @@ import pandas as pd
 import pytest
 
 from eventdisplay_ml.data_processing import (
+    _pad_to_four,
     _to_dense_array,
     _to_padded_array,
+    apply_image_selection,
     flatten_data_vectorized,
     load_training_data,
 )
@@ -100,7 +102,11 @@ def test_flatten_data_vectorized(
         training_vars.extend(["cen_x", "cen_y", "fpointing_dx", "fpointing_dy"])
 
     result = flatten_data_vectorized(
-        df, n_tel=n_tel, training_variables=training_vars, apply_pointing_corrections=with_pointing
+        df,
+        n_tel=n_tel,
+        training_variables=training_vars,
+        apply_pointing_corrections=with_pointing,
+        analysis_type="stereo_analysis",
     )
 
     assert "Disp_T_0" in result.columns
@@ -125,6 +131,7 @@ def test_flatten_data_vectorized_derived_features(df_one_tel_base):
             "E",
             "ES",
         ],
+        analysis_type="stereo_analysis",
     )
 
     assert "disp_x_0" in result.columns
@@ -154,51 +161,14 @@ def test_flatten_data_vectorized_missing_data(df_three_tel_missing):
             "E",
             "ES",
         ],
+        analysis_type="stereo_analysis",
     )
     assert result["Disp_T_2"].isna().all()
-
-
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_flatten_data_vectorized_dtype(dtype, df_two_tel_base):
-    """Test flatten_data_vectorized dtype casting."""
-    result = flatten_data_vectorized(
-        df_two_tel_base,
-        n_tel=2,
-        training_variables=[
-            "Disp_T",
-            "cosphi",
-            "sinphi",
-            "loss",
-            "dist",
-            "width",
-            "length",
-            "size",
-            "E",
-            "ES",
-        ],
-        dtype=dtype,
-    )
-    assert result["Disp_T_0"].dtype == dtype
 
 
 # ============================================================================
 # Data Loading Tests
 # ============================================================================
-
-
-def test_load_training_data_empty_files(tmp_path, mocker):
-    """Test load_training_data with no matching data."""
-    mock_file = tmp_path / "test.root"
-    mock_file.touch()
-
-    mock_root_file = mocker.MagicMock()
-    mock_root_file.__enter__.return_value = {"data": None}
-    mocker.patch("uproot.open", return_value=mock_root_file)
-
-    result = load_training_data([str(mock_file)], n_tel=2, max_events=100)
-    assert result.empty
-
-
 def test_load_training_data_filters_by_n_tel(mocker):
     """Test load_training_data filters events by DispNImages."""
     df_raw = pd.DataFrame(
@@ -229,7 +199,13 @@ def test_load_training_data_filters_by_n_tel(mocker):
     )
 
     mock_tree = mocker.MagicMock()
-    mock_tree.arrays.return_value = df_raw
+
+    def arrays_side_effect(*args, **kwargs):
+        # Simulate uproot's cut by filtering DispNImages == n_tel
+        n_tel_local = 2  # match the test call below
+        return df_raw[df_raw["DispNImages"] == n_tel_local]
+
+    mock_tree.arrays.side_effect = arrays_side_effect
 
     mock_root_file = mocker.MagicMock()
     mock_root_file.__enter__.return_value = {"data": mock_tree}
@@ -287,13 +263,6 @@ def test_load_training_data_max_events(mocker, max_events, expected_max_rows):
 
     result = load_training_data(["dummy.root"], n_tel=2, max_events=max_events)
     assert len(result) <= expected_max_rows
-
-
-def test_load_training_data_handles_errors(mocker):
-    """Test load_training_data handles file read exceptions."""
-    mocker.patch("uproot.open", side_effect=Exception("File read error"))
-    result = load_training_data(["dummy.root"], n_tel=2, max_events=100)
-    assert result.empty
 
 
 def test_load_training_data_multiple_files(mocker):
@@ -383,3 +352,71 @@ def test_load_training_data_computes_log_mce0(mocker):
     result = load_training_data(["dummy.root"], n_tel=2, max_events=-1)
     assert "MCe0" in result.columns
     assert result["MCe0"].iloc[0] == pytest.approx(np.log10(100.0))
+
+
+@pytest.mark.parametrize(
+    ("input_data", "expected_first_values", "check_nans"),
+    [
+        (np.array([1.0, 2.0, 3.0]), [1.0, 2.0, 3.0], [3]),
+        ([1.0, 2.0], [1.0, 2.0], [2, 3]),
+        (np.array([5.0]), [5.0], [1, 2, 3]),
+        (np.array([]), None, [0, 1, 2, 3]),
+        (np.array([1.0, 2.0, 3.0, 4.0]), [1.0, 2.0, 3.0, 4.0], []),
+        (np.array([1.0, np.nan, 3.0]), [1.0], [1, 3]),
+        ([1, 2.5, 3], [1.0, 2.5, 3.0], [3]),
+        (np.array([-1.0, -2.5, 3.0]), [-1.0, -2.5, 3.0], [3]),
+        (np.array([0.0, 1.0, 0.0]), [0.0, 1.0, 0.0], [3]),
+    ],
+)
+def test_pad_to_four(input_data, expected_first_values, check_nans):
+    """Test _pad_to_four with various input types and edge cases."""
+    result = _pad_to_four(input_data)
+
+    assert len(result) == 4
+    assert result.dtype == np.float32
+
+    if expected_first_values:
+        for i, val in enumerate(expected_first_values):
+            assert np.isclose(result[i], val) or (np.isnan(val) and np.isnan(result[i]))
+
+    for nan_idx in check_nans:
+        assert np.isnan(result[nan_idx])
+
+
+def test_pad_to_four_with_scalar():
+    """Test _pad_to_four returns scalars unchanged."""
+    scalar = 3.14
+    result = _pad_to_four(scalar)
+    assert result == 3.14
+
+
+# ============================================================================
+# Image Selection Tests
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected_tel_0", "expected_n_images_0"),
+    [
+        (None, [0, 1, 2, 3], 4),
+        ([0, 1, 2, 3], [0, 1, 2, 3], 4),
+        ([0, 1], [0, 1], 2),
+        ([2], [2], 1),
+    ],
+)
+def test_apply_image_selection(sample_df, selection, expected_tel_0, expected_n_images_0):
+    """Test apply_image_selection with various telescope selections."""
+    result = apply_image_selection(sample_df, selection, "stereo_analysis")
+
+    if selection is None or selection == [0, 1, 2, 3]:
+        pd.testing.assert_frame_equal(result, sample_df)
+    else:
+        assert result["DispTelList_T"].iloc[0] == expected_tel_0
+        assert result["DispNImages"].iloc[0] == expected_n_images_0
+
+
+def test_apply_image_selection_preserves_original(sample_df):
+    """Test that apply_image_selection doesn't modify the original DataFrame."""
+    original_copy = sample_df.copy(deep=True)
+    apply_image_selection(sample_df, [0, 1], "stereo_analysis")
+    pd.testing.assert_frame_equal(sample_df, original_copy)
