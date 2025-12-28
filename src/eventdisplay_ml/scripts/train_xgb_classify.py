@@ -47,6 +47,7 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
     background_df["label"] = 0
     full_df = pd.concat([signal_df, background_df], ignore_index=True)
     x_data = full_df.drop(columns=["label"])
+    _logger.info(f"Training features ({len(x_data.columns)}): {', '.join(x_data.columns)}")
     y_data = full_df["label"]
     x_train, x_test, y_train, y_test = train_test_split(
         x_data, y_data, train_size=train_test_fraction, random_state=42, stratify=y_data
@@ -70,18 +71,19 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
         _logger.info(f"parameters: {xgb_params}")
         model.fit(x_train, y_train)
 
-        output_filename = (
-            Path(output_dir) / f"classify_bdt_{name}_ntel{n_tel}_bin{energy_bin_number}.joblib"
-        )
-        dump(model, output_filename)
-        _logger.info(f"{name} model saved to: {output_filename}")
-
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
+
+        output_filename = (
+            Path(output_dir) / f"classify_bdt_{name}_ntel{n_tel}_bin{energy_bin_number}"
+        )
+        dump(model, output_filename.with_suffix(".joblib"))
+        _logger.info(f"{name} model saved to: {output_filename.with_suffix('.joblib')}")
         write_efficiency_csv(
+            name,
             model,
             x_test,
             y_test,
-            Path(output_dir) / f"classify_ntel{n_tel}_{name}_bin{energy_bin_number}.csv",
+            output_filename.with_suffix(".efficiency.csv"),
         )
 
 
@@ -108,12 +110,9 @@ def main():
         help="Maximum number of events to process across all files.",
     )
     parser.add_argument(
-        "--erec_range",
-        type=float,
-        nargs=2,
-        metavar=("MIN", "MAX"),
-        help="log10(Erec/TeV) range for event selection: min max",
-        default=[-2.0, 3.0],
+        "--model-parameters",
+        type=str,
+        help=("Path to model parameter file (JSON) defining which models to load. "),
     )
     parser.add_argument(
         "--energy_bin_number",
@@ -139,14 +138,15 @@ def main():
     _logger.info(
         f"Train vs test fraction: {args.train_test_fraction}, Max events: {args.max_events}"
     )
-    _logger.info(f"Bin {args.energy_bin_number} log10(Erec/TeV) range: {args.erec_range}")
+    _logger.info(f"Energy bin {args.energy_bin_number}")
 
     signal_events = load_training_data(
         input_signal_files,
         args.ntel,
         args.max_events,
         analysis_type="signal_classification",
-        erec_range=args.erec_range,
+        model_parameters=args.model_parameters,
+        energy_bin_number=args.energy_bin_number,
     )
 
     background_events = load_training_data(
@@ -154,7 +154,8 @@ def main():
         args.ntel,
         args.max_events,
         analysis_type="background_classification",
-        erec_range=args.erec_range,
+        model_parameters=args.model_parameters,
+        energy_bin_number=args.energy_bin_number,
     )
 
     train(

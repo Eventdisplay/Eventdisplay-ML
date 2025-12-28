@@ -1,6 +1,5 @@
 """Apply models for regression and classification tasks."""
 
-import json
 import logging
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from eventdisplay_ml.data_processing import flatten_data_vectorized
 from eventdisplay_ml.training_variables import (
     xgb_per_telescope_training_variables,
 )
+from eventdisplay_ml.utils import load_model_parameters
 
 _logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def load_classification_models(model_dir, model_parameters):
         A dictionary mapping the number of telescopes (n_tel) and energy bin
         to the corresponding loaded model objects.
     """
-    par = _load_model_parameters(model_parameters)
+    par = load_model_parameters(model_parameters)
 
     file_name_template = par.get("model_file_name", "gamma_hadron_bdt")
 
@@ -52,15 +52,6 @@ def load_classification_models(model_dir, model_parameters):
                 _logger.warning(f"Model not found: {model_filename}")
 
     return models, par
-
-
-def _load_model_parameters(model_parameters):
-    """Load model parameters from a JSON file."""
-    try:
-        with open(model_parameters) as f:
-            return json.load(f)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(f"Model parameters file not found: {model_parameters}") from exc
 
 
 def load_regression_models(model_dir):

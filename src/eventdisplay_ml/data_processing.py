@@ -15,6 +15,7 @@ from eventdisplay_ml.training_variables import (
     xgb_all_regression_training_variables,
     xgb_per_telescope_training_variables,
 )
+from eventdisplay_ml.utils import load_energy_range, load_model_parameters
 
 _logger = logging.getLogger(__name__)
 
@@ -81,59 +82,11 @@ def flatten_data_vectorized(
 
                 flat_features[col_name] = result
 
-    df_flat = pd.DataFrame(flat_features, index=df.index)
-    df_flat = df_flat.astype(np.float32)
+    df_flat = flatten_telescope_variables(
+        n_tel, flat_features, df.index, apply_pointing_corrections
+    )
 
-    new_cols = {}
-    for i in range(n_tel):
-        new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
-        new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
-        new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
-        new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
-
-        df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
-        if "E_{i}" in df_flat:
-            df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        if "ES_{i}" in df_flat:
-            df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
-
-        if apply_pointing_corrections:
-            df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
-            df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
-
-    df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df.index)], axis=1)
-
-    if analysis_type == "stereo_analysis":
-        extra_cols = pd.DataFrame(
-            {
-                "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
-                "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-                "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
-                "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
-                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
-                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
-                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
-                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
-                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-            },
-            index=df.index,
-        )
-    else:  # classification
-        extra_cols = pd.DataFrame(
-            {
-                "MSCW": df["MSCW"].astype(np.float32),
-                "MSCL": df["MSCL"].astype(np.float32),
-                "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(np.float32),
-                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-                "EmissionHeightChi2": np.log10(
-                    np.clip(df["EmissionHeightChi2"], 1e-6, None)
-                ).astype(np.float32),
-            },
-            index=df.index,
-        )
-
-    return pd.concat([df_flat, extra_cols], axis=1)
+    return pd.concat([df_flat, extra_columns(df, analysis_type)], axis=1)
 
 
 def _to_padded_array(arrays):
@@ -173,7 +126,12 @@ def _to_dense_array(col):
 
 
 def load_training_data(
-    input_files, n_tel, max_events, analysis_type="stereo_analysis", erec_range=None
+    input_files,
+    n_tel,
+    max_events,
+    analysis_type="stereo_analysis",
+    model_parameters=None,
+    energy_bin_number=None,
 ):
     """
     Load and flatten training data from the mscw file for the requested telescope multiplicity.
@@ -188,8 +146,10 @@ def load_training_data(
         Maximum number of events to load. If <= 0, load all available events.
     analysis_type : str, optional
         Type of analysis: "stereo_analysis", "signal_classification", or "background_classification".
-    erec_range : tuple(float, float), optional
-        Range of log10(Erec/TeV) for event selection: (min, max)
+    model_parameters : str or None
+        Path to a JSON file defining which models to load.
+    energy_bin_number : int or None
+        Energy bin number for event selection (only for classification).
     """
     _logger.info(f"\n--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
@@ -197,28 +157,13 @@ def load_training_data(
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
 
-    event_cut = f"(DispNImages == {n_tel})"
     if analysis_type == "stereo_analysis":
         branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_regression_training_variables()]
-
     elif analysis_type in ("signal_classification", "background_classification"):
         branch_list = [*xgb_all_classification_training_variables()]
-        cuts = [
-            "Erec > 0",
-            "MSCW > -2",
-            "MSCW < 2",
-            "MSCL > -2",
-            "MSCL < 5",
-            "EmissionHeight > 0",
-            "EmissionHeight < 50",
-        ]
-        if erec_range is not None:
-            e_min, e_max = (10**v for v in erec_range)
-            cuts += [f"Erec >= {e_min}", f"Erec <= {e_max}"]
-        event_cut += " & " + " & ".join(f"({c})" for c in cuts)
-
     else:
         raise ValueError(f"Unknown analysis_type: {analysis_type}")
+    event_cut = event_cuts(analysis_type, n_tel, model_parameters, energy_bin_number)
 
     dfs = []
 
@@ -262,6 +207,10 @@ def load_training_data(
         df_flat["MCxoff"] = data_tree["MCxoff"]
         df_flat["MCyoff"] = data_tree["MCyoff"]
         df_flat["MCe0"] = np.log10(data_tree["MCe0"])
+    if "classification" in analysis_type:
+        df_flat["ze_bin"] = apply_zenith_binning(
+            data_tree["ArrayPointing_Elevation"], model_parameters
+        )
 
     df_flat.dropna(axis=1, how="all", inplace=True)
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
@@ -330,3 +279,108 @@ def _pad_to_four(arr_like):
             arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
         return arr
     return arr_like
+
+
+def event_cuts(analysis_type, n_tel, model_parameters=None, energy_bin_number=None):
+    """Event cut string for the given analysis type and telescope multiplicity."""
+    event_cut = f"(DispNImages == {n_tel})"
+
+    if analysis_type in ("signal_classification", "background_classification"):
+        cuts = [
+            "Erec > 0",
+            "MSCW > -2",
+            "MSCW < 2",
+            "MSCL > -2",
+            "MSCL < 5",
+            "EmissionHeight > 0",
+            "EmissionHeight < 50",
+        ]
+        if energy_bin_number is not None:
+            e_min, e_max = load_energy_range(model_parameters, energy_bin_number)
+            cuts += [f"Erec >= {e_min}", f"Erec <= {e_max}"]
+        event_cut += " & " + " & ".join(f"({c})" for c in cuts)
+
+    return event_cut
+
+
+def flatten_telescope_variables(n_tel, flat_features, index, apply_pointing_corrections=False):
+    """Generate dataframe for telescope variables flattened for n_tel telescopes."""
+    df_flat = pd.DataFrame(flat_features, index=index)
+    df_flat = df_flat.astype(np.float32)
+
+    new_cols = {}
+    for i in range(n_tel):
+        new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
+        new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
+        new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
+        new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+
+        df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
+        if "E_{i}" in df_flat:
+            df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
+        if "ES_{i}" in df_flat:
+            df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
+
+        if apply_pointing_corrections:
+            df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
+            df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
+
+    df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
+
+
+def extra_columns(df, analysis_type):
+    """Add extra columns required for analysis type."""
+    if analysis_type == "stereo_analysis":
+        return pd.DataFrame(
+            {
+                "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
+                "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
+                "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
+                "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
+                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
+                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
+                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
+                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
+                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+            },
+            index=df.index,
+        )
+
+    if "classification" in analysis_type:
+        return pd.DataFrame(
+            {
+                "MSCW": df["MSCW"].astype(np.float32),
+                "MSCL": df["MSCL"].astype(np.float32),
+                "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(np.float32),
+                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+                "EmissionHeightChi2": np.log10(
+                    np.clip(df["EmissionHeightChi2"], 1e-6, None)
+                ).astype(np.float32),
+            },
+            index=df.index,
+        )
+
+    raise ValueError(f"Unknown analysis_type: {analysis_type}")
+
+
+def apply_zenith_binning(elevation_angles, model_parameters):
+    """Apply zenith binning based on elevation angles and model parameters."""
+    parameters = load_model_parameters(model_parameters)
+    zenith_bins = parameters.get("zenith_bins_deg", [])
+    if not zenith_bins:
+        raise ValueError("No 'zenith_bins_deg' found in model_parameters.")
+    if isinstance(zenith_bins[0], dict):
+        zenith_bins = [b["Ze_min"] for b in zenith_bins] + [zenith_bins[-1]["Ze_max"]]
+
+    zenith_bins = np.asarray(zenith_bins, dtype=float)
+    zenith_angles = 90.0 - np.array(elevation_angles)
+    ze_bin_indices = np.digitize(zenith_angles, zenith_bins) - 1
+    ze_bin_indices = np.clip(ze_bin_indices, 0, len(zenith_bins) - 1)
+
+    _logger.info(
+        f"Zenith binning sample (first {min(20, len(ze_bin_indices))}): "
+        f"{ze_bin_indices[:20].tolist()}"
+    )
+
+    return ze_bin_indices.astype(np.int32)

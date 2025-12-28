@@ -54,6 +54,7 @@ def xgb_classification_training_variables():
         "EmissionHeightChi2",
         "MSCW",
         "MSCL",
+        "ArrayPointing_Elevation",
     ]
 
 

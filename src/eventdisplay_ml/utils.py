@@ -1,5 +1,6 @@
 """Utility functions for Eventdisplay-ML."""
 
+import json
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -70,3 +71,24 @@ def parse_image_selection(image_selection_str):
             f"Invalid image_selection format: {image_selection_str}. "
             "Use bit-coded value (e.g., 14) or comma-separated indices (e.g., '1,2,3')"
         )
+
+
+def load_model_parameters(model_parameters):
+    """Load model parameters from a JSON file."""
+    try:
+        with open(model_parameters) as f:
+            return json.load(f)
+    except (FileNotFoundError, TypeError) as exc:
+        raise FileNotFoundError(f"Model parameters file not found: {model_parameters}") from exc
+
+
+def load_energy_range(model_parameters, energy_bin_number):
+    """Load the log10(Erec/TeV) range for a given energy bin from model parameters."""
+    par = load_model_parameters(model_parameters)
+    try:
+        e = par["energy_bins_log10_tev"][energy_bin_number]
+        return 10 ** e["E_min"], 10 ** e["E_max"]
+    except (KeyError, IndexError) as exc:
+        raise ValueError(
+            f"Invalid energy bin number {energy_bin_number} for model parameters."
+        ) from exc
