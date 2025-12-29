@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eventdisplay_ml.training_variables import xgb_per_telescope_training_variables
+from eventdisplay_ml.features import telescope_features
 
 # ============================================================================
 # DataFrame Factory Functions
@@ -149,7 +149,7 @@ def sample_df():
         }
     )
 
-    for var in xgb_per_telescope_training_variables():
+    for var in telescope_features():
         df[var] = [
             np.array([1.0, 2.0, 3.0, 4.0]),
             np.array([1.0, 2.0, np.nan, np.nan]),

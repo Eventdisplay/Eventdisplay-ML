@@ -9,7 +9,7 @@ from eventdisplay_ml.data_processing import (
     _to_dense_array,
     _to_padded_array,
     apply_image_selection,
-    flatten_data_vectorized,
+    flatten_telescope_data_vectorized,
     load_training_data,
 )
 
@@ -75,10 +75,10 @@ def test_to_padded_array_with_numpy_arrays(arrays_numpy):
         (1, False),
     ],
 )
-def test_flatten_data_vectorized(
+def test_flatten_telescope_data_vectorized(
     n_tel, with_pointing, df_two_tel_base, df_two_tel_pointing, df_one_tel_base
 ):
-    """Test flatten_data_vectorized with various telescope counts and pointing options."""
+    """Test flatten_telescope_data_vectorized with various telescope counts and pointing options."""
     if with_pointing and n_tel == 2:
         df = df_two_tel_pointing
     elif n_tel == 1:
@@ -101,10 +101,10 @@ def test_flatten_data_vectorized(
     if with_pointing:
         training_vars.extend(["cen_x", "cen_y", "fpointing_dx", "fpointing_dy"])
 
-    result = flatten_data_vectorized(
+    result = flatten_telescope_data_vectorized(
         df,
         n_tel=n_tel,
-        training_variables=training_vars,
+        features=training_vars,
         apply_pointing_corrections=with_pointing,
         analysis_type="stereo_analysis",
     )
@@ -114,12 +114,12 @@ def test_flatten_data_vectorized(
     assert len(result) == len(df)
 
 
-def test_flatten_data_vectorized_derived_features(df_one_tel_base):
+def test_flatten_telescope_data_vectorized_derived_features(df_one_tel_base):
     """Test that derived features are correctly computed."""
-    result = flatten_data_vectorized(
+    result = flatten_telescope_data_vectorized(
         df_one_tel_base,
         n_tel=1,
-        training_variables=[
+        features=[
             "Disp_T",
             "cosphi",
             "sinphi",
@@ -144,12 +144,12 @@ def test_flatten_data_vectorized_derived_features(df_one_tel_base):
     assert result["disp_y_0"].iloc[0] == pytest.approx(1.0 * 0.6)
 
 
-def test_flatten_data_vectorized_missing_data(df_three_tel_missing):
+def test_flatten_telescope_data_vectorized_missing_data(df_three_tel_missing):
     """Test that missing disp columns are filled with NaN."""
-    result = flatten_data_vectorized(
+    result = flatten_telescope_data_vectorized(
         df_three_tel_missing,
         n_tel=3,
-        training_variables=[
+        features=[
             "Disp_T",
             "cosphi",
             "sinphi",

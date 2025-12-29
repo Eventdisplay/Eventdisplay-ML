@@ -6,10 +6,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from eventdisplay_ml.data_processing import flatten_data_vectorized
-from eventdisplay_ml.training_variables import (
-    xgb_per_telescope_training_variables,
-)
+from eventdisplay_ml.data_processing import flatten_telescope_data_vectorized
+from eventdisplay_ml.features import telescope_features
 from eventdisplay_ml.utils import load_model_parameters
 
 _logger = logging.getLogger(__name__)
@@ -92,22 +90,18 @@ def apply_regression_models(df, models):
     df : pandas.DataFrame
         Chunk of events to process.
     models : dict
-        Preloaded models dictionary (as returned by :func:`load_models`).
+        Preloaded models dictionary.
 
     Returns
     -------
     pred_xoff : numpy.ndarray
-        Array of predicted Xoff values for each event in the chunk, aligned
-        with the index of ``df``.
+        Array of predicted Xoff values for each event in the chunk.
     pred_yoff : numpy.ndarray
-        Array of predicted Yoff values for each event in the chunk, aligned
-        with the index of ``df``.
+        Array of predicted Yoff values for each event in the chunk.
     pred_erec : numpy.ndarray
-        Array of predicted Erec values for each event in the chunk, aligned
-        with the index of ``df``.
+        Array of predicted Erec values for each event in the chunk.
     """
-    n_events = len(df)
-    preds = np.full((n_events, 3), np.nan, dtype=np.float32)
+    preds = np.full((len(df), 3), np.nan, dtype=np.float32)
 
     grouped = df.groupby("DispNImages")
 
@@ -119,7 +113,7 @@ def apply_regression_models(df, models):
 
         _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
 
-        x_features = features(group_df, n_tel, analysis_type="stereo_analysis")
+        x_features = features(group_df, n_tel, analysis_type="stereo_analysis", training=False)
         preds[group_df.index] = models[n_tel].predict(x_features)
 
     return preds[:, 0], preds[:, 1], preds[:, 2]
@@ -162,23 +156,18 @@ def apply_classification_models(df, models):
 
             _logger.info(f"Processing {len(group_df)} events: n_tel={n_tel}, bin={e_bin}")
 
-            x_features = features(group_df, n_tel, analysis_type="classification")
+            x_features = features(group_df, n_tel, analysis_type="classification", training=False)
             class_probability[group_df.index] = models[n_tel][e_bin].predict_proba(x_features)[:, 1]
 
     return class_probability
 
 
-def features(group_df, ntel, analysis_type):
+def features(group_df, ntel, analysis_type, training):
     """Get flattened features for a group of events with given telescope multiplicity."""
-    if analysis_type == "stereo_analysis":
-        training_vars = [*xgb_per_telescope_training_variables(), "fpointing_dx", "fpointing_dy"]
-    else:
-        training_vars = xgb_per_telescope_training_variables()
-
-    df_flat = flatten_data_vectorized(
+    df_flat = flatten_telescope_data_vectorized(
         group_df,
         ntel,
-        training_vars,
+        telescope_features(analysis_type, training=training),
         analysis_type=analysis_type,
         apply_pointing_corrections=(analysis_type == "stereo_analysis"),
     )

@@ -13,8 +13,8 @@ import numpy as np
 import uproot
 
 from eventdisplay_ml.data_processing import apply_image_selection
+from eventdisplay_ml.features import features
 from eventdisplay_ml.models import apply_regression_models, load_regression_models
-from eventdisplay_ml.training_variables import xgb_all_regression_training_variables
 from eventdisplay_ml.utils import parse_image_selection
 
 logging.basicConfig(level=logging.INFO)
@@ -57,7 +57,7 @@ def process_file_chunked(
         This function writes results directly to ``output_file`` and does not
         return a value.
     """
-    branch_list = [*xgb_all_regression_training_variables(), "fpointing_dx", "fpointing_dy"]
+    branch_list = features("stereo_analysis", training=False)
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")

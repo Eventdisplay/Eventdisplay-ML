@@ -15,11 +15,11 @@ import numpy as np
 import uproot
 
 from eventdisplay_ml.data_processing import apply_image_selection
+from eventdisplay_ml.features import features
 from eventdisplay_ml.models import (
     apply_classification_models,
     load_classification_models,
 )
-from eventdisplay_ml.training_variables import xgb_all_classification_training_variables
 from eventdisplay_ml.utils import parse_image_selection
 
 logging.basicConfig(level=logging.INFO)
@@ -28,44 +28,34 @@ _logger = logging.getLogger(__name__)
 
 def process_file_chunked(
     input_file,
+    output_file,
     models,
     model_parameters,
-    output_file,
     image_selection,
     max_events=None,
     chunk_size=500000,
 ):
     """
-    Stream events from an input ROOT file in chunks, apply XGBoost models, write events.
+    Stream events from an input file in chunks, apply XGBoost models, write events.
 
     Parameters
     ----------
     input_file : str
-        Path to the input ROOT file containing a "data" TTree.
+        Path to the input file containing a "data" TTree.
+    output_file : str
+        Path to the output file to create.
     models : dict
         Dictionary of loaded XGBoost models for classification.
     model_parameters : dict
         Model parameters defining energy and zenith angle bins.
-    output_file : str
-        Path to the output ROOT file to create.
     image_selection : str
-        String specifying which telescope indices to select, passed to
-        :func:`parse_image_selection` to obtain the corresponding indices
-        used by :func:`apply_image_selection`.
+        String specifying which telescope indices to select.
     max_events : int, optional
-        Maximum number of events to process. If None (default), all
-        available events in the input file are processed.
+        Maximum number of events to process.
     chunk_size : int, optional
-        Number of events to read and process per chunk. Larger values reduce
-        I/O overhead but increase memory usage. Default is 500000.
-
-    Returns
-    -------
-    None
-        This function writes results directly to ``output_file`` and does not
-        return a value.
+        Number of events to read and process per chunk.
     """
-    branch_list = ["Erec", *xgb_all_classification_training_variables()]
+    branch_list = features("classification", training=False)
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")

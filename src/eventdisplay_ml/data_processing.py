@@ -10,20 +10,16 @@ import numpy as np
 import pandas as pd
 import uproot
 
-from eventdisplay_ml.training_variables import (
-    xgb_all_classification_training_variables,
-    xgb_all_regression_training_variables,
-    xgb_per_telescope_training_variables,
-)
+from eventdisplay_ml.features import features, telescope_features
 from eventdisplay_ml.utils import load_energy_range, load_model_parameters
 
 _logger = logging.getLogger(__name__)
 
 
-def flatten_data_vectorized(
+def flatten_telescope_data_vectorized(
     df,
     n_tel,
-    training_variables,
+    features,
     analysis_type,
     apply_pointing_corrections=False,
 ):
@@ -36,11 +32,10 @@ def flatten_data_vectorized(
     Parameters
     ----------
     df : pandas.DataFrame
-        Input DataFrame containing telescope data. If apply_pointing_corrections
-        is True, must also contain "fpointing_dx" and "fpointing_dy".
+        Input DataFrame containing telescope data.
     n_tel : int
         Number of telescopes to flatten for.
-    training_variables : list[str]
+    features : list[str]
         List of training variable names to flatten.
     apply_pointing_corrections : bool, optional
         If True, apply pointing offset corrections to cen_x and cen_y.
@@ -50,18 +45,14 @@ def flatten_data_vectorized(
     -------
     pandas.DataFrame
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
-        for telescope index ``i``, plus derived features (disp_x, disp_y,
-        loss_loss, loss_dist, width_length, size, E, ES, and optionally
-        pointing-corrected cen_x/cen_y), and extra columns (Xoff,
-        Xoff_intersect, Erec, EmissionHeight, etc.).
+        for telescope index ``i``, plus derived features, and array features.
     """
     flat_features = {}
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
 
-    for var in training_variables:
+    for var in features:
         data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
-
         for i in range(n_tel):
             col_name = f"{var}_{i}"
 
@@ -85,7 +76,6 @@ def flatten_data_vectorized(
     df_flat = flatten_telescope_variables(
         n_tel, flat_features, df.index, apply_pointing_corrections
     )
-
     return pd.concat([df_flat, extra_columns(df, analysis_type)], axis=1)
 
 
@@ -151,18 +141,14 @@ def load_training_data(
     energy_bin_number : int or None
         Energy bin number for event selection (only for classification).
     """
-    _logger.info(f"\n--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
+    _logger.info(f"--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
         "Max events to process: "
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
 
-    if analysis_type == "stereo_analysis":
-        branch_list = ["MCxoff", "MCyoff", "MCe0", *xgb_all_regression_training_variables()]
-    elif analysis_type in ("signal_classification", "background_classification"):
-        branch_list = [*xgb_all_classification_training_variables()]
-    else:
-        raise ValueError(f"Unknown analysis_type: {analysis_type}")
+    branch_list = features(analysis_type, training=True)
+    _logger.info(f"Using features: {branch_list}")
     event_cut = event_cuts(analysis_type, n_tel, model_parameters, energy_bin_number)
 
     dfs = []
@@ -195,10 +181,10 @@ def load_training_data(
     data_tree = pd.concat(dfs, ignore_index=True)
     _logger.info(f"Total events for n_tel={n_tel}: {len(data_tree)}")
 
-    df_flat = flatten_data_vectorized(
+    df_flat = flatten_telescope_data_vectorized(
         data_tree,
         n_tel,
-        xgb_per_telescope_training_variables(),
+        telescope_features(analysis_type, training=True),
         analysis_type,
         apply_pointing_corrections=False,
     )
@@ -218,7 +204,7 @@ def load_training_data(
     return df_flat
 
 
-def apply_image_selection(df, selected_indices, analysis_type):
+def apply_image_selection(df, selected_indices, analysis_type, training=False):
     """
     Filter and pad telescope lists for selected indices.
 
@@ -231,6 +217,8 @@ def apply_image_selection(df, selected_indices, analysis_type):
         are selected, the DataFrame is returned unchanged.
     analysis_type : str, optional
         Type of analysis (e.g., "stereo_analysis")
+    training : bool, optional
+        If True, indicates training mode. Default is False.
 
     Returns
     -------
@@ -258,10 +246,7 @@ def apply_image_selection(df, selected_indices, analysis_type):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    if analysis_type == "stereo_analysis":
-        pad_vars = [*xgb_per_telescope_training_variables(), "fpointing_dx", "fpointing_dy"]
-    else:
-        pad_vars = xgb_per_telescope_training_variables()
+    pad_vars = telescope_features(analysis_type, training=training)
 
     for var_name in pad_vars:
         if var_name in df.columns:
@@ -326,7 +311,7 @@ def flatten_telescope_variables(n_tel, flat_features, index, apply_pointing_corr
             df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
             df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
 
-    df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
+    return pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
 
 
 def extra_columns(df, analysis_type):
@@ -367,20 +352,13 @@ def extra_columns(df, analysis_type):
 def apply_zenith_binning(elevation_angles, model_parameters):
     """Apply zenith binning based on elevation angles and model parameters."""
     parameters = load_model_parameters(model_parameters)
-    zenith_bins = parameters.get("zenith_bins_deg", [])
-    if not zenith_bins:
+    bins = parameters.get("zenith_bins_deg", [])
+    if not bins:
         raise ValueError("No 'zenith_bins_deg' found in model_parameters.")
-    if isinstance(zenith_bins[0], dict):
-        zenith_bins = [b["Ze_min"] for b in zenith_bins] + [zenith_bins[-1]["Ze_max"]]
+    if isinstance(bins[0], dict):
+        bins = [b["Ze_min"] for b in bins] + [bins[-1]["Ze_max"]]
 
-    zenith_bins = np.asarray(zenith_bins, dtype=float)
-    zenith_angles = 90.0 - np.array(elevation_angles)
-    ze_bin_indices = np.digitize(zenith_angles, zenith_bins) - 1
-    ze_bin_indices = np.clip(ze_bin_indices, 0, len(zenith_bins) - 1)
-
-    _logger.info(
-        f"Zenith binning sample (first {min(20, len(ze_bin_indices))}): "
-        f"{ze_bin_indices[:20].tolist()}"
-    )
-
-    return ze_bin_indices.astype(np.int32)
+    bins = np.asarray(bins, dtype=float)
+    zenith = 90.0 - np.array(elevation_angles)
+    idx = np.clip(np.digitize(zenith, bins) - 1, 0, len(bins) - 2)
+    return idx.astype(np.int32)
