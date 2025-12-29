@@ -75,15 +75,15 @@ def _update_parameters(full_params, single_bin_params, e_bin_number):
     return full_params
 
 
-def load_regression_models(model_dir):
+def load_regression_models(model_prefix):
     """
     Load XGBoost models for different telescope multiplicities from a directory.
 
     Parameters
     ----------
-    model_dir : str
-        Path to the directory containing the trained model files
-        named ``dispdir_bdt_ntel{n_tel}_xgboost.joblib``.
+    model_prefix : str
+        Prefix path to the trained model files. Models are expected to be named
+        ``{model_prefix}_ntel{n_tel}_xgboost.joblib``.
 
     Returns
     -------
@@ -92,13 +92,16 @@ def load_regression_models(model_dir):
         corresponding loaded model objects. Only models whose files
         exist in ``model_dir`` are included.
     """
+    model_prefix = Path(model_prefix)
+    model_dir_path = Path(model_prefix.parent)
+
     models = {}
-    model_dir_path = Path(model_dir)
     for n_tel in range(2, 5):
-        model_filename = model_dir_path / f"dispdir_bdt_ntel{n_tel}_xgboost.joblib"
+        model_filename = model_dir_path / f"{model_prefix.name}_ntel{n_tel}.joblib"
         if model_filename.exists():
             _logger.info(f"Loading model: {model_filename}")
-            models[n_tel] = joblib.load(model_filename)
+            model_data = joblib.load(model_filename)
+            models[n_tel] = model_data["model"]
         else:
             _logger.warning(f"Model not found: {model_filename}")
     return models
@@ -195,5 +198,7 @@ def features(group_df, ntel, analysis_type, training):
         analysis_type=analysis_type,
         training=training,
     )
-    excluded_columns = target_features(analysis_type) | excluded_features(analysis_type, ntel)
+    excluded_columns = set(target_features(analysis_type)) | set(
+        excluded_features(analysis_type, ntel)
+    )
     return df_flat.drop(columns=excluded_columns, errors="ignore")

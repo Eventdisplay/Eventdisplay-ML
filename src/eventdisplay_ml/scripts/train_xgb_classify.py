@@ -19,7 +19,6 @@ from sklearn.model_selection import train_test_split
 from eventdisplay_ml import utils
 from eventdisplay_ml.data_processing import load_training_data
 from eventdisplay_ml.evaluate import evaluate_classification_model, write_efficiency_csv
-from eventdisplay_ml.utils import load_model_parameters
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
@@ -29,7 +28,7 @@ def train(
     signal_df,
     background_df,
     n_tel,
-    output_dir,
+    model_prefix,
     train_test_fraction,
     model_parameters,
     energy_bin_number,
@@ -45,7 +44,7 @@ def train(
         Pandas DataFrame with background training data.
     n_tel : int
         Telescope multiplicity.
-    output_dir : Path
+    model_prefix : str
         Directory to save the trained model.
     train_test_fraction : float
         Fraction of data to use for training.
@@ -57,6 +56,11 @@ def train(
     if signal_df.empty or background_df.empty:
         _logger.warning(f"Skip training for n_tel={n_tel} due to empty signal / background data.")
         return
+
+    model_prefix = Path(model_prefix)
+    output_dir = model_prefix.parent
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
 
     signal_df["label"] = 1
     background_df["label"] = 0
@@ -89,10 +93,8 @@ def train(
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
 
         output_filename = (
-            Path(output_dir)
-            / f"{model_parameters['model_file_name']}_{name}_ntel{n_tel}_bin{energy_bin_number}"
+            Path(output_dir) / f"{model_prefix.name}_{name}_ntel{n_tel}_bin{energy_bin_number}"
         )
-        _logger.info(f"{name} model saved to: {output_filename.with_suffix('.joblib')}")
         efficiency = write_efficiency_csv(
             name,
             model,
@@ -103,7 +105,8 @@ def train(
         dump(
             {
                 "model": model,
-                "feature_names": x_data.columns.tolist(),
+                "features": x_data.columns.tolist(),
+                "hyperparameters": xgb_params,
                 "efficiency": efficiency,
                 "parameters": model_parameters,
                 "n_tel": n_tel,
@@ -111,6 +114,7 @@ def train(
             },
             output_filename.with_suffix(".joblib"),
         )
+        _logger.info(f"{name} model saved to: {output_filename.with_suffix('.joblib')}")
 
 
 def main():
@@ -122,8 +126,15 @@ def main():
     parser.add_argument(
         "--input_background_file_list", help="List of input background mscw ROOT files."
     )
+    parser.add_argument(
+        "--model-prefix",
+        required=True,
+        help=(
+            "Path to directory for writing XGBoost classification models "
+            "(without n_tel and energy bin suffix)."
+        ),
+    )
     parser.add_argument("--ntel", type=int, help="Telescope multiplicity (2, 3, or 4).")
-    parser.add_argument("--output_dir", help="Output directory for XGBoost models.")
     parser.add_argument(
         "--train_test_fraction",
         type=float,
@@ -149,19 +160,14 @@ def main():
 
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
-    if not output_dir.exists():
-        output_dir.mkdir(parents=True)
-
     _logger.info("--- XGBoost Classification Training ---")
     _logger.info(f"Telescope multiplicity: {args.ntel}")
-    _logger.info(f"Output directory: {output_dir}")
-    _logger.info(
-        f"Train vs test fraction: {args.train_test_fraction}, Max events: {args.max_events}"
-    )
+    _logger.info(f"Model output prefix: {args.model_prefix}")
+    _logger.info(f"Train vs test fraction: {args.train_test_fraction}")
+    _logger.info(f"Max events: {args.max_events}")
     _logger.info(f"Energy bin {args.energy_bin_number}")
 
-    model_parameters = load_model_parameters(args.model_parameters, args.energy_bin_number)
+    model_parameters = utils.load_model_parameters(args.model_parameters, args.energy_bin_number)
 
     event_lists = [
         load_training_data(
@@ -178,13 +184,12 @@ def main():
         event_lists[0],
         event_lists[1],
         args.ntel,
-        output_dir,
+        args.model_prefix,
         args.train_test_fraction,
         model_parameters,
         args.energy_bin_number,
     )
-
-    _logger.info("XGBoost model trained successfully.")
+    _logger.info("XGBoost classification model trained successfully.")
 
 
 if __name__ == "__main__":

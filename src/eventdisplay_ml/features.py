@@ -12,13 +12,13 @@ def target_features(analysis_type):
 
     Returns
     -------
-    set
-        Set of target feature names.
+    list
+        List of target feature names.
     """
     if analysis_type == "stereo_analysis":
-        return {"MCe0", "MCxoff", "MCyoff"}
+        return ["MCxoff", "MCyoff", "MCe0"]  # sequence matters
     if "classification" in analysis_type:
-        return set()
+        return []
     raise ValueError(f"Unknown analysis type: {analysis_type}")
 
 
