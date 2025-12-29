@@ -74,16 +74,29 @@ def parse_image_selection(image_selection_str):
         )
 
 
-def load_model_parameters(model_parameters):
-    """Load model parameters from a JSON file."""
+def load_model_parameters(model_parameters, energy_bin_number=None):
+    """
+    Load model parameters from a JSON file.
+
+    Reduce the energy bins to only the specified energy bin number if provided.
+    """
     try:
         with open(model_parameters) as f:
-            return json.load(f)
+            para = json.load(f)
     except (FileNotFoundError, TypeError) as exc:
         raise FileNotFoundError(f"Model parameters file not found: {model_parameters}") from exc
 
+    if energy_bin_number is not None:
+        try:
+            para["energy_bins_log10_tev"] = para["energy_bins_log10_tev"][energy_bin_number]
+        except (KeyError, IndexError) as exc:
+            raise ValueError(
+                f"Invalid energy bin number {energy_bin_number} for model parameters."
+            ) from exc
+    return para
 
-def load_energy_range(model_parameters, energy_bin_number):
+
+def load_energy_range(model_parameters, energy_bin_number=0):
     """Load the log10(Erec/TeV) range for a given energy bin from model parameters."""
     par = load_model_parameters(model_parameters)
     try:

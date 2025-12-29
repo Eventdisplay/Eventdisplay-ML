@@ -26,15 +26,16 @@ def write_efficiency_csv(name, model, x_test, y_test, output_file):
         eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else 0)
         eff_background.append(((pred) & (y_test == 0)).sum() / n_background if n_background else 0)
 
-    pd.DataFrame(
+    data = pd.DataFrame(
         {
             "threshold": thresholds,
             "signal_efficiency": eff_signal,
             "background_efficiency": eff_background,
         }
-    ).to_csv(output_file, index=False)
-
+    )
+    data.to_csv(output_file, index=False)
     _logger.info(f"{name} model saved to: {output_file}")
+    return data
 
 
 def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):

@@ -1,6 +1,59 @@
 """Features used for XGB training and prediction."""
 
 
+def target_features(analysis_type):
+    """
+    Get target features based on analysis type.
+
+    Parameters
+    ----------
+    analysis_type : str
+        Type of analysis.
+
+    Returns
+    -------
+    set
+        Set of target feature names.
+    """
+    if analysis_type == "stereo_analysis":
+        return {"MCe0", "MCxoff", "MCyoff"}
+    if "classification" in analysis_type:
+        return set()
+    raise ValueError(f"Unknown analysis type: {analysis_type}")
+
+
+def excluded_features(analysis_type, ntel):
+    """
+    Features not to be used for training/prediction.
+
+    Parameters
+    ----------
+    analysis_type : str
+        Type of analysis.
+    ntel : int
+        Number of telescopes.
+
+    Returns
+    -------
+    set
+        Set of excluded feature names.
+    """
+    if analysis_type == "stereo_analysis":
+        return {
+            *[f"fpointing_dx_{i}" for i in range(ntel)],
+            *[f"fpointing_dy_{i}" for i in range(ntel)],
+        }
+    if "classification" in analysis_type:
+        return {
+            "Erec",
+            *[f"E_{i}" for i in range(ntel)],
+            *[f"ES_{i}" for i in range(ntel)],
+            *[f"fpointing_dx_{i}" for i in range(ntel)],
+            *[f"fpointing_dy_{i}" for i in range(ntel)],
+        }
+    raise ValueError(f"Unknown analysis type: {analysis_type}")
+
+
 def telescope_features(analysis_type, training):
     """
     Telescope-type features.
@@ -20,14 +73,13 @@ def telescope_features(analysis_type, training):
         "asym",
         "tgrad_x",
         "R_core",
+        "fpointing_dx",
+        "fpointing_dy",
     ]
     if analysis_type == "classification":
         return var
 
-    var = [*var, "E", "ES", "Disp_T", "DispXoff_T", "DispYoff_T", "DispWoff_T"]
-    if not training:
-        var += ["fpointing_dx", "fpointing_dy"]
-    return var
+    return [*var, "E", "ES", "Disp_T", "DispXoff_T", "DispYoff_T", "DispWoff_T"]
 
 
 def _regression_features(training):
@@ -45,7 +97,7 @@ def _regression_features(training):
         "EmissionHeight",
     ]
     if training:
-        return ["MCxoff", "MCyoff", "MCe0", *var]
+        return [*target_features("stereo_analysis"), *var]
     return var
 
 

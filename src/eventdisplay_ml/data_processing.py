@@ -11,18 +11,12 @@ import pandas as pd
 import uproot
 
 from eventdisplay_ml.features import features, telescope_features
-from eventdisplay_ml.utils import load_energy_range, load_model_parameters
+from eventdisplay_ml.utils import load_energy_range
 
 _logger = logging.getLogger(__name__)
 
 
-def flatten_telescope_data_vectorized(
-    df,
-    n_tel,
-    features,
-    analysis_type,
-    apply_pointing_corrections=False,
-):
+def flatten_telescope_data_vectorized(df, n_tel, features, analysis_type, training=True):
     """
     Vectorized flattening of telescope array columns.
 
@@ -37,9 +31,10 @@ def flatten_telescope_data_vectorized(
         Number of telescopes to flatten for.
     features : list[str]
         List of training variable names to flatten.
-    apply_pointing_corrections : bool, optional
-        If True, apply pointing offset corrections to cen_x and cen_y.
-        Set to True for inference, False for training. Default is False.
+    analysis_type : str
+        Type of analysis (e.g., "stereo_analysis").
+    training : bool, optional
+        If True, indicates training mode. Default is True.
 
     Returns
     -------
@@ -73,10 +68,8 @@ def flatten_telescope_data_vectorized(
 
                 flat_features[col_name] = result
 
-    df_flat = flatten_telescope_variables(
-        n_tel, flat_features, df.index, apply_pointing_corrections
-    )
-    return pd.concat([df_flat, extra_columns(df, analysis_type)], axis=1)
+    df_flat = flatten_telescope_variables(n_tel, flat_features, df.index)
+    return pd.concat([df_flat, extra_columns(df, analysis_type, training)], axis=1)
 
 
 def _to_padded_array(arrays):
@@ -121,7 +114,6 @@ def load_training_data(
     max_events,
     analysis_type="stereo_analysis",
     model_parameters=None,
-    energy_bin_number=None,
 ):
     """
     Load and flatten training data from the mscw file for the requested telescope multiplicity.
@@ -136,10 +128,8 @@ def load_training_data(
         Maximum number of events to load. If <= 0, load all available events.
     analysis_type : str, optional
         Type of analysis: "stereo_analysis", "classification".
-    model_parameters : str or None
-        Path to a JSON file defining which models to load.
-    energy_bin_number : int or None
-        Energy bin number for event selection (only for classification).
+    model_parameters : dict
+        Dictionary of model parameters.
     """
     _logger.info(f"--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
@@ -148,30 +138,29 @@ def load_training_data(
     )
 
     branch_list = features(analysis_type, training=True)
-    _logger.info(f"Features: {branch_list}")
-    event_cut = event_cuts(analysis_type, n_tel, model_parameters, energy_bin_number)
-
-    dfs = []
-
+    _logger.info(f"Branch list: {branch_list}")
+    event_cut = event_cuts(analysis_type, n_tel, model_parameters)
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
     else:
         max_events_per_file = None
 
+    dfs = []
     for f in input_files:
         try:
             with uproot.open(f) as root_file:
-                if "data" in root_file:
-                    _logger.info(f"Processing file: {f}")
-                    tree = root_file["data"]
-                    df = tree.arrays(branch_list, cut=event_cut, library="pd")
-                    _logger.info(f"Number of events after filter {event_cut}: {len(df)}")
-                    if max_events_per_file and len(df) > max_events_per_file:
-                        df = df.sample(n=max_events_per_file, random_state=42)
-                    if not df.empty:
-                        dfs.append(df)
-                else:
+                if "data" not in root_file:
                     _logger.warning(f"File: {f} does not contain a 'data' tree.")
+                    continue
+
+                _logger.info(f"Processing file: {f}")
+                tree = root_file["data"]
+                df = tree.arrays(branch_list, cut=event_cut, library="pd")
+                _logger.info(f"Number of events after filter {event_cut}: {len(df)}")
+                if max_events_per_file and len(df) > max_events_per_file:
+                    df = df.sample(n=max_events_per_file, random_state=42)
+                if not df.empty:
+                    dfs.append(df)
         except Exception as e:
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
@@ -186,7 +175,7 @@ def load_training_data(
         n_tel,
         telescope_features(analysis_type, training=True),
         analysis_type,
-        apply_pointing_corrections=False,
+        training=True,
     )
 
     if analysis_type == "stereo_analysis":
@@ -194,8 +183,8 @@ def load_training_data(
         df_flat["MCyoff"] = data_tree["MCyoff"]
         df_flat["MCe0"] = np.log10(data_tree["MCe0"])
     elif analysis_type == "classification":
-        df_flat["ze_bin"] = apply_zenith_binning(
-            90.0 - data_tree["ArrayPointing_Elevation"], model_parameters
+        df_flat["ze_bin"] = zenith_in_bins(
+            90.0 - data_tree["ArrayPointing_Elevation"], model_parameters.get("zenith_bins_deg", [])
         )
 
     df_flat.dropna(axis=1, how="all", inplace=True)
@@ -266,7 +255,7 @@ def _pad_to_four(arr_like):
     return arr_like
 
 
-def event_cuts(analysis_type, n_tel, model_parameters=None, energy_bin_number=None):
+def event_cuts(analysis_type, n_tel, model_parameters=None):
     """Event cut string for the given analysis type and telescope multiplicity."""
     event_cut = f"(DispNImages == {n_tel})"
 
@@ -280,15 +269,15 @@ def event_cuts(analysis_type, n_tel, model_parameters=None, energy_bin_number=No
             "EmissionHeight > 0",
             "EmissionHeight < 50",
         ]
-        if energy_bin_number is not None:
-            e_min, e_max = load_energy_range(model_parameters, energy_bin_number)
+        if model_parameters is not None:
+            e_min, e_max = load_energy_range(model_parameters)
             cuts += [f"Erec >= {e_min}", f"Erec <= {e_max}"]
         event_cut += " & " + " & ".join(f"({c})" for c in cuts)
 
     return event_cut
 
 
-def flatten_telescope_variables(n_tel, flat_features, index, apply_pointing_corrections=False):
+def flatten_telescope_variables(n_tel, flat_features, index):
     """Generate dataframe for telescope variables flattened for n_tel telescopes."""
     df_flat = pd.DataFrame(flat_features, index=index)
     df_flat = df_flat.astype(np.float32)
@@ -308,14 +297,15 @@ def flatten_telescope_variables(n_tel, flat_features, index, apply_pointing_corr
         if "ES_{i}" in df_flat:
             df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
 
-        if apply_pointing_corrections:
-            df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
-            df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
+        # pointing corrections
+        df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
+        df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
+        df_flat = df_flat.drop(columns=[f"fpointing_dx_{i}", f"fpointing_dy_{i}"])
 
     return pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
 
 
-def extra_columns(df, analysis_type):
+def extra_columns(df, analysis_type, training):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
         return pd.DataFrame(
@@ -334,30 +324,20 @@ def extra_columns(df, analysis_type):
         )
 
     if "classification" in analysis_type:
-        return pd.DataFrame(
-            {
-                "MSCW": df["MSCW"].astype(np.float32),
-                "MSCL": df["MSCL"].astype(np.float32),
-                "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(np.float32),
-                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-                "EmissionHeightChi2": np.log10(
-                    np.clip(df["EmissionHeightChi2"], 1e-6, None)
-                ).astype(np.float32),
-                "ze_bin": df["ze_bin"].astype(np.float32),
-            },
-            index=df.index,
-        )
+        data = {
+            "MSCW": df["MSCW"].astype(np.float32),
+            "MSCL": df["MSCL"].astype(np.float32),
+            "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(np.float32),
+            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+            "EmissionHeightChi2": np.log10(np.clip(df["EmissionHeightChi2"], 1e-6, None)).astype(
+                np.float32
+            ),
+        }
+        if not training:
+            data["ze_bin"] = df["ze_bin"].astype(np.float32)
+        return pd.DataFrame(data, index=df.index)
 
     raise ValueError(f"Unknown analysis_type: {analysis_type}")
-
-
-def apply_zenith_binning(zenith_angles, model_parameters):
-    """Apply zenith binning based on zenith angles and model parameters."""
-    parameters = load_model_parameters(model_parameters)
-    bins = parameters.get("zenith_bins_deg", [])
-    if not bins:
-        raise ValueError("No 'zenith_bins_deg' found in model_parameters.")
-    return zenith_in_bins(np.array(zenith_angles), bins)
 
 
 def zenith_in_bins(zenith_angles, bins):
@@ -371,11 +351,13 @@ def zenith_in_bins(zenith_angles, bins):
 
 def energy_in_bins(df_chunk, bins):
     """Apply energy binning based on reconstructed energy and given limits."""
-    bin_centers = np.array([(b["E_min"] + b["E_max"]) / 2 for b in bins])
+    centers = np.array([(b["E_min"] + b["E_max"]) / 2 if b is not None else np.nan for b in bins])
+    valid = (df_chunk["Erec"].to_numpy() > 0) & ~np.isnan(centers).all()
+    e_bin = np.full(len(df_chunk), -1, dtype=np.int32)
+    log_e = np.log10(df_chunk.loc[valid, "Erec"].to_numpy())
+    distances = np.abs(log_e[:, None] - centers)
+    distances[:, np.isnan(centers)] = np.inf
 
-    valid_energy_mask = df_chunk["Erec"].values > 0
-    df_chunk["e_bin"] = -1
-    log_e = np.log10(df_chunk.loc[valid_energy_mask, "Erec"].values)
-    distances = np.abs(log_e[:, np.newaxis] - bin_centers)
-    df_chunk.loc[valid_energy_mask, "e_bin"] = np.argmin(distances, axis=1)
+    e_bin[valid] = np.argmin(distances, axis=1)
+    df_chunk["e_bin"] = e_bin
     return df_chunk["e_bin"]

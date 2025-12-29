@@ -1,55 +1,78 @@
 """Apply models for regression and classification tasks."""
 
 import logging
+import re
 from pathlib import Path
 
 import joblib
 import numpy as np
 
 from eventdisplay_ml.data_processing import flatten_telescope_data_vectorized
-from eventdisplay_ml.features import telescope_features
-from eventdisplay_ml.utils import load_model_parameters
+from eventdisplay_ml.features import (
+    excluded_features,
+    target_features,
+    telescope_features,
+)
 
 _logger = logging.getLogger(__name__)
 
 
-def load_classification_models(model_dir, model_parameters):
+def load_classification_models(model_prefix):
     """
     Load XGBoost classification models for different telescope multiplicities from a directory.
 
     Parameters
     ----------
-    model_dir : str
-        Path to the directory containing the trained model files
-    model_parameters : str or None
-        Path to a JSON file defining which models to load.
+    model_prefix : str
+        Prefix path to the trained model files. Models are expected to be named
+        ``{model_prefix}_ntel{n_tel}_bin{e_bin}.joblib``.
 
     Returns
     -------
-    dict
+    dict, dict
         A dictionary mapping the number of telescopes (n_tel) and energy bin
-        to the corresponding loaded model objects.
+        to the corresponding loaded model objects. Also returns a dictionary
+        of model parameters.
     """
-    par = load_model_parameters(model_parameters)
-
-    file_name_template = par.get("model_file_name", "gamma_hadron_bdt")
+    model_prefix = Path(model_prefix)
+    model_dir_path = Path(model_prefix.parent)
 
     models = {}
-    model_dir_path = Path(model_dir)
-
+    par = {}
     for n_tel in range(2, 5):
-        models[n_tel] = {}
-        for e_bin in range(len(par["energy_bins_log10_tev"])):
-            file = f"{file_name_template}_ntel{n_tel}_bin{e_bin}.joblib"
-            model_filename = model_dir_path / file
+        pattern = f"{model_prefix.name}_ntel{n_tel}_bin*.joblib"
+        for file in sorted(model_dir_path.glob(pattern)):
+            match = re.search(r"_bin(\d+)\.joblib$", file.name)
+            if not match:
+                _logger.warning(f"Could not extract energy bin from filename: {file.name}")
+                continue
+            e_bin = int(match.group(1))
+            _logger.info(f"Loading model: {file}")
+            model_data = joblib.load(file)
+            models.setdefault(n_tel, {})[e_bin] = model_data["model"]
+            par = _update_parameters(par, model_data.get("parameters", {}), e_bin)
 
-            if model_filename.exists():
-                _logger.info(f"Loading model: {model_filename}")
-                models[n_tel][e_bin] = joblib.load(model_filename)
-            else:
-                _logger.warning(f"Model not found: {model_filename}")
-
+    _logger.info(f"Loaded classification model parameters: {par}")
     return models, par
+
+
+def _update_parameters(full_params, single_bin_params, e_bin_number):
+    """Merge a single-bin model parameters into the full parameters dict."""
+    energy_bin = single_bin_params["energy_bins_log10_tev"]
+    zenith_bins = single_bin_params["zenith_bins_deg"]
+
+    if "energy_bins_log10_tev" not in full_params:
+        full_params["energy_bins_log10_tev"] = []
+        full_params["zenith_bins_deg"] = zenith_bins
+
+    while len(full_params["energy_bins_log10_tev"]) <= e_bin_number:
+        full_params["energy_bins_log10_tev"].append(None)
+
+    full_params["energy_bins_log10_tev"][e_bin_number] = energy_bin
+    if full_params.get("zenith_bins_deg") != zenith_bins:
+        raise ValueError(f"Inconsistent zenith_bins_deg for energy bin {e_bin_number}")
+
+    return full_params
 
 
 def load_regression_models(model_dir):
@@ -149,6 +172,7 @@ def apply_classification_models(df, models):
         for e_bin, group_df in group_ntel_df.groupby("e_bin"):
             e_bin = int(e_bin)
             if e_bin == -1:
+                _logger.warning("Skipping events with e_bin = -1")
                 continue
             if e_bin not in models[n_tel]:
                 _logger.warning(f"No model for n_tel={n_tel}, e_bin={e_bin}")
@@ -169,24 +193,7 @@ def features(group_df, ntel, analysis_type, training):
         ntel,
         telescope_features(analysis_type, training=training),
         analysis_type=analysis_type,
-        apply_pointing_corrections=(analysis_type == "stereo_analysis"),
+        training=training,
     )
-
-    excluded_columns = {"MCxoff", "MCyoff", "MCe0", "label", "class"}
-    if analysis_type == "stereo_analysis":
-        excluded_columns.update(
-            {
-                *[f"fpointing_dx_{i}" for i in range(ntel)],
-                *[f"fpointing_dy_{i}" for i in range(ntel)],
-            }
-        )
-    else:
-        excluded_columns.update(
-            {
-                "Erec",
-                *[f"E_{i}" for i in range(ntel)],
-                *[f"ES_{i}" for i in range(ntel)],
-            }
-        )
-
+    excluded_columns = target_features(analysis_type) | excluded_features(analysis_type, ntel)
     return df_flat.drop(columns=excluded_columns, errors="ignore")

@@ -19,12 +19,21 @@ from sklearn.model_selection import train_test_split
 from eventdisplay_ml import utils
 from eventdisplay_ml.data_processing import load_training_data
 from eventdisplay_ml.evaluate import evaluate_classification_model, write_efficiency_csv
+from eventdisplay_ml.utils import load_model_parameters
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
 
-def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, energy_bin_number):
+def train(
+    signal_df,
+    background_df,
+    n_tel,
+    output_dir,
+    train_test_fraction,
+    model_parameters,
+    energy_bin_number,
+):
     """
     Train a single XGBoost model for gamma/hadron classification.
 
@@ -40,6 +49,8 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
         Directory to save the trained model.
     train_test_fraction : float
         Fraction of data to use for training.
+    model_parameters : dict,
+        Dictionary of model parameters.
     energy_bin_number : int
         Energy bin number (for naming the output model).
     """
@@ -78,16 +89,27 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
 
         output_filename = (
-            Path(output_dir) / f"classify_bdt_{name}_ntel{n_tel}_bin{energy_bin_number}"
+            Path(output_dir)
+            / f"{model_parameters['model_file_name']}_{name}_ntel{n_tel}_bin{energy_bin_number}"
         )
-        dump(model, output_filename.with_suffix(".joblib"))
         _logger.info(f"{name} model saved to: {output_filename.with_suffix('.joblib')}")
-        write_efficiency_csv(
+        efficiency = write_efficiency_csv(
             name,
             model,
             x_test,
             y_test,
             output_filename.with_suffix(".efficiency.csv"),
+        )
+        dump(
+            {
+                "model": model,
+                "feature_names": x_data.columns.tolist(),
+                "efficiency": efficiency,
+                "parameters": model_parameters,
+                "n_tel": n_tel,
+                "energy_bin_number": energy_bin_number,
+            },
+            output_filename.with_suffix(".joblib"),
         )
 
 
@@ -139,30 +161,26 @@ def main():
     )
     _logger.info(f"Energy bin {args.energy_bin_number}")
 
-    signal_events = load_training_data(
-        utils.read_input_file_list(args.input_signal_file_list),
-        args.ntel,
-        args.max_events,
-        analysis_type="classification",
-        model_parameters=args.model_parameters,
-        energy_bin_number=args.energy_bin_number,
-    )
+    model_parameters = load_model_parameters(args.model_parameters, args.energy_bin_number)
 
-    background_events = load_training_data(
-        utils.read_input_file_list(args.input_background_file_list),
-        args.ntel,
-        args.max_events,
-        analysis_type="classification",
-        model_parameters=args.model_parameters,
-        energy_bin_number=args.energy_bin_number,
-    )
+    event_lists = [
+        load_training_data(
+            utils.read_input_file_list(file_list),
+            args.ntel,
+            args.max_events,
+            analysis_type="classification",
+            model_parameters=model_parameters,
+        )
+        for file_list in (args.input_signal_file_list, args.input_background_file_list)
+    ]
 
     train(
-        signal_events,
-        background_events,
+        event_lists[0],
+        event_lists[1],
         args.ntel,
         output_dir,
         args.train_test_fraction,
+        model_parameters,
         args.energy_bin_number,
     )
 

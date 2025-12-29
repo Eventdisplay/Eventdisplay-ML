@@ -66,10 +66,6 @@ def process_file_chunked(
     if max_events:
         _logger.info(f"Maximum events to process: {max_events}")
 
-    bin_centers = np.array(
-        [(b["E_min"] + b["E_max"]) / 2 for b in model_parameters["energy_bins_log10_tev"]]
-    )
-
     with uproot.recreate(output_file) as root_file:
         tree = root_file.mktree("Classification", {"IsGamma": np.float32})
         total_processed = 0
@@ -92,13 +88,6 @@ def process_file_chunked(
             if max_events is not None and total_processed >= max_events:
                 break
 
-            # energy bins (closest center)
-            valid_energy_mask = df_chunk["Erec"].values > 0
-            df_chunk["e_bin"] = -1
-            log_e = np.log10(df_chunk.loc[valid_energy_mask, "Erec"].values)
-            distances = np.abs(log_e[:, np.newaxis] - bin_centers)
-            df_chunk.loc[valid_energy_mask, "e_bin"] = np.argmin(distances, axis=1)
-
             df_chunk["e_bin"] = energy_in_bins(df_chunk, model_parameters["energy_bins_log10_tev"])
             df_chunk["ze_bin"] = zenith_in_bins(
                 90.0 - df_chunk["ArrayPointing_Elevation"].values,
@@ -120,7 +109,7 @@ def process_file_chunked(
             total_processed += len(df_chunk)
             _logger.info(f"Processed {total_processed} events so far")
 
-    _logger.info(f"Streaming complete. Total processed events written: {total_processed}")
+    _logger.info(f"Total processed events written: {total_processed}")
 
 
 def main():
@@ -133,15 +122,13 @@ def main():
         help="Path to input mscw file",
     )
     parser.add_argument(
-        "--model-dir",
+        "--model-prefix",
         required=True,
-        metavar="MODEL_DIR",
-        help="Directory containing XGBoost models",
-    )
-    parser.add_argument(
-        "--model-parameters",
-        type=str,
-        help=("Path to model parameter file (JSON) defining which models to load. "),
+        metavar="MODEL_PREFIX",
+        help=(
+            "Path to directory containing XGBoost classification models "
+            "(without n_tel and energy bin suffix)."
+        ),
     )
     parser.add_argument(
         "--output-file",
@@ -176,11 +163,11 @@ def main():
 
     _logger.info("--- XGBoost Classification Evaluation ---")
     _logger.info(f"Input file: {args.input_file}")
-    _logger.info(f"Model directory: {args.model_dir}")
+    _logger.info(f"Model prefix: {args.model_prefix}")
     _logger.info(f"Output file: {args.output_file}")
     _logger.info(f"Image selection: {args.image_selection}")
 
-    models, model_par = load_classification_models(args.model_dir, args.model_parameters)
+    models, model_par = load_classification_models(args.model_prefix)
 
     process_file_chunked(
         input_file=args.input_file,
