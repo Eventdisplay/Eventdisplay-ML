@@ -8,10 +8,6 @@ def telescope_features(analysis_type, training):
     Disp variables with different indexing logic in data preparation.
     """
     var = [
-        "Disp_T",
-        "DispXoff_T",
-        "DispYoff_T",
-        "DispWoff_T",
         "cen_x",
         "cen_y",
         "cosphi",
@@ -28,7 +24,7 @@ def telescope_features(analysis_type, training):
     if analysis_type == "classification":
         return var
 
-    var = [*var, "E", "ES"]
+    var = [*var, "E", "ES", "Disp_T", "DispXoff_T", "DispYoff_T", "DispWoff_T"]
     if not training:
         var += ["fpointing_dx", "fpointing_dy"]
     return var

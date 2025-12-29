@@ -29,6 +29,7 @@ def read_input_file_list(input_file_list):
     if not input_files:
         raise ValueError(f"Error: No input files found in the list: {input_file_list}")
 
+    _logger.info(f"Read {len(input_files)} input files from {input_file_list}")
     return input_files
 
 

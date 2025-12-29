@@ -30,17 +30,21 @@ def train(signal_df, background_df, n_tel, output_dir, train_test_fraction, ener
 
     Parameters
     ----------
-    - signal_df: Pandas DataFrame with signal training data.
-    - background_df: Pandas DataFrame with background training data.
-    - n_tel: Telescope multiplicity.
-    - output_dir: Directory to save the trained model.
-    - train_test_fraction: Fraction of data to use for training.
-    - energy_bin_number: Energy bin number for selection.
+    signal_df : Pandas DataFrame
+        Pandas DataFrame with signal training data.
+    background_df : Pandas DataFrame
+        Pandas DataFrame with background training data.
+    n_tel : int
+        Telescope multiplicity.
+    output_dir : Path
+        Directory to save the trained model.
+    train_test_fraction : float
+        Fraction of data to use for training.
+    energy_bin_number : int
+        Energy bin number (for naming the output model).
     """
     if signal_df.empty or background_df.empty:
-        _logger.warning(
-            f"Skipping training for n_tel={n_tel} due to empty signal or background data."
-        )
+        _logger.warning(f"Skip training for n_tel={n_tel} due to empty signal / background data.")
         return
 
     signal_df["label"] = 1
@@ -97,7 +101,7 @@ def main():
         "--input_background_file_list", help="List of input background mscw ROOT files."
     )
     parser.add_argument("--ntel", type=int, help="Telescope multiplicity (2, 3, or 4).")
-    parser.add_argument("--output_dir", help="Output directory for XGBoost models and weights.")
+    parser.add_argument("--output_dir", help="Output directory for XGBoost models.")
     parser.add_argument(
         "--train_test_fraction",
         type=float,
@@ -123,16 +127,11 @@ def main():
 
     args = parser.parse_args()
 
-    input_signal_files = utils.read_input_file_list(args.input_signal_file_list)
-    input_background_files = utils.read_input_file_list(args.input_background_file_list)
-
     output_dir = Path(args.output_dir)
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
     _logger.info("--- XGBoost Classification Training ---")
-    _logger.info(f"Signal input files: {len(input_signal_files)}")
-    _logger.info(f"Background input files: {len(input_background_files)}")
     _logger.info(f"Telescope multiplicity: {args.ntel}")
     _logger.info(f"Output directory: {output_dir}")
     _logger.info(
@@ -141,19 +140,19 @@ def main():
     _logger.info(f"Energy bin {args.energy_bin_number}")
 
     signal_events = load_training_data(
-        input_signal_files,
+        utils.read_input_file_list(args.input_signal_file_list),
         args.ntel,
         args.max_events,
-        analysis_type="signal_classification",
+        analysis_type="classification",
         model_parameters=args.model_parameters,
         energy_bin_number=args.energy_bin_number,
     )
 
     background_events = load_training_data(
-        input_background_files,
+        utils.read_input_file_list(args.input_background_file_list),
         args.ntel,
         args.max_events,
-        analysis_type="background_classification",
+        analysis_type="classification",
         model_parameters=args.model_parameters,
         energy_bin_number=args.energy_bin_number,
     )

@@ -14,7 +14,11 @@ import logging
 import numpy as np
 import uproot
 
-from eventdisplay_ml.data_processing import apply_image_selection
+from eventdisplay_ml.data_processing import (
+    apply_image_selection,
+    energy_in_bins,
+    zenith_in_bins,
+)
 from eventdisplay_ml.features import features
 from eventdisplay_ml.models import (
     apply_classification_models,
@@ -94,6 +98,12 @@ def process_file_chunked(
             log_e = np.log10(df_chunk.loc[valid_energy_mask, "Erec"].values)
             distances = np.abs(log_e[:, np.newaxis] - bin_centers)
             df_chunk.loc[valid_energy_mask, "e_bin"] = np.argmin(distances, axis=1)
+
+            df_chunk["e_bin"] = energy_in_bins(df_chunk, model_parameters["energy_bins_log10_tev"])
+            df_chunk["ze_bin"] = zenith_in_bins(
+                90.0 - df_chunk["ArrayPointing_Elevation"].values,
+                model_parameters["zenith_bins_deg"],
+            )
 
             # Reset index to local chunk indices (0, 1, 2, ...) to avoid
             # index out-of-bounds when indexing chunk-sized output arrays

@@ -160,8 +160,8 @@ def feature_importance(model, x_cols, target_names, name=None):
         df = pd.DataFrame({"Feature": x_cols, "Importance": importances}).sort_values(
             "Importance", ascending=False
         )
-        _logger.info(f"\n### {name} Importance for Target: **{target}**")
-        _logger.info(f"\n{df.head(15).to_markdown(index=False)}")
+        _logger.info(f"### {name} Importance for Target: **{target}**")
+        _logger.info(f"\n{df.head(25).to_markdown(index=False)}")
 
 
 def shap_feature_importance(model, x_data, target_names, max_points=20000, n_top=25):

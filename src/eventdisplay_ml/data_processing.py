@@ -129,13 +129,13 @@ def load_training_data(
     Parameters
     ----------
     input_files : list[str]
-        List of input mscw ROOT files.
+        List of input mscw files.
     n_tel : int
         Telescope multiplicity to filter on.
     max_events : int
         Maximum number of events to load. If <= 0, load all available events.
     analysis_type : str, optional
-        Type of analysis: "stereo_analysis", "signal_classification", or "background_classification".
+        Type of analysis: "stereo_analysis", "classification".
     model_parameters : str or None
         Path to a JSON file defining which models to load.
     energy_bin_number : int or None
@@ -148,7 +148,7 @@ def load_training_data(
     )
 
     branch_list = features(analysis_type, training=True)
-    _logger.info(f"Using features: {branch_list}")
+    _logger.info(f"Features: {branch_list}")
     event_cut = event_cuts(analysis_type, n_tel, model_parameters, energy_bin_number)
 
     dfs = []
@@ -193,9 +193,9 @@ def load_training_data(
         df_flat["MCxoff"] = data_tree["MCxoff"]
         df_flat["MCyoff"] = data_tree["MCyoff"]
         df_flat["MCe0"] = np.log10(data_tree["MCe0"])
-    if "classification" in analysis_type:
+    elif analysis_type == "classification":
         df_flat["ze_bin"] = apply_zenith_binning(
-            data_tree["ArrayPointing_Elevation"], model_parameters
+            90.0 - data_tree["ArrayPointing_Elevation"], model_parameters
         )
 
     df_flat.dropna(axis=1, how="all", inplace=True)
@@ -295,8 +295,9 @@ def flatten_telescope_variables(n_tel, flat_features, index, apply_pointing_corr
 
     new_cols = {}
     for i in range(n_tel):
-        new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
-        new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
+        if f"Disp_T_{i}" in df_flat:
+            new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
+            new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
         new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
@@ -342,6 +343,7 @@ def extra_columns(df, analysis_type):
                 "EmissionHeightChi2": np.log10(
                     np.clip(df["EmissionHeightChi2"], 1e-6, None)
                 ).astype(np.float32),
+                "ze_bin": df["ze_bin"].astype(np.float32),
             },
             index=df.index,
         )
@@ -349,16 +351,31 @@ def extra_columns(df, analysis_type):
     raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
 
-def apply_zenith_binning(elevation_angles, model_parameters):
-    """Apply zenith binning based on elevation angles and model parameters."""
+def apply_zenith_binning(zenith_angles, model_parameters):
+    """Apply zenith binning based on zenith angles and model parameters."""
     parameters = load_model_parameters(model_parameters)
     bins = parameters.get("zenith_bins_deg", [])
     if not bins:
         raise ValueError("No 'zenith_bins_deg' found in model_parameters.")
+    return zenith_in_bins(np.array(zenith_angles), bins)
+
+
+def zenith_in_bins(zenith_angles, bins):
+    """Apply zenith binning based on zenith angles and given bin edges."""
     if isinstance(bins[0], dict):
         bins = [b["Ze_min"] for b in bins] + [bins[-1]["Ze_max"]]
-
     bins = np.asarray(bins, dtype=float)
-    zenith = 90.0 - np.array(elevation_angles)
-    idx = np.clip(np.digitize(zenith, bins) - 1, 0, len(bins) - 2)
+    idx = np.clip(np.digitize(zenith_angles, bins) - 1, 0, len(bins) - 2)
     return idx.astype(np.int32)
+
+
+def energy_in_bins(df_chunk, bins):
+    """Apply energy binning based on reconstructed energy and given limits."""
+    bin_centers = np.array([(b["E_min"] + b["E_max"]) / 2 for b in bins])
+
+    valid_energy_mask = df_chunk["Erec"].values > 0
+    df_chunk["e_bin"] = -1
+    log_e = np.log10(df_chunk.loc[valid_energy_mask, "Erec"].values)
+    distances = np.abs(log_e[:, np.newaxis] - bin_centers)
+    df_chunk.loc[valid_energy_mask, "e_bin"] = np.argmin(distances, axis=1)
+    return df_chunk["e_bin"]
