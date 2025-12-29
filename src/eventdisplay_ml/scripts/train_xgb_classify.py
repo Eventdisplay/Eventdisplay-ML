@@ -9,39 +9,39 @@ Separate BDTs are trained for 2, 3, and 4 telescope multiplicity events.
 
 import argparse
 import logging
-from pathlib import Path
 
 import pandas as pd
 import xgboost as xgb
 from joblib import dump
 from sklearn.model_selection import train_test_split
 
-from eventdisplay_ml import utils
+from eventdisplay_ml import hyper_parameters, utils
 from eventdisplay_ml.data_processing import load_training_data
-from eventdisplay_ml.evaluate import evaluate_classification_model, write_efficiency_csv
+from eventdisplay_ml.evaluate import (
+    evaluate_classification_model,
+    evaluation_efficiency,
+)
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
 
 def train(
-    signal_df,
-    background_df,
+    df,
     n_tel,
     model_prefix,
     train_test_fraction,
     model_parameters,
     energy_bin_number,
+    hyperparameter_config,
 ):
     """
     Train a single XGBoost model for gamma/hadron classification.
 
     Parameters
     ----------
-    signal_df : Pandas DataFrame
-        Pandas DataFrame with signal training data.
-    background_df : Pandas DataFrame
-        Pandas DataFrame with background training data.
+    df : list of pd.DataFrame
+        List containing signal and background DataFrames.
     n_tel : int
         Telescope multiplicity.
     model_prefix : str
@@ -52,69 +52,46 @@ def train(
         Dictionary of model parameters.
     energy_bin_number : int
         Energy bin number (for naming the output model).
+    hyperparameter_config : str, optional
+        Path to JSON file with hyperparameter configuration, by default None.
     """
-    if signal_df.empty or background_df.empty:
+    if df[0].empty or df[1].empty:
         _logger.warning(f"Skip training for n_tel={n_tel} due to empty signal / background data.")
         return
 
-    model_prefix = Path(model_prefix)
-    output_dir = model_prefix.parent
-    if not output_dir.exists():
-        output_dir.mkdir(parents=True)
-
-    signal_df["label"] = 1
-    background_df["label"] = 0
-    full_df = pd.concat([signal_df, background_df], ignore_index=True)
+    df[0]["label"] = 1
+    df[1]["label"] = 0
+    full_df = pd.concat([df[0], df[1]], ignore_index=True)
     x_data = full_df.drop(columns=["label"])
     _logger.info(f"Training features ({len(x_data.columns)}): {', '.join(x_data.columns)}")
     y_data = full_df["label"]
     x_train, x_test, y_train, y_test = train_test_split(
-        x_data, y_data, train_size=train_test_fraction, random_state=42, stratify=y_data
+        x_data, y_data, train_size=train_test_fraction, random_state=None, stratify=y_data
     )
 
     _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
 
-    xgb_params = {
-        "objective": "binary:logistic",
-        "eval_metric": "logloss",  # TMP AUC ?
-        "n_estimators": 100,  # TMP probably too low
-        "max_depth": 6,
-        "learning_rate": 0.1,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "random_state": 42,
-    }
-    configs = {"xgboost": xgb.XGBClassifier(**xgb_params)}
-    for name, model in configs.items():
+    configs = hyper_parameters.classification_hyperparameters(hyperparameter_config)
+
+    for name, para in configs.items():
         _logger.info(f"Training with {name} for n_tel={n_tel}...")
-        _logger.info(f"parameters: {xgb_params}")
+        model = xgb.XGBClassifier(**para)
         model.fit(x_train, y_train)
 
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
 
-        output_filename = (
-            Path(output_dir) / f"{model_prefix.name}_{name}_ntel{n_tel}_bin{energy_bin_number}"
-        )
-        efficiency = write_efficiency_csv(
-            name,
-            model,
-            x_test,
-            y_test,
-            output_filename.with_suffix(".efficiency.csv"),
-        )
         dump(
             {
                 "model": model,
                 "features": x_data.columns.tolist(),
-                "hyperparameters": xgb_params,
-                "efficiency": efficiency,
+                "hyperparameters": para,
+                "efficiency": evaluation_efficiency(name, model, x_test, y_test),
                 "parameters": model_parameters,
                 "n_tel": n_tel,
                 "energy_bin_number": energy_bin_number,
             },
-            output_filename.with_suffix(".joblib"),
+            utils.output_file_name(model_prefix, name, n_tel, energy_bin_number),
         )
-        _logger.info(f"{name} model saved to: {output_filename.with_suffix('.joblib')}")
 
 
 def main():
@@ -134,6 +111,12 @@ def main():
             "(without n_tel and energy bin suffix)."
         ),
     )
+    parser.add_argument(
+        "--hyperparameter-config",
+        help="Path to JSON file with hyperparameter configuration.",
+        default=None,
+        type=str,
+    )
     parser.add_argument("--ntel", type=int, help="Telescope multiplicity (2, 3, or 4).")
     parser.add_argument(
         "--train_test_fraction",
@@ -149,7 +132,7 @@ def main():
     parser.add_argument(
         "--model-parameters",
         type=str,
-        help=("Path to model parameter file (JSON) defining which models to load. "),
+        help=("Path to model parameter file (JSON) defining energy and zenith bins."),
     )
     parser.add_argument(
         "--energy_bin_number",
@@ -181,13 +164,13 @@ def main():
     ]
 
     train(
-        event_lists[0],
-        event_lists[1],
+        event_lists,
         args.ntel,
         args.model_prefix,
         args.train_test_fraction,
         model_parameters,
         args.energy_bin_number,
+        args.hyperparameter_config,
     )
     _logger.info("XGBoost classification model trained successfully.")
 

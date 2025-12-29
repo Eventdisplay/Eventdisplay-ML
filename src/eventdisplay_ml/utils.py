@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
@@ -106,3 +107,19 @@ def load_energy_range(model_parameters, energy_bin_number=0):
         raise ValueError(
             f"Invalid energy bin number {energy_bin_number} for model parameters."
         ) from exc
+
+
+def output_file_name(model_prefix, name, n_tel, energy_bin_number=None):
+    """Generate output filename for the trained model."""
+    model_prefix = Path(model_prefix)
+
+    output_dir = model_prefix.parent
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
+
+    filename = f"{model_prefix}_{name}_ntel{n_tel}"
+    if energy_bin_number is not None:
+        filename += f"_ebin{energy_bin_number}"
+    filename += ".joblib"
+    _logger.info(f"Output filename: {filename}")
+    return filename

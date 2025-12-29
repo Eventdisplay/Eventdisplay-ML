@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import uproot
 
-from eventdisplay_ml.features import features, telescope_features
+from eventdisplay_ml import features
 from eventdisplay_ml.utils import load_energy_range
 
 _logger = logging.getLogger(__name__)
@@ -108,6 +108,21 @@ def _to_dense_array(col):
         return _to_padded_array(arrays)
 
 
+def flatten_feature_data(group_df, ntel, analysis_type, training):
+    """Get flattened features for a group of events with given telescope multiplicity."""
+    df_flat = flatten_telescope_data_vectorized(
+        group_df,
+        ntel,
+        features.telescope_features(analysis_type, training=training),
+        analysis_type=analysis_type,
+        training=training,
+    )
+    excluded_columns = set(features.target_features(analysis_type)) | set(
+        features.excluded_features(analysis_type, ntel)
+    )
+    return df_flat.drop(columns=excluded_columns, errors="ignore")
+
+
 def load_training_data(
     input_files,
     n_tel,
@@ -137,7 +152,7 @@ def load_training_data(
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
 
-    branch_list = features(analysis_type, training=True)
+    branch_list = features.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
     event_cut = event_cuts(analysis_type, n_tel, model_parameters)
     if max_events is not None and max_events > 0:
@@ -173,7 +188,7 @@ def load_training_data(
     df_flat = flatten_telescope_data_vectorized(
         data_tree,
         n_tel,
-        telescope_features(analysis_type, training=True),
+        features.telescope_features(analysis_type, training=True),
         analysis_type,
         training=True,
     )
@@ -235,7 +250,7 @@ def apply_image_selection(df, selected_indices, analysis_type, training=False):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    pad_vars = telescope_features(analysis_type, training=training)
+    pad_vars = features.telescope_features(analysis_type, training=training)
 
     for var_name in pad_vars:
         if var_name in df.columns:

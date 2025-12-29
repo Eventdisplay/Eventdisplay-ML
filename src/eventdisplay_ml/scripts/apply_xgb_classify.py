@@ -11,105 +11,10 @@ Takes into account telescope multiplicity and training in energy bins.
 import argparse
 import logging
 
-import numpy as np
-import uproot
-
-from eventdisplay_ml.data_processing import (
-    apply_image_selection,
-    energy_in_bins,
-    zenith_in_bins,
-)
-from eventdisplay_ml.features import features
-from eventdisplay_ml.models import (
-    apply_classification_models,
-    load_classification_models,
-)
-from eventdisplay_ml.utils import parse_image_selection
+from eventdisplay_ml.models import load_models, process_file_chunked
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
-
-
-def process_file_chunked(
-    input_file,
-    output_file,
-    models,
-    model_parameters,
-    image_selection,
-    max_events=None,
-    chunk_size=500000,
-):
-    """
-    Stream events from an input file in chunks, apply XGBoost models, write events.
-
-    Parameters
-    ----------
-    input_file : str
-        Path to the input file containing a "data" TTree.
-    output_file : str
-        Path to the output file to create.
-    models : dict
-        Dictionary of loaded XGBoost models for classification.
-    model_parameters : dict
-        Model parameters defining energy and zenith angle bins.
-    image_selection : str
-        String specifying which telescope indices to select.
-    max_events : int, optional
-        Maximum number of events to process.
-    chunk_size : int, optional
-        Number of events to read and process per chunk.
-    """
-    branch_list = features("classification", training=False)
-    selected_indices = parse_image_selection(image_selection)
-
-    _logger.info(f"Chunk size: {chunk_size}")
-    if max_events:
-        _logger.info(f"Maximum events to process: {max_events}")
-
-    with uproot.recreate(output_file) as root_file:
-        tree = root_file.mktree("Classification", {"IsGamma": np.float32})
-        total_processed = 0
-
-        for df_chunk in uproot.iterate(
-            f"{input_file}:data",
-            branch_list,
-            library="pd",
-            step_size=chunk_size,
-        ):
-            if df_chunk.empty:
-                continue
-
-            df_chunk = apply_image_selection(
-                df_chunk, selected_indices, analysis_type="classification"
-            )
-            if df_chunk.empty:
-                continue
-
-            if max_events is not None and total_processed >= max_events:
-                break
-
-            df_chunk["e_bin"] = energy_in_bins(df_chunk, model_parameters["energy_bins_log10_tev"])
-            df_chunk["ze_bin"] = zenith_in_bins(
-                90.0 - df_chunk["ArrayPointing_Elevation"].values,
-                model_parameters["zenith_bins_deg"],
-            )
-
-            # Reset index to local chunk indices (0, 1, 2, ...) to avoid
-            # index out-of-bounds when indexing chunk-sized output arrays
-            df_chunk = df_chunk.reset_index(drop=True)
-
-            pred_proba = apply_classification_models(df_chunk, models)
-
-            tree.extend(
-                {
-                    "IsGamma": np.asarray(pred_proba, dtype=np.float32),
-                }
-            )
-
-            total_processed += len(df_chunk)
-            _logger.info(f"Processed {total_processed} events so far")
-
-    _logger.info(f"Total processed events written: {total_processed}")
 
 
 def main():
@@ -167,9 +72,10 @@ def main():
     _logger.info(f"Output file: {args.output_file}")
     _logger.info(f"Image selection: {args.image_selection}")
 
-    models, model_par = load_classification_models(args.model_prefix)
+    models, model_par = load_models("classification", args.model_prefix)
 
     process_file_chunked(
+        analysis_type="classification",
         input_file=args.input_file,
         output_file=args.output_file,
         models=models,
