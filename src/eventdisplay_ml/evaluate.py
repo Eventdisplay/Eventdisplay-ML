@@ -7,6 +7,8 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+from eventdisplay_ml.features import target_features
+
 _logger = logging.getLogger(__name__)
 
 
@@ -63,20 +65,19 @@ def evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name):
     score = model.score(x_test, y_test)
     _logger.info(f"XGBoost Multi-Target R^2 Score (Testing Set): {score:.4f}")
     y_pred = model.predict(x_test)
-    mse_x = mean_squared_error(y_test["MCxoff"], y_pred[:, 0])
-    mse_y = mean_squared_error(y_test["MCyoff"], y_pred[:, 1])
-    _logger.info(f"{name} MSE (X_off): {mse_x:.4f}, MSE (Y_off): {mse_y:.4f}")
-    mae_x = mean_absolute_error(y_test["MCxoff"], y_pred[:, 0])
-    mae_y = mean_absolute_error(y_test["MCyoff"], y_pred[:, 1])
-    _logger.info(f"{name} MAE (X_off): {mae_x:.4f}")
-    _logger.info(f"{name} MAE (Y_off): {mae_y:.4f}")
+    mse = mean_squared_error(y_test, y_pred)
+    _logger.info(f"{name} Mean Squared Error (All targets): {mse:.4f}")
+    mae = mean_absolute_error(y_test, y_pred)
+    _logger.info(f"{name} Mean Absolute Error (All targets): {mae:.4f}")
 
+    target_variance(y_test, y_pred, y_data.columns)
     feature_importance(model, x_cols, y_data.columns, name)
     if name == "xgboost":
         shap_feature_importance(model, x_test, y_data.columns)
 
+    df_pred = pd.DataFrame(y_pred, columns=target_features("stereo_analysis"))
     calculate_resolution(
-        y_pred,
+        df_pred,
         y_test,
         df,
         percentiles=[68, 90, 95],
@@ -87,15 +88,33 @@ def evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name):
     )
 
 
+def target_variance(y_test, y_pred, targets):
+    """Calculate and log variance explained per target."""
+    y_test_np = y_test.to_numpy() if hasattr(y_test, "to_numpy") else y_test
+
+    mse_values = np.mean((y_test_np - y_pred) ** 2, axis=0)
+    variance_values = np.var(y_test_np, axis=0)
+
+    _logger.info("--- Performance Per Target ---")
+    for i, name in enumerate(targets):
+        # Fraction of variance unexplained (lower is better, 0.0 is perfect)
+        unexplained = mse_values[i] / variance_values[i]
+
+        _logger.info(
+            f"Target: {name:12s} | MSE: {mse_values[i]:.6f} | "
+            f"Unexplained Variance: {unexplained:.2%}"
+        )
+
+
 def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
     """Compute angular and energy resolution based on predictions."""
     results_df = pd.DataFrame(
         {
             "MCxoff_true": y_test["MCxoff"].values,
             "MCyoff_true": y_test["MCyoff"].values,
-            "MCxoff_pred": y_pred[:, 0],
-            "MCyoff_pred": y_pred[:, 1],
-            "MCe0_pred": y_pred[:, 2],
+            "MCxoff_pred": y_pred["MCxoff"].values,
+            "MCyoff_pred": y_pred["MCyoff"].values,
+            "MCe0_pred": y_pred["MCe0"].values,
             "MCe0": df.loc[y_test.index, "MCe0"].values,
         }
     )
@@ -134,50 +153,56 @@ def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, 
         _logger.info(f"\n{output_df.to_markdown(floatfmt='.4f')}")
 
 
-def _iter_targets(model, target_names):
-    """Iterate over targets in multi-/single-output models."""
-    if hasattr(model, "estimators_"):  # MultiOutputRegressor
-        for i, est in enumerate(model.estimators_):
-            target = target_names[i] if i < len(target_names) else f"target_{i}"
-            yield target, est
-    else:
-        target = target_names[0] if target_names else "target"
-        yield target, model
-
-
 def feature_importance(model, x_cols, target_names, name=None):
-    """Feature importance using built-in XGBoost method."""
+    """Feature importance handling both MultiOutputRegressor and native Multi-target."""
     _logger.info("--- XGBoost Feature Importance ---")
 
-    for target, est in _iter_targets(model, target_names):
-        importances = getattr(est, "feature_importances_", None)
-        if importances is None:
-            _logger.info("No feature_importances_ found.")
-            continue
+    # Case 1: Scikit-Learn MultiOutputRegressor (Separate model per target)
+    if hasattr(model, "estimators_"):
+        for i, est in enumerate(model.estimators_):
+            target = target_names[i] if i < len(target_names) else f"target_{i}"
+            _log_importance_table(target, est.feature_importances_, x_cols, name)
 
-        df = pd.DataFrame({"Feature": x_cols, "Importance": importances}).sort_values(
-            "Importance", ascending=False
-        )
-        _logger.info(f"### {name} Importance for Target: **{target}**")
-        _logger.info(f"\n{df.head(25).to_markdown(index=False)}")
+    # Case 2: Native Multi-target XGBoost (One model for all targets)
+    else:
+        importances = getattr(model, "feature_importances_", None)
+
+        if importances is not None:
+            if target_names is not None and not target_names.empty:
+                target_str = ", ".join(list(target_names))
+            else:
+                target_str = "Joint Targets"
+
+            _logger.info("Note: Native XGBoost multi-target provides JOINT importance.")
+            _log_importance_table(target_str, importances, x_cols, name)
+
+
+def _log_importance_table(target_label, values, x_cols, name):
+    """Format and log the importance dataframe for printing."""
+    df = pd.DataFrame({"Feature": x_cols, "Importance": values}).sort_values(
+        "Importance", ascending=False
+    )
+    _logger.info(f"### {name} Importance for: **{target_label}**")
+    _logger.info(f"\n{df.head(25).to_markdown(index=False)}")
 
 
 def shap_feature_importance(model, x_data, target_names, max_points=20000, n_top=25):
-    """Feature importance using SHAP values from XGBoost."""
-    x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=0)
+    """Feature importance using SHAP values for native multi-target XGBoost."""
+    x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=42)
     n_features = len(x_data.columns)
+    n_targets = len(target_names)
 
-    for target, est in _iter_targets(model, target_names):
-        if not hasattr(est, "get_booster"):
-            _logger.info("Model does not support SHAP feature importance.")
-            continue
+    dmatrix = xgb.DMatrix(x_sample)
+    shap_vals = model.get_booster().predict(dmatrix, pred_contribs=True)
+    shap_vals = shap_vals.reshape(len(x_sample), n_targets, n_features + 1)
 
-        shap_vals = est.get_booster().predict(xgb.DMatrix(x_sample), pred_contribs=True)[:, :-1]
+    for i, target in enumerate(target_names):
+        target_shap = shap_vals[:, i, :-1]
 
-        imp = np.abs(shap_vals).mean(axis=0)
+        imp = np.abs(target_shap).mean(axis=0)
         idx = np.argsort(imp)[::-1]
 
-        _logger.info(f"=== Builtin XGBoost SHAP Importance for {target} ===")
+        _logger.info(f"=== SHAP Importance for {target} ===")
         for j in idx[:n_top]:
             if j < n_features:
                 _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")

@@ -15,7 +15,6 @@ import logging
 import xgboost as xgb
 from joblib import dump
 from sklearn.model_selection import train_test_split
-from sklearn.multioutput import MultiOutputRegressor
 
 from eventdisplay_ml import hyper_parameters, utils
 from eventdisplay_ml.data_processing import load_training_data
@@ -67,7 +66,7 @@ def train(df, n_tel, model_prefix, train_test_fraction, hyperparameter_config=No
 
     for name, para in configs.items():
         _logger.info(f"Training with {name} for n_tel={n_tel}...")
-        model = MultiOutputRegressor(xgb.XGBRegressor(**para))
+        model = xgb.XGBRegressor(**para)
         model.fit(x_train, y_train)
 
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
