@@ -19,25 +19,25 @@ def main():
     """Apply XGBoost stereo models."""
     parser = argparse.ArgumentParser(description=("Apply XGBoost Stereo Reconstruction"))
     parser.add_argument(
-        "--input-file",
+        "--input_file",
         required=True,
         metavar="INPUT.root",
         help="Path to input mscw file",
     )
     parser.add_argument(
-        "--model-prefix",
+        "--model_prefix",
         required=True,
         metavar="MODEL_PREFIX",
         help=("Path to directory containing XGBoost regression models  (without n_tel suffix)."),
     )
     parser.add_argument(
-        "--output-file",
+        "--output_file",
         required=True,
         metavar="OUTPUT.root",
         help="Output file path for predictions",
     )
     parser.add_argument(
-        "--image-selection",
+        "--image_selection",
         type=str,
         default="15",
         help=(
@@ -48,13 +48,13 @@ def main():
         ),
     )
     parser.add_argument(
-        "--max-events",
+        "--max_events",
         type=int,
         default=None,
         help="Maximum number of events to process (default: all events)",
     )
     parser.add_argument(
-        "--chunk-size",
+        "--chunk_size",
         type=int,
         default=500000,
         help="Number of events to process per chunk (default: 500000)",

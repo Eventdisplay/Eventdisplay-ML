@@ -90,7 +90,7 @@ def main():
     )
     parser.add_argument("--input_file_list", help="List of input mscw files.")
     parser.add_argument(
-        "--model-prefix",
+        "--model_prefix",
         required=True,
         help=("Path to directory for writing XGBoost regression models (without n_tel suffix)."),
     )
