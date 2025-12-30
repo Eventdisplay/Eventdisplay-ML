@@ -95,7 +95,7 @@ def main():
         help=("Path to directory for writing XGBoost regression models (without n_tel suffix)."),
     )
     parser.add_argument(
-        "--hyperparameter-config",
+        "--hyperparameter_config",
         help="Path to JSON file with hyperparameter configuration.",
         default=None,
         type=str,
