@@ -113,7 +113,7 @@ def flatten_feature_data(group_df, ntel, analysis_type, training):
     df_flat = flatten_telescope_data_vectorized(
         group_df,
         ntel,
-        features.telescope_features(analysis_type, training=training),
+        features.telescope_features(analysis_type),
         analysis_type=analysis_type,
         training=training,
     )
@@ -188,7 +188,7 @@ def load_training_data(
     df_flat = flatten_telescope_data_vectorized(
         data_tree,
         n_tel,
-        features.telescope_features(analysis_type, training=True),
+        features.telescope_features(analysis_type),
         analysis_type,
         training=True,
     )
@@ -250,7 +250,7 @@ def apply_image_selection(df, selected_indices, analysis_type, training=False):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    pad_vars = features.telescope_features(analysis_type, training=training)
+    pad_vars = features.telescope_features(analysis_type)
 
     for var_name in pad_vars:
         if var_name in df.columns:
@@ -306,10 +306,11 @@ def flatten_telescope_variables(n_tel, flat_features, index):
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
-        df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
-        if "E_{i}" in df_flat:
+        if f"size_{i}" in df_flat:
+            df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
+        if f"E_{i}" in df_flat:
             df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        if "ES_{i}" in df_flat:
+        if f"ES_{i}" in df_flat:
             df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
 
         # pointing corrections

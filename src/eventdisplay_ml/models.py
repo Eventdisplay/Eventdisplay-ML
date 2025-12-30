@@ -252,6 +252,7 @@ def process_file_chunked(
         Number of events to read and process per chunk.
     """
     branch_list = features.features(analysis_type, training=False)
+    _logger.info(f"Using branches: {branch_list}")
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")

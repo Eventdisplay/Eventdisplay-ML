@@ -27,6 +27,11 @@ def evaluation_efficiency(name, model, x_test, y_test):
         pred = y_pred_proba >= t
         eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else 0)
         eff_background.append(((pred) & (y_test == 0)).sum() / n_background if n_background else 0)
+        _logger.info(
+            f"{name} Threshold: {t:.2f} | "
+            f"Signal Efficiency: {eff_signal[-1]:.4f} | "
+            f"Background Efficiency: {eff_background[-1]:.4f}"
+        )
 
     return pd.DataFrame(
         {
@@ -157,23 +162,27 @@ def feature_importance(model, x_cols, target_names, name=None):
     """Feature importance handling both MultiOutputRegressor and native Multi-target."""
     _logger.info("--- XGBoost Feature Importance ---")
 
-    # Case 1: Scikit-Learn MultiOutputRegressor (Separate model per target)
+    # Case 1: Scikit-Learn MultiOutputRegressor
     if hasattr(model, "estimators_"):
         for i, est in enumerate(model.estimators_):
-            target = target_names[i] if i < len(target_names) else f"target_{i}"
+            target = target_names[i] if (target_names and i < len(target_names)) else f"target_{i}"
             _log_importance_table(target, est.feature_importances_, x_cols, name)
 
-    # Case 2: Native Multi-target XGBoost (One model for all targets)
+    # Case 2: Native Multi-target OR Single-target Classifier
     else:
         importances = getattr(model, "feature_importances_", None)
 
         if importances is not None:
-            if target_names is not None and not target_names.empty:
-                target_str = ", ".join(list(target_names))
+            if target_names is not None and len(target_names) > 0:
+                # Convert to list to ensure .join works regardless of input type
+                target_str = ", ".join(map(str, target_names))
             else:
-                target_str = "Joint Targets"
+                target_str = "Target"
 
-            _logger.info("Note: Native XGBoost multi-target provides JOINT importance.")
+            # Check if it's actually multi-target to set the log message
+            if target_names is not None and len(target_names) > 1:
+                _logger.info("Note: Native XGBoost multi-target provides JOINT importance.")
+
             _log_importance_table(target_str, importances, x_cols, name)
 
 
