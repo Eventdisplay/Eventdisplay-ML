@@ -113,7 +113,7 @@ def flatten_feature_data(group_df, ntel, analysis_type, training):
     df_flat = flatten_telescope_data_vectorized(
         group_df,
         ntel,
-        features.telescope_features(analysis_type, training=training),
+        features.telescope_features(analysis_type),
         analysis_type=analysis_type,
         training=training,
     )
@@ -171,7 +171,7 @@ def load_training_data(
                 _logger.info(f"Processing file: {f}")
                 tree = root_file["data"]
                 df = tree.arrays(branch_list, cut=event_cut, library="pd")
-                _logger.info(f"Number of events after filter {event_cut}: {len(df)}")
+                _logger.info(f"Number of events after event cut {event_cut}: {len(df)}")
                 if max_events_per_file and len(df) > max_events_per_file:
                     df = df.sample(n=max_events_per_file, random_state=42)
                 if not df.empty:
@@ -188,7 +188,7 @@ def load_training_data(
     df_flat = flatten_telescope_data_vectorized(
         data_tree,
         n_tel,
-        features.telescope_features(analysis_type, training=True),
+        features.telescope_features(analysis_type),
         analysis_type,
         training=True,
     )
@@ -204,6 +204,8 @@ def load_training_data(
 
     df_flat.dropna(axis=1, how="all", inplace=True)
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
+
+    print_variable_statistics(df_flat)
 
     return df_flat
 
@@ -250,7 +252,7 @@ def apply_image_selection(df, selected_indices, analysis_type, training=False):
     df["DispNImages"] = df["DispNImages_new"]
     df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
 
-    pad_vars = features.telescope_features(analysis_type, training=training)
+    pad_vars = features.telescope_features(analysis_type)
 
     for var_name in pad_vars:
         if var_name in df.columns:
@@ -274,7 +276,7 @@ def event_cuts(analysis_type, n_tel, model_parameters=None):
     """Event cut string for the given analysis type and telescope multiplicity."""
     event_cut = f"(DispNImages == {n_tel})"
 
-    if analysis_type in ("signal_classification", "background_classification"):
+    if analysis_type == "classification":
         cuts = [
             "Erec > 0",
             "MSCW > -2",
@@ -306,15 +308,18 @@ def flatten_telescope_variables(n_tel, flat_features, index):
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
-        df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
-        if "E_{i}" in df_flat:
+        if f"size_{i}" in df_flat:
+            df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
+        if f"E_{i}" in df_flat:
             df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        if "ES_{i}" in df_flat:
+        if f"ES_{i}" in df_flat:
             df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
 
         # pointing corrections
-        df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
-        df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
+        if f"cen_x_{i}" in df_flat and f"fpointing_dx_{i}" in df_flat:
+            df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
+        if f"cen_y_{i}" in df_flat and f"fpointing_dy_{i}" in df_flat:
+            df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
         df_flat = df_flat.drop(columns=[f"fpointing_dx_{i}", f"fpointing_dy_{i}"])
 
     return pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
@@ -376,3 +381,26 @@ def energy_in_bins(df_chunk, bins):
     e_bin[valid] = np.argmin(distances, axis=1)
     df_chunk["e_bin"] = e_bin
     return df_chunk["e_bin"]
+
+
+def print_variable_statistics(df):
+    """
+    Print min, max, mean, and RMS for each variable in the DataFrame.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing variables loaded using branch_list.
+    """
+    for col in df.columns:
+        data = df[col].dropna().to_numpy()
+        if data.size == 0:
+            print(f"{col}: No data")
+            continue
+        min_val = np.min(data)
+        max_val = np.max(data)
+        mean_val = np.mean(data)
+        rms_val = np.sqrt(np.mean(np.square(data)))
+        _logger.info(
+            f"{col:25s} min: {min_val:10.4g}  max: {max_val:10.4g}  mean: {mean_val:10.4g}  rms: {rms_val:10.4g}"
+        )

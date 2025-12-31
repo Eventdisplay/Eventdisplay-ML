@@ -252,6 +252,7 @@ def process_file_chunked(
         Number of events to read and process per chunk.
     """
     branch_list = features.features(analysis_type, training=False)
+    _logger.info(f"Using branches: {branch_list}")
     selected_indices = parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")
@@ -325,7 +326,7 @@ def _output_tree(analysis_type, root_file):
 
 def _apply_model(analysis_type, df_chunk, models, tree):
     """
-    Apply regression models to the data chunk.
+    Apply models to the data chunk.
 
     Parameters
     ----------
@@ -334,7 +335,7 @@ def _apply_model(analysis_type, df_chunk, models, tree):
     df_chunk : pandas.DataFrame
         Data chunk to process.
     models : dict
-        Dictionary of loaded XGBoost models for regression.
+        Dictionary of loaded XGBoost models.
     tree : uproot.writing.WritingTTree
         Output tree to write results to.
     """

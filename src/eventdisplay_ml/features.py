@@ -46,6 +46,9 @@ def excluded_features(analysis_type, ntel):
     if "classification" in analysis_type:
         return {
             "Erec",
+            *[f"cen_x_{i}" for i in range(ntel)],
+            *[f"cen_y_{i}" for i in range(ntel)],
+            *[f"size_{i}" for i in range(ntel)],
             *[f"E_{i}" for i in range(ntel)],
             *[f"ES_{i}" for i in range(ntel)],
             *[f"fpointing_dx_{i}" for i in range(ntel)],
@@ -54,19 +57,16 @@ def excluded_features(analysis_type, ntel):
     raise ValueError(f"Unknown analysis type: {analysis_type}")
 
 
-def telescope_features(analysis_type, training):
+def telescope_features(analysis_type):
     """
     Telescope-type features.
 
     Disp variables with different indexing logic in data preparation.
     """
     var = [
-        "cen_x",
-        "cen_y",
         "cosphi",
         "sinphi",
         "loss",
-        "size",
         "dist",
         "width",
         "length",
@@ -79,13 +79,24 @@ def telescope_features(analysis_type, training):
     if analysis_type == "classification":
         return var
 
-    return [*var, "E", "ES", "Disp_T", "DispXoff_T", "DispYoff_T", "DispWoff_T"]
+    return [
+        *var,
+        "size",
+        "cen_x",
+        "cen_y",
+        "E",
+        "ES",
+        "Disp_T",
+        "DispXoff_T",
+        "DispYoff_T",
+        "DispWoff_T",
+    ]
 
 
 def _regression_features(training):
     """Regression features."""
     var = [
-        *telescope_features("stereo_analysis", training),
+        *telescope_features("stereo_analysis"),
         "DispNImages",
         "DispTelList_T",
         "Xoff",
@@ -103,7 +114,7 @@ def _regression_features(training):
 
 def _classification_features(training):
     """Classification features."""
-    var_tel = telescope_features("classification", training)
+    var_tel = telescope_features("classification")
     var_array = [
         "DispNImages",
         "DispTelList_T",

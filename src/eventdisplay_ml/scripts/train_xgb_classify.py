@@ -104,7 +104,7 @@ def main():
         "--input_background_file_list", help="List of input background mscw ROOT files."
     )
     parser.add_argument(
-        "--model-prefix",
+        "--model_prefix",
         required=True,
         help=(
             "Path to directory for writing XGBoost classification models "
@@ -112,7 +112,7 @@ def main():
         ),
     )
     parser.add_argument(
-        "--hyperparameter-config",
+        "--hyperparameter_config",
         help="Path to JSON file with hyperparameter configuration.",
         default=None,
         type=str,
@@ -130,7 +130,7 @@ def main():
         help="Maximum number of events to process across all files.",
     )
     parser.add_argument(
-        "--model-parameters",
+        "--model_parameters",
         type=str,
         help=("Path to model parameter file (JSON) defining energy and zenith bins."),
     )
