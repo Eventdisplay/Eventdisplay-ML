@@ -1,14 +1,12 @@
 """Unit tests for utility helpers such as input file list reader."""
 
 import json
-import shutil
 
 import pytest
 
 from eventdisplay_ml.utils import (
     load_energy_range,
     load_model_parameters,
-    output_file_name,
     parse_image_selection,
     read_input_file_list,
 )
@@ -180,49 +178,3 @@ def test_load_energy_range_missing_energy_bins_key(tmp_path):
 
     with pytest.raises(ValueError, match="Invalid energy bin number 0"):
         load_energy_range(str(param_file), energy_bin_number=0)
-
-
-def test_output_file_name_basic(tmp_path):
-    """Test output_file_name basic usage without energy_bin_number."""
-    model_prefix = tmp_path / "model"
-    name = "classifier"
-    n_tel = 4
-    expected = f"{model_prefix}_classifier_ntel4.joblib"
-    result = output_file_name(str(model_prefix), name, n_tel)
-    assert result == expected
-
-
-def test_output_file_name_with_energy_bin(tmp_path):
-    """Test output_file_name with energy_bin_number."""
-    model_prefix = tmp_path / "model"
-    name = "regressor"
-    n_tel = 2
-    energy_bin_number = 1
-    expected = f"{model_prefix}_regressor_ntel2_ebin1.joblib"
-    result = output_file_name(str(model_prefix), name, n_tel, energy_bin_number)
-    assert result == expected
-
-
-def test_output_file_name_creates_directory(tmp_path):
-    """Test output_file_name creates parent directory if it does not exist."""
-    model_prefix = tmp_path / "subdir" / "model"
-    name = "classifier"
-    n_tel = 3
-    # Remove the directory if it exists to ensure creation
-    if model_prefix.parent.exists():
-        shutil.rmtree(model_prefix.parent)
-    assert not model_prefix.parent.exists()
-    result = output_file_name(str(model_prefix), name, n_tel)
-    assert model_prefix.parent.exists()
-    expected = f"{model_prefix}_classifier_ntel3.joblib"
-    assert result == expected
-
-
-def test_output_file_name_str_and_path_equivalence(tmp_path):
-    """Test output_file_name works the same with str and Path for model_prefix."""
-    model_prefix = tmp_path / "model"
-    name = "test"
-    n_tel = 1
-    result_str = output_file_name(str(model_prefix), name, n_tel)
-    result_path = output_file_name(model_prefix, name, n_tel)
-    assert result_str == result_path

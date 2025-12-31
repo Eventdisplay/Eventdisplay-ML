@@ -46,6 +46,8 @@ def excluded_features(analysis_type, ntel):
     if "classification" in analysis_type:
         return {
             "Erec",
+            *[f"cen_x_{i}" for i in range(ntel)],
+            *[f"cen_y_{i}" for i in range(ntel)],
             *[f"size_{i}" for i in range(ntel)],
             *[f"E_{i}" for i in range(ntel)],
             *[f"ES_{i}" for i in range(ntel)],
@@ -62,8 +64,6 @@ def telescope_features(analysis_type):
     Disp variables with different indexing logic in data preparation.
     """
     var = [
-        "cen_x",
-        "cen_y",
         "cosphi",
         "sinphi",
         "loss",
@@ -79,7 +79,18 @@ def telescope_features(analysis_type):
     if analysis_type == "classification":
         return var
 
-    return [*var, "size", "E", "ES", "Disp_T", "DispXoff_T", "DispYoff_T", "DispWoff_T"]
+    return [
+        *var,
+        "size",
+        "cen_x",
+        "cen_y",
+        "E",
+        "ES",
+        "Disp_T",
+        "DispXoff_T",
+        "DispYoff_T",
+        "DispWoff_T",
+    ]
 
 
 def _regression_features(training):

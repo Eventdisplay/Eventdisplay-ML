@@ -99,9 +99,8 @@ def load_model_parameters(model_parameters, energy_bin_number=None):
 
 def load_energy_range(model_parameters, energy_bin_number=0):
     """Load the log10(Erec/TeV) range for a given energy bin from model parameters."""
-    par = load_model_parameters(model_parameters)
     try:
-        e = par["energy_bins_log10_tev"][energy_bin_number]
+        e = model_parameters["energy_bins_log10_tev"]
         return 10 ** e["E_min"], 10 ** e["E_max"]
     except (KeyError, IndexError) as exc:
         raise ValueError(

@@ -205,6 +205,8 @@ def load_training_data(
     df_flat.dropna(axis=1, how="all", inplace=True)
     _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
 
+    print_variable_statistics(df_flat)
+
     return df_flat
 
 
@@ -274,7 +276,7 @@ def event_cuts(analysis_type, n_tel, model_parameters=None):
     """Event cut string for the given analysis type and telescope multiplicity."""
     event_cut = f"(DispNImages == {n_tel})"
 
-    if analysis_type in ("signal_classification", "background_classification"):
+    if analysis_type == "classification":
         cuts = [
             "Erec > 0",
             "MSCW > -2",
@@ -314,8 +316,10 @@ def flatten_telescope_variables(n_tel, flat_features, index):
             df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
 
         # pointing corrections
-        df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
-        df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
+        if f"cen_x_{i}" in df_flat and f"fpointing_dx_{i}" in df_flat:
+            df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
+        if f"cen_y_{i}" in df_flat and f"fpointing_dy_{i}" in df_flat:
+            df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
         df_flat = df_flat.drop(columns=[f"fpointing_dx_{i}", f"fpointing_dy_{i}"])
 
     return pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
@@ -377,3 +381,26 @@ def energy_in_bins(df_chunk, bins):
     e_bin[valid] = np.argmin(distances, axis=1)
     df_chunk["e_bin"] = e_bin
     return df_chunk["e_bin"]
+
+
+def print_variable_statistics(df):
+    """
+    Print min, max, mean, and RMS for each variable in the DataFrame.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing variables loaded using branch_list.
+    """
+    for col in df.columns:
+        data = df[col].dropna().to_numpy()
+        if data.size == 0:
+            print(f"{col}: No data")
+            continue
+        min_val = np.min(data)
+        max_val = np.max(data)
+        mean_val = np.mean(data)
+        rms_val = np.sqrt(np.mean(np.square(data)))
+        _logger.info(
+            f"{col:25s} min: {min_val:10.4g}  max: {max_val:10.4g}  mean: {mean_val:10.4g}  rms: {rms_val:10.4g}"
+        )
