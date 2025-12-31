@@ -108,7 +108,7 @@ def load_energy_range(model_parameters, energy_bin_number=0):
         ) from exc
 
 
-def output_file_name(model_prefix, name, n_tel, energy_bin_number=None):
+def output_file_name(model_prefix, n_tel, energy_bin_number=None):
     """Generate output filename for the trained model."""
     model_prefix = Path(model_prefix)
 
@@ -116,7 +116,7 @@ def output_file_name(model_prefix, name, n_tel, energy_bin_number=None):
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
-    filename = f"{model_prefix}_{name}_ntel{n_tel}"
+    filename = f"{model_prefix}_ntel{n_tel}"
     if energy_bin_number is not None:
         filename += f"_ebin{energy_bin_number}"
     filename += ".joblib"

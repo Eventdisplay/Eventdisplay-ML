@@ -8,21 +8,30 @@ import joblib
 import numpy as np
 import uproot
 
-from eventdisplay_ml import features
+from eventdisplay_ml import features, utils
 from eventdisplay_ml.data_processing import (
     apply_image_selection,
     energy_in_bins,
     flatten_feature_data,
     zenith_in_bins,
 )
-from eventdisplay_ml.utils import parse_image_selection
 
 _logger = logging.getLogger(__name__)
 
 
+def save_models(model_configs, energy_bin_number=None):
+    """Save trained models to files."""
+    joblib.dump(
+        model_configs,
+        utils.output_file_name(
+            model_configs.get("model_prefix"), model_configs.get("n_tel"), energy_bin_number
+        ),
+    )
+
+
 def load_models(analysis_type, model_prefix):
     """
-    Load XGBoost models based on analysis type.
+    Load models based on analysis type.
 
     Parameters
     ----------
@@ -110,8 +119,9 @@ def load_regression_models(model_prefix):
     Parameters
     ----------
     model_prefix : str
-        Prefix path to the trained model files. Models are expected to be named
-        ``{model_prefix}_ntel{n_tel}_xgboost.joblib``.
+        Prefix path to the trained model files.
+    model_name : str
+        Name of the model to load.
 
     Returns
     -------
@@ -129,13 +139,19 @@ def load_regression_models(model_prefix):
         if model_filename.exists():
             _logger.info(f"Loading model: {model_filename}")
             model_data = joblib.load(model_filename)
-            models[n_tel] = model_data["model"]
+            if model_data["n_tel"] != n_tel:
+                raise ValueError(
+                    f"n_tel mismatch in model file {model_filename}: "
+                    f"expected {n_tel}, got {model_data['n_tel']}"
+                )
+            models[n_tel] = model_data
         else:
             _logger.warning(f"Model not found: {model_filename}")
     return models
 
 
-def apply_regression_models(df, models):
+# TODO fixed model_name
+def apply_regression_models(df, models, model_name="xgboost"):
     """
     Apply trained XGBoost models for stereo analysis to a DataFrame chunk.
 
@@ -167,10 +183,12 @@ def apply_regression_models(df, models):
 
         _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
 
-        x_features = flatten_feature_data(
+        features = flatten_feature_data(
             group_df, n_tel, analysis_type="stereo_analysis", training=False
         )
-        preds[group_df.index] = models[n_tel].predict(x_features)
+        features = features.reindex(columns=models[n_tel]["features"])
+        model = models[n_tel]["models"].get(model_name, {}).get("model", {})
+        preds[group_df.index] = model.predict(features)
 
     return preds[:, 0], preds[:, 1], preds[:, 2]
 
@@ -253,7 +271,8 @@ def process_file_chunked(
     """
     branch_list = features.features(analysis_type, training=False)
     _logger.info(f"Using branches: {branch_list}")
-    selected_indices = parse_image_selection(image_selection)
+
+    selected_indices = utils.parse_image_selection(image_selection)
 
     _logger.info(f"Chunk size: {chunk_size}")
     if max_events:

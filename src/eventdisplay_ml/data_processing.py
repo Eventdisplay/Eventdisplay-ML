@@ -10,8 +10,7 @@ import numpy as np
 import pandas as pd
 import uproot
 
-from eventdisplay_ml import features
-from eventdisplay_ml.utils import load_energy_range
+from eventdisplay_ml import features, utils
 
 _logger = logging.getLogger(__name__)
 
@@ -123,38 +122,32 @@ def flatten_feature_data(group_df, ntel, analysis_type, training):
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
 
-def load_training_data(
-    input_files,
-    n_tel,
-    max_events,
-    analysis_type="stereo_analysis",
-    model_parameters=None,
-):
+def load_training_data(model_configs, analysis_type):
     """
     Load and flatten training data from the mscw file for the requested telescope multiplicity.
 
     Parameters
     ----------
-    input_files : list[str]
-        List of input mscw files.
-    n_tel : int
-        Telescope multiplicity to filter on.
-    max_events : int
-        Maximum number of events to load. If <= 0, load all available events.
-    analysis_type : str, optional
-        Type of analysis: "stereo_analysis", "classification".
-    model_parameters : dict
-        Dictionary of model parameters.
+    model_configs : dict
+        Dictionary containing model configuration parameters.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Flattened DataFrame ready for training.
     """
+    max_events = model_configs.get("max_events", None)
+    n_tel = model_configs["n_tel"]
+
     _logger.info(f"--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
         "Max events to process: "
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
+    input_files = utils.read_input_file_list(model_configs["input_file_list"])
 
     branch_list = features.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
-    event_cut = event_cuts(analysis_type, n_tel, model_parameters)
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
     else:
@@ -170,8 +163,8 @@ def load_training_data(
 
                 _logger.info(f"Processing file: {f}")
                 tree = root_file["data"]
-                df = tree.arrays(branch_list, cut=event_cut, library="pd")
-                _logger.info(f"Number of events after event cut {event_cut}: {len(df)}")
+                df = tree.arrays(branch_list, cut=model_configs.get("pre_cuts", None), library="pd")
+                _logger.info(f"Number of events after event cut: {len(df)}")
                 if max_events_per_file and len(df) > max_events_per_file:
                     df = df.sample(n=max_events_per_file, random_state=42)
                 if not df.empty:
@@ -199,7 +192,7 @@ def load_training_data(
         df_flat["MCe0"] = np.log10(data_tree["MCe0"])
     elif analysis_type == "classification":
         df_flat["ze_bin"] = zenith_in_bins(
-            90.0 - data_tree["ArrayPointing_Elevation"], model_parameters.get("zenith_bins_deg", [])
+            90.0 - data_tree["ArrayPointing_Elevation"], model_configs.get("zenith_bins_deg", [])
         )
 
     df_flat.dropna(axis=1, how="all", inplace=True)
@@ -270,28 +263,6 @@ def _pad_to_four(arr_like):
             arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
         return arr
     return arr_like
-
-
-def event_cuts(analysis_type, n_tel, model_parameters=None):
-    """Event cut string for the given analysis type and telescope multiplicity."""
-    event_cut = f"(DispNImages == {n_tel})"
-
-    if analysis_type == "classification":
-        cuts = [
-            "Erec > 0",
-            "MSCW > -2",
-            "MSCW < 2",
-            "MSCL > -2",
-            "MSCL < 5",
-            "EmissionHeight > 0",
-            "EmissionHeight < 50",
-        ]
-        if model_parameters is not None:
-            e_min, e_max = load_energy_range(model_parameters)
-            cuts += [f"Erec >= {e_min}", f"Erec <= {e_max}"]
-        event_cut += " & " + " & ".join(f"({c})" for c in cuts)
-
-    return event_cut
 
 
 def flatten_telescope_variables(n_tel, flat_features, index):

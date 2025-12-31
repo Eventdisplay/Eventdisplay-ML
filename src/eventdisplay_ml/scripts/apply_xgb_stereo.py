@@ -28,7 +28,12 @@ def main():
         "--model_prefix",
         required=True,
         metavar="MODEL_PREFIX",
-        help=("Path to directory containing XGBoost regression models  (without n_tel suffix)."),
+        help=("Path to directory containing regression models  (without n_tel suffix)."),
+    )
+    parser.add_argument(
+        "--model_name",
+        default="xgboost",
+        help="Model name to load (default: xgboost)",
     )
     parser.add_argument(
         "--output_file",
