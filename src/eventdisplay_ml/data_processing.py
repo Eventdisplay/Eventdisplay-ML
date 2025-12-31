@@ -171,7 +171,7 @@ def load_training_data(
                 _logger.info(f"Processing file: {f}")
                 tree = root_file["data"]
                 df = tree.arrays(branch_list, cut=event_cut, library="pd")
-                _logger.info(f"Number of events after filter {event_cut}: {len(df)}")
+                _logger.info(f"Number of events after event cut {event_cut}: {len(df)}")
                 if max_events_per_file and len(df) > max_events_per_file:
                     df = df.sample(n=max_events_per_file, random_state=42)
                 if not df.empty:
