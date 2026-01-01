@@ -2,8 +2,7 @@
 Apply XGBoost classification model.
 
 Applies trained XGBoost classification models to input data and outputs
-for each event. The output file contains the predicted signal probability.
-
+predictions of signal probability for each event.
 """
 
 import logging
