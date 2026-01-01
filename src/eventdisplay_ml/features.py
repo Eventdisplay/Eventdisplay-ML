@@ -62,6 +62,16 @@ def telescope_features(analysis_type):
     Telescope-type features.
 
     Disp variables with different indexing logic in data preparation.
+
+    Parameters
+    ----------
+    analysis_type : str
+        Type of analysis, e.g. ``"classification"`` or ``"stereo_analysis"``.
+
+    Returns
+    -------
+    list
+        List of telescope-level feature names.
     """
     var = [
         "cosphi",
