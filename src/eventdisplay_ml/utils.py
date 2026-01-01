@@ -116,7 +116,7 @@ def output_file_name(model_prefix, n_tel, energy_bin_number=None):
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
-    filename = f"{model_prefix}_ntel{n_tel}"
+    filename = f"{str(model_prefix)}_ntel{n_tel}"
     if energy_bin_number is not None:
         filename += f"_ebin{energy_bin_number}"
     filename += ".joblib"
