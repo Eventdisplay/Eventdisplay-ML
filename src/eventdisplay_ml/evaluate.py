@@ -103,7 +103,15 @@ def target_variance(y_test, y_pred, targets):
     _logger.info("--- Performance Per Target ---")
     for i, name in enumerate(targets):
         # Fraction of variance unexplained (lower is better, 0.0 is perfect)
-        unexplained = mse_values[i] / variance_values[i]
+        if variance_values[i] != 0:
+            unexplained = mse_values[i] / variance_values[i]
+        else:
+            unexplained = np.nan
+            _logger.warning(
+                "Target '%s' has zero variance in the test set; "
+                "unexplained variance is undefined.",
+                name,
+            )
 
         _logger.info(
             f"Target: {name:12s} | MSE: {mse_values[i]:.6f} | "
