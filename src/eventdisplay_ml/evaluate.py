@@ -108,8 +108,7 @@ def target_variance(y_test, y_pred, targets):
         else:
             unexplained = np.nan
             _logger.warning(
-                "Target '%s' has zero variance in the test set; "
-                "unexplained variance is undefined.",
+                "Target '%s' has zero variance in the test set; unexplained variance is undefined.",
                 name,
             )
 

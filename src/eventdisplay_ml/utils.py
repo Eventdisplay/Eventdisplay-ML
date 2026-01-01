@@ -103,9 +103,7 @@ def load_energy_range(model_parameters):
         e = model_parameters["energy_bins_log10_tev"]
         return 10 ** e["E_min"], 10 ** e["E_max"]
     except (KeyError, IndexError) as exc:
-        raise ValueError(
-            "Invalid or missing energy range in model parameters."
-        ) from exc
+        raise ValueError("Invalid or missing energy range in model parameters.") from exc
 
 
 def output_file_name(model_prefix, n_tel, energy_bin_number=None):
@@ -116,7 +114,7 @@ def output_file_name(model_prefix, n_tel, energy_bin_number=None):
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
-    filename = f"{str(model_prefix)}_ntel{n_tel}"
+    filename = f"{model_prefix!s}_ntel{n_tel}"
     if energy_bin_number is not None:
         filename += f"_ebin{energy_bin_number}"
     filename += ".joblib"
