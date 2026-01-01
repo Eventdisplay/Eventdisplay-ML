@@ -3,6 +3,7 @@
 [![LICENSE](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://github.com/Eventdisplay/Eventdisplay-ML/blob/main/LICENSE)
 [![release](https://img.shields.io/github/v/release/eventdisplay/eventdisplay-ml)](https://github.com/Eventdisplay/Eventdisplay-ML/releases)
 [![pypi](https://badge.fury.io/py/eventdisplay-ml.svg)](https://badge.fury.io/py/eventdisplay-ml)
+[![DOI](https://zenodo.org/badge/1120034687.svg)](https://doi.org/10.5281/zenodo.18117884)
 
 Toolkit to interface and run machine learning methods together with the Eventdisplay software package for gamma-ray astronomy data analysis.
 
@@ -18,8 +19,7 @@ Input is provided through the `mscw` output (`data` trees).
 
 Output is a single ROOT tree called `StereAnalysis` with the same number of events as the input tree.
 
-
 ## Citing this Software
 
 Please cite this software if it is us
-ed for a publication, see the Zenodo record and [CITATION.cff](CITATION.cff) for details.
+ed for a publication, see the [Zenodo record](https://doi.org/10.5281/zenodo.18117884) and [CITATION.cff](CITATION.cff) for details.

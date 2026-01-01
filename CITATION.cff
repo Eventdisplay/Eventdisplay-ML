@@ -3,7 +3,7 @@
 cff-version: 1.2.0
 message: If you use this software, please cite it using these metadata.
 title: "Eventdisplay-ML: a machine learning toolkit for Eventdisplay"
-# doi: 10.5281/zenodo.6827832
+doi: 10.5281/zenodo.18117884
 version: 0.2.0
 date-released: 2026-01-01
 keywords:
