@@ -19,17 +19,19 @@ from eventdisplay_ml.data_processing import (
 _logger = logging.getLogger(__name__)
 
 
-def save_models(model_configs, energy_bin_number=None):
+def save_models(model_configs):
     """Save trained models to files."""
     joblib.dump(
         model_configs,
         utils.output_file_name(
-            model_configs.get("model_prefix"), model_configs.get("n_tel"), energy_bin_number
+            model_configs.get("model_prefix"),
+            model_configs.get("n_tel"),
+            model_configs.get("energy_bin_number"),
         ),
     )
 
 
-def load_models(analysis_type, model_prefix):
+def load_models(analysis_type, model_prefix, model_name):
     """
     Load models based on analysis type.
 
@@ -39,30 +41,33 @@ def load_models(analysis_type, model_prefix):
         Type of analysis ("stereo_analysis" or "classification").
     model_prefix : str
         Prefix path to the trained model files.
+    model_name : str
+        Name of the model to load.
 
     Returns
     -------
     dict
         A dictionary of loaded models.
     dict, optional
-        A dictionary of model parameters (only for classification).
+        A dictionary of model parameters
     """
     if analysis_type == "stereo_analysis":
-        return load_regression_models(model_prefix)
+        return load_regression_models(model_prefix, model_name)
     if analysis_type == "classification":
-        return load_classification_models(model_prefix)
+        return load_classification_models(model_prefix, model_name)
     raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
 
-def load_classification_models(model_prefix):
+def load_classification_models(model_prefix, model_name):
     """
     Load XGBoost classification models for different telescope multiplicities from a directory.
 
     Parameters
     ----------
     model_prefix : str
-        Prefix path to the trained model files. Models are expected to be named
-        ``{model_prefix}_ntel{n_tel}_bin{e_bin}.joblib``.
+        Prefix path to the trained model files.
+    model_name : str
+        Name of the model to load.
 
     Returns
     -------
@@ -77,42 +82,58 @@ def load_classification_models(model_prefix):
     models = {}
     par = {}
     for n_tel in range(2, 5):
-        pattern = f"{model_prefix.name}_ntel{n_tel}_bin*.joblib"
+        pattern = f"{model_prefix.name}_ntel{n_tel}_ebin*.joblib"
+        models.setdefault(n_tel, {})
         for file in sorted(model_dir_path.glob(pattern)):
-            match = re.search(r"_bin(\d+)\.joblib$", file.name)
+            match = re.search(r"_ebin(\d+)\.joblib$", file.name)
             if not match:
                 _logger.warning(f"Could not extract energy bin from filename: {file.name}")
                 continue
             e_bin = int(match.group(1))
-            _logger.info(f"Loading model: {file}")
+            _logger.info(f"Loading model for n_tel={n_tel}, e_bin={e_bin}: {file}")
             model_data = joblib.load(file)
-            models.setdefault(n_tel, {})[e_bin] = model_data["model"]
-            par = _update_parameters(par, model_data.get("parameters", {}), e_bin)
+            _check_bin(e_bin, model_data.get("energy_bin_number"))
+            _check_bin(n_tel, model_data.get("n_tel"))
+            models[n_tel].setdefault(e_bin, {})
+            try:
+                models[n_tel][e_bin]["model"] = model_data["models"][model_name]["model"]
+            except KeyError:
+                raise KeyError(f"Model name '{model_name}' not found in file: {file}")
+            models[n_tel][e_bin]["features"] = model_data.get("features", [])
+            par = _update_parameters(
+                par,
+                model_data.get("zenith_bins_deg"),
+                model_data.get("energy_bins_log10_tev", {}),
+                e_bin,
+            )
 
     _logger.info(f"Loaded classification model parameters: {par}")
     return models, par
 
 
-def _update_parameters(full_params, single_bin_params, e_bin_number):
-    """Merge a single-bin model parameters into the full parameters dict."""
-    energy_bin = single_bin_params["energy_bins_log10_tev"]
-    zenith_bins = single_bin_params["zenith_bins_deg"]
+def _check_bin(expected, actual):
+    """Check if expected and actual bin numbers match."""
+    if expected != actual:
+        raise ValueError(f"Bin number mismatch: expected {expected}, got {actual}")
 
+
+def _update_parameters(full_params, zenith_bins, energy_bin, e_bin_number):
+    """Merge a single-bin model parameters into the full parameters dict."""
     if "energy_bins_log10_tev" not in full_params:
         full_params["energy_bins_log10_tev"] = []
         full_params["zenith_bins_deg"] = zenith_bins
 
-    while len(full_params["energy_bins_log10_tev"]) <= e_bin_number:
-        full_params["energy_bins_log10_tev"].append(None)
+    if e_bin_number is not None:
+        while len(full_params["energy_bins_log10_tev"]) <= e_bin_number:
+            full_params["energy_bins_log10_tev"].append(None)
+        full_params["energy_bins_log10_tev"][e_bin_number] = energy_bin
 
-    full_params["energy_bins_log10_tev"][e_bin_number] = energy_bin
     if full_params.get("zenith_bins_deg") != zenith_bins:
         raise ValueError(f"Inconsistent zenith_bins_deg for energy bin {e_bin_number}")
-
     return full_params
 
 
-def load_regression_models(model_prefix):
+def load_regression_models(model_prefix, model_name):
     """
     Load XGBoost models for different telescope multiplicities from a directory.
 
@@ -137,21 +158,19 @@ def load_regression_models(model_prefix):
     for n_tel in range(2, 5):
         model_filename = model_dir_path / f"{model_prefix.name}_ntel{n_tel}.joblib"
         if model_filename.exists():
-            _logger.info(f"Loading model: {model_filename}")
+            _logger.info(f"Loading model for n_tel={n_tel}: {model_filename}")
             model_data = joblib.load(model_filename)
-            if model_data["n_tel"] != n_tel:
-                raise ValueError(
-                    f"n_tel mismatch in model file {model_filename}: "
-                    f"expected {n_tel}, got {model_data['n_tel']}"
-                )
-            models[n_tel] = model_data
+            _check_bin(n_tel, model_data.get("n_tel"))
+            models.setdefault(n_tel, {})["model"] = model_data["models"][model_name]["model"]
+            models[n_tel]["features"] = model_data.get("features", [])
         else:
             _logger.warning(f"Model not found: {model_filename}")
-    return models
+
+    _logger.info("Loaded regression models.")
+    return models, {}
 
 
-# TODO fixed model_name
-def apply_regression_models(df, models, model_name="xgboost"):
+def apply_regression_models(df, model_configs):
     """
     Apply trained XGBoost models for stereo analysis to a DataFrame chunk.
 
@@ -159,7 +178,7 @@ def apply_regression_models(df, models, model_name="xgboost"):
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
-    models : dict
+    model_configs : dict
         Preloaded models dictionary.
 
     Returns
@@ -174,6 +193,7 @@ def apply_regression_models(df, models, model_name="xgboost"):
     preds = np.full((len(df), 3), np.nan, dtype=np.float32)
 
     grouped = df.groupby("DispNImages")
+    models = model_configs["models"]
 
     for n_tel, group_df in grouped:
         n_tel = int(n_tel)
@@ -183,17 +203,17 @@ def apply_regression_models(df, models, model_name="xgboost"):
 
         _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
 
-        features = flatten_feature_data(
+        flatten_data = flatten_feature_data(
             group_df, n_tel, analysis_type="stereo_analysis", training=False
         )
-        features = features.reindex(columns=models[n_tel]["features"])
-        model = models[n_tel]["models"].get(model_name, {}).get("model", {})
-        preds[group_df.index] = model.predict(features)
+        flatten_data = flatten_data.reindex(columns=models[n_tel]["features"])
+        model = models[n_tel]["model"]
+        preds[group_df.index] = model.predict(flatten_data)
 
     return preds[:, 0], preds[:, 1], preds[:, 2]
 
 
-def apply_classification_models(df, models):
+def apply_classification_models(df, model_configs):
     """
     Apply trained XGBoost classification models to a DataFrame chunk.
 
@@ -201,7 +221,7 @@ def apply_classification_models(df, models):
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
-    models: dict
+    model_configs : dict
         Preloaded models dictionary
 
     Returns
@@ -211,6 +231,7 @@ def apply_classification_models(df, models):
         with the index of ``df``.
     """
     class_probability = np.full(len(df), np.nan, dtype=np.float32)
+    models = model_configs["models"]
 
     # 1. Group by Number of Images (n_tel)
     for n_tel, group_ntel_df in df.groupby("DispNImages"):
@@ -231,62 +252,46 @@ def apply_classification_models(df, models):
 
             _logger.info(f"Processing {len(group_df)} events: n_tel={n_tel}, bin={e_bin}")
 
-            x_features = flatten_feature_data(
+            flatten_data = flatten_feature_data(
                 group_df, n_tel, analysis_type="classification", training=False
             )
-            class_probability[group_df.index] = models[n_tel][e_bin].predict_proba(x_features)[:, 1]
+            model = models[n_tel][e_bin]["model"]
+            flatten_data = flatten_data.reindex(columns=models[n_tel][e_bin]["features"])
+            class_probability[group_df.index] = model.predict_proba(flatten_data)[:, 1]
 
     return class_probability
 
 
-def process_file_chunked(
-    analysis_type,
-    input_file,
-    output_file,
-    models,
-    image_selection,
-    model_parameters=None,
-    max_events=None,
-    chunk_size=500000,
-):
+def process_file_chunked(analysis_type, model_configs):
     """
     Stream events from an input file in chunks, apply XGBoost models, write events.
 
     Parameters
     ----------
-    input_file : str
-        Path to the input file containing a "data" TTree.
-    output_file : str
-        Path to the output file to create.
-    models : dict
-        Dictionary of loaded XGBoost models for regression.
-    image_selection : str
-        String specifying which telescope indices to select.
-    model_parameters : dict, optional
-        Dictionary of model parameters.
-    max_events : int, optional
-        Maximum number of events to process.
-    chunk_size : int, optional
-        Number of events to read and process per chunk.
+    analysis_type : str
+        Type of analysis ("stereo_analysis" or "classification").
+    model_configs : dict
+        Dictionary of model configurations.
     """
     branch_list = features.features(analysis_type, training=False)
     _logger.info(f"Using branches: {branch_list}")
 
-    selected_indices = utils.parse_image_selection(image_selection)
+    selected_indices = utils.parse_image_selection(model_configs.get("image_selection"))
 
+    max_events = model_configs.get("max_events", None)
+    chunk_size = model_configs.get("chunk_size", 500000)
     _logger.info(f"Chunk size: {chunk_size}")
     if max_events:
         _logger.info(f"Maximum events to process: {max_events}")
-
-    with uproot.recreate(output_file) as root_file:
+    with uproot.recreate(model_configs.get("output_file")) as root_file:
         tree = _output_tree(analysis_type, root_file)
         total_processed = 0
 
         for df_chunk in uproot.iterate(
-            f"{input_file}:data",
+            f"{model_configs.get('input_file')}:data",
             branch_list,
             library="pd",
-            step_size=chunk_size,
+            step_size=model_configs.get("chunk_size"),
         ):
             if df_chunk.empty:
                 continue
@@ -301,15 +306,13 @@ def process_file_chunked(
             # index out-of-bounds when indexing chunk-sized output arrays
             df_chunk = df_chunk.reset_index(drop=True)
             if analysis_type == "classification":
-                df_chunk["e_bin"] = energy_in_bins(
-                    df_chunk, model_parameters["energy_bins_log10_tev"]
-                )
+                df_chunk["e_bin"] = energy_in_bins(df_chunk, model_configs["energy_bins_log10_tev"])
                 df_chunk["ze_bin"] = zenith_in_bins(
                     90.0 - df_chunk["ArrayPointing_Elevation"].values,
-                    model_parameters["zenith_bins_deg"],
+                    model_configs["zenith_bins_deg"],
                 )
 
-            _apply_model(analysis_type, df_chunk, models, tree)
+            _apply_model(analysis_type, df_chunk, model_configs, tree)
 
             total_processed += len(df_chunk)
             _logger.info(f"Processed {total_processed} events so far")
@@ -343,7 +346,7 @@ def _output_tree(analysis_type, root_file):
     raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
 
-def _apply_model(analysis_type, df_chunk, models, tree):
+def _apply_model(analysis_type, df_chunk, model_config, tree):
     """
     Apply models to the data chunk.
 
@@ -353,13 +356,13 @@ def _apply_model(analysis_type, df_chunk, models, tree):
         Type of analysis (e.g., "stereo_analysis")
     df_chunk : pandas.DataFrame
         Data chunk to process.
-    models : dict
+    model_config : dict
         Dictionary of loaded XGBoost models.
     tree : uproot.writing.WritingTTree
         Output tree to write results to.
     """
     if analysis_type == "stereo_analysis":
-        pred_xoff, pred_yoff, pred_erec = apply_regression_models(df_chunk, models)
+        pred_xoff, pred_yoff, pred_erec = apply_regression_models(df_chunk, model_config)
         tree.extend(
             {
                 "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
@@ -368,7 +371,7 @@ def _apply_model(analysis_type, df_chunk, models, tree):
             }
         )
     elif analysis_type == "classification":
-        pred_proba = apply_classification_models(df_chunk, models)
+        pred_proba = apply_classification_models(df_chunk, model_config)
         tree.extend(
             {
                 "IsGamma": np.asarray(pred_proba, dtype=np.float32),

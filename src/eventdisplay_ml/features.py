@@ -112,7 +112,7 @@ def _regression_features(training):
     return var
 
 
-def _classification_features(training):
+def _classification_features():
     """Classification features."""
     var_tel = telescope_features("classification")
     var_array = [
@@ -125,8 +125,6 @@ def _classification_features(training):
         "MSCL",
         "ArrayPointing_Elevation",
     ]
-    if training:
-        return var_tel + var_array
     # energy used to bin the models, but not as feature
     return var_tel + var_array + ["Erec"]
 
@@ -151,5 +149,5 @@ def features(analysis_type, training=True):
     if analysis_type == "stereo_analysis":
         return _regression_features(training)
     if "classification" in analysis_type:
-        return _classification_features(training)
+        return _classification_features()
     raise ValueError(f"Unknown analysis type: {analysis_type}")

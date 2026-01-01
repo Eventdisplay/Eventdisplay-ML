@@ -122,7 +122,7 @@ def flatten_feature_data(group_df, ntel, analysis_type, training):
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
 
-def load_training_data(model_configs, analysis_type):
+def load_training_data(model_configs, file_list, analysis_type):
     """
     Load and flatten training data from the mscw file for the requested telescope multiplicity.
 
@@ -130,6 +130,10 @@ def load_training_data(model_configs, analysis_type):
     ----------
     model_configs : dict
         Dictionary containing model configuration parameters.
+    file_list : str
+        Path to text file containing list of input mscw files.
+    analysis_type : str
+        Type of analysis (e.g., "stereo_analysis").
 
     Returns
     -------
@@ -144,7 +148,7 @@ def load_training_data(model_configs, analysis_type):
         "Max events to process: "
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
-    input_files = utils.read_input_file_list(model_configs["input_file_list"])
+    input_files = utils.read_input_file_list(file_list)
 
     branch_list = features.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")

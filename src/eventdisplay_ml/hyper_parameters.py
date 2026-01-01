@@ -53,7 +53,16 @@ PRE_CUTS_CLASSIFICATION = [
 ]
 
 
-def regression_hyperparameters(config_file=None):
+def hyper_parameters(analysis_type, config_file=None):
+    """Get hyperparameters for XGBoost model based on analysis type."""
+    if analysis_type == "stereo_analysis":
+        return regression_hyper_parameters(config_file)
+    if analysis_type == "classification":
+        return classification_hyper_parameters(config_file)
+    raise ValueError(f"Unknown analysis type: {analysis_type}")
+
+
+def regression_hyper_parameters(config_file=None):
     """Get hyperparameters for XGBoost regression model."""
     if config_file:
         return _load_hyper_parameters_from_file(config_file)
@@ -61,7 +70,7 @@ def regression_hyperparameters(config_file=None):
     return XGB_REGRESSION_HYPERPARAMETERS
 
 
-def classification_hyperparameters(config_file=None):
+def classification_hyper_parameters(config_file=None):
     """Get hyperparameters for XGBoost classification model."""
     if config_file:
         return _load_hyper_parameters_from_file(config_file)
@@ -89,7 +98,7 @@ def pre_cuts_regression(n_tel):
 def pre_cuts_classification(n_tel, e_min, e_max):
     """Get pre-cuts for classification analysis."""
     event_cut = f"(DispNImages == {n_tel})"
-    event_cut += f"(Erec >= {e_min}) & (Erec < {e_max})"
+    event_cut += f" & (Erec >= {e_min}) & (Erec < {e_max})"
     event_cut += " & " + " & ".join(f"({c})" for c in PRE_CUTS_CLASSIFICATION)
     _logger.info(f"Pre-cuts (n_tel={n_tel}): {event_cut}")
     return event_cut
