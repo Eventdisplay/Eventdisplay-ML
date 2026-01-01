@@ -7,6 +7,24 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v0.2.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.2.0) - 2026-01-01
+
+### New Features
+
+- add classification routines for gamma/hadron separation.
+- add pre-training quality cuts.
+
+([#13](https://github.com/Eventdisplay/Eventdisplay-ML/pull/13))
+
+### Maintenance
+
+- refactoring code to minimize duplication and improve maintainability.
+- unified command line interface for all scripts.
+- unit tests are disabled for now due to rapid changes in the codebase.
+
+([#13](https://github.com/Eventdisplay/Eventdisplay-ML/pull/13))
+
+
 ## [v0.1.1](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.1.1) - 2025-12-22
 
 ### Maintenance
