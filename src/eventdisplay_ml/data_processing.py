@@ -295,7 +295,7 @@ def flatten_telescope_variables(n_tel, flat_features, index):
             df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
         if f"cen_y_{i}" in df_flat and f"fpointing_dy_{i}" in df_flat:
             df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
-        df_flat = df_flat.drop(columns=[f"fpointing_dx_{i}", f"fpointing_dy_{i}"])
+        df_flat = df_flat.drop(columns=[f"fpointing_dx_{i}", f"fpointing_dy_{i}"], errors="ignore")
 
     return pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
 
