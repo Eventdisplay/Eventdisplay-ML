@@ -97,14 +97,14 @@ def load_model_parameters(model_parameters, energy_bin_number=None):
     return para
 
 
-def load_energy_range(model_parameters, energy_bin_number=0):
-    """Load the log10(Erec/TeV) range for a given energy bin from model parameters."""
+def load_energy_range(model_parameters):
+    """Load the log10(Erec/TeV) energy range from model parameters."""
     try:
         e = model_parameters["energy_bins_log10_tev"]
         return 10 ** e["E_min"], 10 ** e["E_max"]
     except (KeyError, IndexError) as exc:
         raise ValueError(
-            f"Invalid energy bin number {energy_bin_number} for model parameters."
+            "Invalid or missing energy range in model parameters."
         ) from exc
 
 
