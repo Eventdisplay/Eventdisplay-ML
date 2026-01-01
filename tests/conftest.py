@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from eventdisplay_ml.features import telescope_features
+
 # ============================================================================
 # DataFrame Factory Functions
 # ============================================================================
@@ -108,6 +110,53 @@ def df_raw_two_files():
     df1 = create_base_df(n_rows=2, n_tel=2)
     df2 = create_base_df(n_rows=1, n_tel=2)
     return df1, df2
+
+
+@pytest.fixture
+def sample_df():
+    """Create a sample DataFrame with telescope data."""
+    df = pd.DataFrame(
+        {
+            "DispTelList_T": [[0, 1, 2, 3], [0, 1], [1, 2, 3], [0, 1, 2, 3]],
+            "DispNImages": [4, 2, 3, 4],
+            "mscw": [1.0, 2.0, 3.0, 4.0],
+            "mscl": [5.0, 6.0, 7.0, 8.0],
+            "MSCW_T": [
+                np.array([1.0, 2.0, 3.0, 4.0]),
+                np.array([1.0, 2.0, np.nan, np.nan]),
+                np.array([1.0, 2.0, 3.0, np.nan]),
+                np.array([1.0, 2.0, 3.0, 4.0]),
+            ],
+            "fpointing_dx": [
+                np.array([0.1, 0.2, 0.3, 0.4]),
+                np.array([0.1, 0.2, np.nan, np.nan]),
+                np.array([0.1, 0.2, 0.3, np.nan]),
+                np.array([0.1, 0.2, 0.3, 0.4]),
+            ],
+            "fpointing_dy": [
+                np.array([0.1, 0.2, 0.3, 0.4]),
+                np.array([0.1, 0.2, np.nan, np.nan]),
+                np.array([0.1, 0.2, 0.3, np.nan]),
+                np.array([0.1, 0.2, 0.3, 0.4]),
+            ],
+            "Xoff": [0.5, 0.6, 0.7, 0.8],
+            "Yoff": [0.3, 0.4, 0.5, 0.6],
+            "Xoff_intersect": [0.51, 0.61, 0.71, 0.81],
+            "Yoff_intersect": [0.31, 0.41, 0.51, 0.61],
+            "Erec": [100.0, 200.0, 300.0, 400.0],
+            "ErecS": [90.0, 180.0, 270.0, 360.0],
+            "EmissionHeight": [10.0, 11.0, 12.0, 13.0],
+        }
+    )
+
+    for var in telescope_features():
+        df[var] = [
+            np.array([1.0, 2.0, 3.0, 4.0]),
+            np.array([1.0, 2.0, np.nan, np.nan]),
+            np.array([1.0, 2.0, 3.0, np.nan]),
+            np.array([1.0, 2.0, 3.0, 4.0]),
+        ]
+    return df
 
 
 # ============================================================================

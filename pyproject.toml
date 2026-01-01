@@ -60,7 +60,9 @@ optional-dependencies."tests" = [
 urls."bug tracker" = "https://github.com/Eventdisplay/Eventdisplay-ML/issues"
 urls."documentation" = "https://github.com/Eventdisplay/Eventdisplay-ML"
 urls."repository" = "https://github.com/Eventdisplay/Eventdisplay-ML"
+scripts.eventdisplay-ml-apply-xgb-classify = "eventdisplay_ml.scripts.apply_xgb_classify:main"
 scripts.eventdisplay-ml-apply-xgb-stereo = "eventdisplay_ml.scripts.apply_xgb_stereo:main"
+scripts.eventdisplay-ml-train-xgb-classify = "eventdisplay_ml.scripts.train_xgb_classify:main"
 scripts.eventdisplay-ml-train-xgb-stereo = "eventdisplay_ml.scripts.train_xgb_stereo:main"
 
 [tool.setuptools]
@@ -117,6 +119,9 @@ lint.ignore = [
 ]
 
 lint.pydocstyle.convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**.py" = ["D103"]
 
 [tool.codespell]
 ignore-words-list = "chec,arrang,livetime"

@@ -1,6 +1,8 @@
 """Utility functions for Eventdisplay-ML."""
 
+import json
 import logging
+from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
@@ -25,6 +27,10 @@ def read_input_file_list(input_file_list):
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Error: Input file list not found: {input_file_list}") from exc
 
+    if not input_files:
+        raise ValueError(f"Error: No input files found in the list: {input_file_list}")
+
+    _logger.info(f"Read {len(input_files)} input files from {input_file_list}")
     return input_files
 
 
@@ -67,3 +73,50 @@ def parse_image_selection(image_selection_str):
             f"Invalid image_selection format: {image_selection_str}. "
             "Use bit-coded value (e.g., 14) or comma-separated indices (e.g., '1,2,3')"
         )
+
+
+def load_model_parameters(model_parameters, energy_bin_number=None):
+    """
+    Load model parameters from a JSON file.
+
+    Reduce the energy bins to only the specified energy bin number if provided.
+    """
+    try:
+        with open(model_parameters) as f:
+            para = json.load(f)
+    except (FileNotFoundError, TypeError) as exc:
+        raise FileNotFoundError(f"Model parameters file not found: {model_parameters}") from exc
+
+    if energy_bin_number is not None:
+        try:
+            para["energy_bins_log10_tev"] = para["energy_bins_log10_tev"][energy_bin_number]
+        except (KeyError, IndexError) as exc:
+            raise ValueError(
+                f"Invalid energy bin number {energy_bin_number} for model parameters."
+            ) from exc
+    return para
+
+
+def load_energy_range(model_parameters):
+    """Load the log10(Erec/TeV) energy range from model parameters."""
+    try:
+        e = model_parameters["energy_bins_log10_tev"]
+        return 10 ** e["E_min"], 10 ** e["E_max"]
+    except (KeyError, IndexError) as exc:
+        raise ValueError("Invalid or missing energy range in model parameters.") from exc
+
+
+def output_file_name(model_prefix, n_tel, energy_bin_number=None):
+    """Generate output filename for the trained model."""
+    model_prefix = Path(model_prefix)
+
+    output_dir = model_prefix.parent
+    if not output_dir.exists():
+        output_dir.mkdir(parents=True)
+
+    filename = f"{model_prefix!s}_ntel{n_tel}"
+    if energy_bin_number is not None:
+        filename += f"_ebin{energy_bin_number}"
+    filename += ".joblib"
+    _logger.info(f"Output filename: {filename}")
+    return filename

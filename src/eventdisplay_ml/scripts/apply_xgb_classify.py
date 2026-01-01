@@ -1,9 +1,8 @@
 """
-Apply XGBoost BDTs stereo reconstruction (direction, energy).
+Apply XGBoost classification model.
 
-Applies trained XGBoost models to predict Xoff, Yoff, and energy
-for each event from an input mscw file. The output file contains
-one row per input event, maintaining the original event order.
+Applies trained XGBoost classification models to input data and outputs
+predictions of signal probability for each event.
 """
 
 import logging
@@ -17,7 +16,7 @@ _logger = logging.getLogger(__name__)
 
 def main():
     """Apply XGBoost."""
-    analysis_type = "stereo_analysis"
+    analysis_type = "classification"
 
     model_configs = configure_apply(analysis_type)
 
