@@ -108,7 +108,7 @@ def configure_training(analysis_type):
 
 def configure_apply(analysis_type):
     """Configure model application based on command-line arguments."""
-    parser = argparse.ArgumentParser(description=(f"Apply XGBoost models {analysis_type}."))
+    parser = argparse.ArgumentParser(description=(f"Apply XGBoost models for {analysis_type}."))
 
     parser.add_argument(
         "--input_file",

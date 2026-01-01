@@ -5,7 +5,12 @@ import logging
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    mean_absolute_error,
+    mean_squared_error,
+)
 
 from eventdisplay_ml.features import target_features
 
@@ -49,8 +54,6 @@ def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
 
     accuracy = (y_pred == y_test).mean()
     _logger.info(f"XGBoost Classification Accuracy (Testing Set): {accuracy:.4f}")
-
-    from sklearn.metrics import classification_report, confusion_matrix
 
     _logger.info(f"--- Confusion Matrix for {name} ---")
     cm = confusion_matrix(y_test, y_pred)
@@ -204,7 +207,7 @@ def _log_importance_table(target_label, values, x_cols, name):
 
 def shap_feature_importance(model, x_data, target_names, max_points=20000, n_top=25):
     """Feature importance using SHAP values for native multi-target XGBoost."""
-    x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=42)
+    x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)
     n_targets = len(target_names)
 

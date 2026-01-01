@@ -142,6 +142,7 @@ def load_training_data(model_configs, file_list, analysis_type):
     """
     max_events = model_configs.get("max_events", None)
     n_tel = model_configs["n_tel"]
+    random_state = model_configs.get("random_state", None)
 
     _logger.info(f"--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
     _logger.info(
@@ -170,7 +171,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                 df = tree.arrays(branch_list, cut=model_configs.get("pre_cuts", None), library="pd")
                 _logger.info(f"Number of events after event cut: {len(df)}")
                 if max_events_per_file and len(df) > max_events_per_file:
-                    df = df.sample(n=max_events_per_file, random_state=42)
+                    df = df.sample(n=max_events_per_file, random_state=random_state)
                 if not df.empty:
                     dfs.append(df)
         except Exception as e:
