@@ -148,8 +148,9 @@ def features(analysis_type, training=True):
     analysis_type : str
         Type of analysis.
     training : bool, optional
-        If True (default), return training features. If False, return
-        all features including target features.
+        If True (default), return features including target features.
+        If False, return only non-target features (i.e. features used
+        for prediction).
 
     Returns
     -------
