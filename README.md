@@ -11,13 +11,21 @@ Provides examples on how to use e.g., scikit-learn or XGBoost regression trees t
 
 Introduces a Python environment and a scripts directory to support training and inference.
 
+Input is provided through the `mscw` output (`data` trees).
+
 ## Direction and energy reconstruction using XGBoost
 
 Stereo analysis methods implemented in Eventdisplay provide direction / energies per event resp telescope image. The machine learner implemented Eventdisplay-ML uses XGB Boost regression trees. Features are all estimators (e.g. DispBDT or intersection method results) plus additional features (mostly image parameters) to get a better estimator for directions and energies.
 
-Input is provided through the `mscw` output (`data` trees).
+Output is a single ROOT tree called `StereoAnalysis` with the same number of events as the input tree.
 
-Output is a single ROOT tree called `StereAnalysis` with the same number of events as the input tree.
+## Gamma/hadron separation using XGBoost
+
+Gamma/hadron separation is performed using XGB Boost classification trees. Features are image parameters and stereo reconstruction parameters provided by Eventdisplay.
+Training is performed in overlapping energy bins to account for energy dependence of the classification.
+The zenith angle dependence is accounted for by including the zenith angle as a binned feature in the training.
+
+Output is a single ROOT tree called `Classification` with the same number of events as the input tree. It contains the classification prediction (`Gamma_Prediction`) and boolean flags (e.g. `Is_Gamma_75` for 75% signal efficiency cut).
 
 ## Citing this Software
 
