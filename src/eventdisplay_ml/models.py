@@ -108,6 +108,10 @@ def load_classification_models(model_prefix, model_name):
             except KeyError:
                 raise KeyError(f"Model name '{model_name}' not found in file: {file}")
             models[n_tel][e_bin]["features"] = model_data.get("features", [])
+            models[n_tel][e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
+            models[n_tel][e_bin]["thresholds"] = _calculate_classification_thresholds(
+                models[n_tel][e_bin]["efficiency"]
+            )
             par = _update_parameters(
                 par,
                 model_data.get("zenith_bins_deg"),
@@ -117,6 +121,44 @@ def load_classification_models(model_prefix, model_name):
 
     _logger.info(f"Loaded classification model parameters: {par}")
     return models, par
+
+
+def _calculate_classification_thresholds(efficiency, min_efficiency=0.2, steps=5):
+    """
+    Calculate classification thresholds for given signal efficiencies.
+
+    Returns thresholds for signal efficiencies indexed by integer percentage values.
+
+    Parameters
+    ----------
+    efficiency : pd.DataFrame
+        DataFrame with 'signal_efficiency' and 'threshold' columns.
+    min_efficiency : float
+        Minimum signal efficiency to consider.
+    steps : int
+        Step size in percent for efficiency thresholds.
+
+    Returns
+    -------
+    dict[int, float]
+        Mapping from efficiency (percent) to classification threshold.
+    """
+    df = efficiency.copy()
+    df = df.sort_values("signal_efficiency")
+    eff_targets = np.arange(min_efficiency * 100, 100, steps) / 100.0
+    thresholds = np.interp(
+        eff_targets,
+        df["signal_efficiency"].values,
+        df["threshold"].values,
+    )
+
+    thresholds = dict(zip((eff_targets * 100).astype(int), thresholds))
+    lines = [f"  {k:>3d}% : {float(v):.4f}" for k, v in sorted(thresholds.items())]
+    _logger.info(
+        "Calculated classification thresholds:\n%s",
+        "\n".join(lines),
+    )
+    return thresholds
 
 
 def _check_bin(expected, actual):
@@ -221,7 +263,7 @@ def apply_regression_models(df, model_configs):
     return preds[:, 0], preds[:, 1], preds[:, 2]
 
 
-def apply_classification_models(df, model_configs):
+def apply_classification_models(df, model_configs, threshold_keys):
     """
     Apply trained XGBoost classification models to a DataFrame chunk.
 
@@ -231,14 +273,21 @@ def apply_classification_models(df, model_configs):
         Chunk of events to process.
     model_configs : dict
         Preloaded models dictionary
+    threshold_keys : list[int]
+        Efficiency thresholds (percent) for which to compute binary gamma flags.
 
     Returns
     -------
     class_probability : numpy.ndarray
         Array of predicted class probabilities for each event in the chunk, aligned
         with the index of ``df``.
+    is_gamma : dict[int, numpy.ndarray]
+        Mapping from efficiency threshold (percent) to binary arrays (0/1) indicating
+        whether each event passes the corresponding classification threshold using
+        that bin's stored thresholds.
     """
     class_probability = np.full(len(df), np.nan, dtype=np.float32)
+    is_gamma = {eff: np.zeros(len(df), dtype=np.uint8) for eff in threshold_keys}
     models = model_configs["models"]
 
     # 1. Group by Number of Images (n_tel)
@@ -265,9 +314,15 @@ def apply_classification_models(df, model_configs):
             )
             model = models[n_tel][e_bin]["model"]
             flatten_data = flatten_data.reindex(columns=models[n_tel][e_bin]["features"])
-            class_probability[group_df.index] = model.predict_proba(flatten_data)[:, 1]
+            class_probs = model.predict_proba(flatten_data)[:, 1]
+            class_probability[group_df.index] = class_probs
 
-    return class_probability
+            thresholds = models[n_tel][e_bin].get("thresholds", {})
+            for eff, threshold in thresholds.items():
+                if eff in is_gamma:
+                    is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
+
+    return class_probability, is_gamma
 
 
 def process_file_chunked(analysis_type, model_configs):
@@ -291,8 +346,19 @@ def process_file_chunked(analysis_type, model_configs):
     _logger.info(f"Chunk size: {chunk_size}")
     if max_events:
         _logger.info(f"Maximum events to process: {max_events}")
+    threshold_keys = None
+    if analysis_type == "classification":
+        threshold_keys = sorted(
+            {
+                eff
+                for n_tel_models in model_configs["models"].values()
+                for e_bin_models in n_tel_models.values()
+                for eff in (e_bin_models.get("thresholds") or {}).keys()
+            }
+        )
+
     with uproot.recreate(model_configs.get("output_file")) as root_file:
-        tree = _output_tree(analysis_type, root_file)
+        tree = _output_tree(analysis_type, root_file, threshold_keys)
         total_processed = 0
 
         for df_chunk in uproot.iterate(
@@ -320,7 +386,7 @@ def process_file_chunked(analysis_type, model_configs):
                     model_configs["zenith_bins_deg"],
                 )
 
-            _apply_model(analysis_type, df_chunk, model_configs, tree)
+            _apply_model(analysis_type, df_chunk, model_configs, tree, threshold_keys)
 
             total_processed += len(df_chunk)
             _logger.info(f"Processed {total_processed} events so far")
@@ -328,7 +394,7 @@ def process_file_chunked(analysis_type, model_configs):
     _logger.info(f"Total processed events written: {total_processed}")
 
 
-def _output_tree(analysis_type, root_file):
+def _output_tree(analysis_type, root_file, threshold_keys=None):
     """
     Generate output tree structure for the given analysis type.
 
@@ -338,6 +404,8 @@ def _output_tree(analysis_type, root_file):
         Type of analysis (e.g., "stereo_analysis")
     root_file : uproot.writing.WritingFile
         Uproot file object to create the tree in.
+    threshold_keys : list[int], optional
+        Efficiency thresholds (percent) for which to create binary gamma flag branches.
 
     Returns
     -------
@@ -350,11 +418,14 @@ def _output_tree(analysis_type, root_file):
             {"Dir_Xoff": np.float32, "Dir_Yoff": np.float32, "Dir_Erec": np.float32},
         )
     if analysis_type == "classification":
-        return root_file.mktree("Classification", {"IsGamma": np.float32})
+        branches = {"Gamma_Prediction": np.float32}
+        for eff in threshold_keys or []:
+            branches[f"Is_Gamma_{eff}"] = np.uint8
+        return root_file.mktree("Classification", branches)
     raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
 
-def _apply_model(analysis_type, df_chunk, model_config, tree):
+def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=None):
     """
     Apply models to the data chunk.
 
@@ -368,6 +439,8 @@ def _apply_model(analysis_type, df_chunk, model_config, tree):
         Dictionary of loaded XGBoost models.
     tree : uproot.writing.WritingTTree
         Output tree to write results to.
+    threshold_keys : list[int], optional
+        Efficiency thresholds (percent) for which to compute binary gamma flags.
     """
     if analysis_type == "stereo_analysis":
         pred_xoff, pred_yoff, pred_erec = apply_regression_models(df_chunk, model_config)
@@ -379,12 +452,15 @@ def _apply_model(analysis_type, df_chunk, model_config, tree):
             }
         )
     elif analysis_type == "classification":
-        pred_proba = apply_classification_models(df_chunk, model_config)
-        tree.extend(
-            {
-                "IsGamma": np.asarray(pred_proba, dtype=np.float32),
-            }
+        pred_proba, pred_is_gamma = apply_classification_models(
+            df_chunk, model_config, threshold_keys or []
         )
+
+        tree_payload = {"Gamma_Prediction": np.asarray(pred_proba, dtype=np.float32)}
+        for eff, flags in pred_is_gamma.items():
+            tree_payload[f"Is_Gamma_{eff}"] = np.asarray(flags, dtype=np.uint8)
+
+        tree.extend(tree_payload)
     else:
         raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
