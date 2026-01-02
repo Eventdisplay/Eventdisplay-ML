@@ -127,8 +127,21 @@ def _calculate_classification_thresholds(efficiency, min_efficiency=0.2, steps=5
     """
     Calculate classification thresholds for given signal efficiencies.
 
-    Returns thresholds for signal efficiencies from 60% to 95% in steps of 5%,
-    indexed by integer percentage values (60, 65, ..., 95).
+    Returns thresholds for signal efficiencies indexed by integer percentage values.
+
+    Parameters
+    ----------
+    efficiency : pd.DataFrame
+        DataFrame with 'signal_efficiency' and 'threshold' columns.
+    min_efficiency : float
+        Minimum signal efficiency to consider.
+    steps : int
+        Step size in percent for efficiency thresholds.
+
+    Returns
+    -------
+    dict[int, float]
+        Mapping from efficiency (percent) to classification threshold.
     """
     df = efficiency.copy()
     df = df.sort_values("signal_efficiency")
@@ -391,6 +404,8 @@ def _output_tree(analysis_type, root_file, threshold_keys=None):
         Type of analysis (e.g., "stereo_analysis")
     root_file : uproot.writing.WritingFile
         Uproot file object to create the tree in.
+    threshold_keys : list[int], optional
+        Efficiency thresholds (percent) for which to create binary gamma flag branches.
 
     Returns
     -------
@@ -424,6 +439,8 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
         Dictionary of loaded XGBoost models.
     tree : uproot.writing.WritingTTree
         Output tree to write results to.
+    threshold_keys : list[int], optional
+        Efficiency thresholds (percent) for which to compute binary gamma flags.
     """
     if analysis_type == "stereo_analysis":
         pred_xoff, pred_yoff, pred_erec = apply_regression_models(df_chunk, model_config)
