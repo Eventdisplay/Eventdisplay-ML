@@ -157,6 +157,7 @@ def load_training_data(model_configs, file_list, analysis_type):
         max_events_per_file = max_events // len(input_files)
     else:
         max_events_per_file = None
+    _logger.info(f"Max events per file: {max_events_per_file}")
 
     dfs = []
     for f in input_files:
