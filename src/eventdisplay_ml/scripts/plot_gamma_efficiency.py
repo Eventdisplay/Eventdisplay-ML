@@ -1,21 +1,32 @@
-import os
+"""
+Plot gamma efficiency containment levels from mscw XGB gh MC files.
+
+Allows to corr check the gamma efficiency at different containment levels
+as function of zenith angle, wobble offset, and NSB level.
+"""
+
+import argparse
+import logging
 import re
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import uproot
 
+logging.basicConfig(level=logging.INFO)
+_logger = logging.getLogger(__name__)
 
-def get_containment_data(
-    directory="/lustre/fs23/group/veritas/IRFPRODUCTION/v492/AP/CARE_202404/V6_2016_2017_ATM61_gamma/MSCW_RECID0_DISP/",
-):
-    """Parses ROOT files and calculates containment levels."""
+
+def get_containment_data(directory):
+    """Parse files and calculates containment levels."""
+    directory = Path(directory)
     results = []
     # Regex to extract parameters from filename: 50deg_1.25wob_NOISE600.mscw.xgb_gh.root
     pattern = re.compile(r"(\d+)deg_([\d.]+)wob_NOISE(\d+)\.mscw\.xgb_gh\.root")
 
-    files = [f for f in os.listdir(directory) if f.endswith(".xgb_gh.root")]
+    files = [f.name for f in directory.iterdir() if f.name.endswith(".xgb_gh.root")]
 
     for filename in files:
         match = pattern.match(filename)
@@ -23,21 +34,14 @@ def get_containment_data(
             ze = int(match.group(1))
             wob = float(match.group(2))
             nsb = int(match.group(3))
+            _logger.info(f"Processing file: {filename} for ze={ze}, wob={wob}, nsb={nsb}")
 
-            with uproot.open(os.path.join(directory, filename)) as f:
-                # Access the 'Classification' tree
+            with uproot.open(directory / filename) as f:
                 if "Classification" in f:
                     tree = f["Classification"]
-                    # Load Gamma_Prediction as a numpy array
                     gamma_pred = tree["Gamma_Prediction"].array(library="np")
-
-                    # Calculate 70% and 95% containment (percentiles)
-                    # Note: Using 30th and 5th percentiles if 'containment' refers
-                    # to the top fraction of a [0, 1] score.
-                    # Here we use standard 70th and 95th percentiles.
                     p70 = np.percentile(gamma_pred, 70)
                     p95 = np.percentile(gamma_pred, 95)
-
                     results.append({"ze": ze, "wob": wob, "nsb": nsb, "p70": p70, "p95": p95})
 
     return pd.DataFrame(results)
@@ -45,13 +49,14 @@ def get_containment_data(
 
 def plot_grid(df, x_axis_var, panel_vars, title, output_name):
     """
-    Plots containment levels vs x_axis_var.
+    Plot containment levels vs x_axis_var.
+
     Creates a grid of panels based on panel_vars (row, col).
     """
     rows = sorted(df[panel_vars[0]].unique())
     cols = sorted(df[panel_vars[1]].unique())
 
-    fig, axes = plt.subplots(
+    _, axes = plt.subplots(
         len(rows),
         len(cols),
         figsize=(5 * len(cols), 4 * len(rows)),
@@ -86,17 +91,23 @@ def plot_grid(df, x_axis_var, panel_vars, title, output_name):
     plt.show()
 
 
-# Execution
-df = get_containment_data()
+def main():
+    """Plot gamma efficiency containment levels."""
+    parser = argparse.ArgumentParser(description="Plot gamma efficiency containment levels.")
+    parser.add_argument("directory", help="Directory containing .xgb_gh.root files")
+    args = parser.parse_args()
 
-if not df.empty:
-    # 1. vs ZE for each (wob, NSB)
-    plot_grid(df, "ze", ["wob", "nsb"], "Containment vs Zenith Angle", "containment_vs_ze.png")
+    df = get_containment_data(args.directory)
 
-    # 2. vs Wobble for each (ZE, NSB)
-    plot_grid(df, "wob", ["ze", "nsb"], "Containment vs Wobble Offset", "containment_vs_wob.png")
+    if not df.empty:
+        plot_grid(df, "ze", ["wob", "nsb"], "Containment vs Zenith Angle", "containment_vs_ze.png")
+        plot_grid(
+            df, "wob", ["ze", "nsb"], "Containment vs Wobble Offset", "containment_vs_wob.png"
+        )
+        plot_grid(df, "nsb", ["ze", "wob"], "Containment vs NSB Level", "containment_vs_nsb.png")
+    else:
+        _logger.warning("No valid data found to plot.")
 
-    # 3. vs NSB for each (ZE, wob)
-    plot_grid(df, "nsb", ["ze", "wob"], "Containment vs NSB Level", "containment_vs_nsb.png")
-else:
-    print("No matching ROOT files found.")
+
+if __name__ == "__main__":
+    main()

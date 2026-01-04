@@ -8,11 +8,15 @@ Compare performance of TMVA and XGB gamma/hadron separator (efficiency based met
 """
 
 import argparse
+import logging
 
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import uproot
+
+logging.basicConfig(level=logging.INFO)
+_logger = logging.getLogger(__name__)
 
 
 def plot_efficiencies(ax, x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb):
@@ -106,7 +110,7 @@ def main():
         ax.legend(fontsize=9, frameon=False, loc="best")
 
     plt.tight_layout()
-    print("Plotting plot_performance_metrics")
+    _logger.info("Plotting plot_performance_metrics")
     plt.savefig("plot_performance_metrics.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
