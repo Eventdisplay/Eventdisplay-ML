@@ -29,5 +29,4 @@ Output is a single ROOT tree called `Classification` with the same number of eve
 
 ## Citing this Software
 
-Please cite this software if it is us
-ed for a publication, see the [Zenodo record](https://doi.org/10.5281/zenodo.18117884) and [CITATION.cff](CITATION.cff) for details.
+Please cite this software if it is used for a publication, see the [Zenodo record](https://doi.org/10.5281/zenodo.18117884) and [CITATION.cff](CITATION.cff) for details.
