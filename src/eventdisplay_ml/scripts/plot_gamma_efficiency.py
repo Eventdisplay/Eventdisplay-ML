@@ -40,7 +40,7 @@ def get_containment_data(directory):
     # Regex to extract parameters from filename: 50deg_1.25wob_NOISE600.mscw.xgb_gh.root
     pattern = re.compile(r"(\d+)deg_([\d.]+)wob_NOISE(\d+)\.mscw\.xgb_gh\.root")
 
-    files = [f.name for f in directory.iterdir() if f.name.endswith(".xgb_gh.root")]
+    files = sorted(f.name for f in directory.iterdir() if f.name.endswith(".xgb_gh.root"))
 
     for filename in files:
         match = pattern.match(filename)
