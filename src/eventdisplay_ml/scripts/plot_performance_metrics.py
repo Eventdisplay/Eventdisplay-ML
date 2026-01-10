@@ -2,8 +2,13 @@
 Compare performance of TMVA and XGB gamma/hadron separator (efficiency based metrics).
 
 ./plot_performance_metrics.py \
-        AP/BDTtraining/GammaHadronBDTs_V6_DISP/V6_2016_2017_ATM61/NTel2-Soft/BDT_3_0.root \
-        AP/CARE_202404/V6_2016_2017_ATM61_gamma/TrainXGBGammaHadron/dispdir_bdt_ntel4_ebin3.joblib
+        AP/BDTtraining/GammaHadronBDTs_V6_DISP/V6_2016_2017_ATM61/NTel2-Soft/ \
+        AP/CARE_202404/V6_2016_2017_ATM61_gamma/TrainXGBGammaHadron/
+
+Notes the differences between TMVA and XGB implementations:
+
+- TMVA uses always the first zenith bin (XGB uses all zenith angles)
+- XGB uses the 4-telescope configuration (TMVA uses all telescopes)
 
 """
 
