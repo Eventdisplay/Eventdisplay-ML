@@ -57,8 +57,16 @@ def plot_qfactor(ax, y_effs, y_effb, y_effs_xgb, y_effb_xgb):
 
 def plot_roc(ax, y_effs, y_effb, y_effs_xgb, y_effb_xgb):
     """Plot ROC curve: Signal efficiency vs. 1 - Background efficiency."""
-    ax.plot(y_effs, 1 - y_effb, label="TMVA", color="blue")
-    ax.plot(y_effs_xgb, 1 - y_effb_xgb, label="XGBoost", color="cyan", linestyle="--")
+    auc_tmva = -np.trapezoid(1 - y_effb, y_effs)
+    auc_xgb = -np.trapezoid(1 - y_effb_xgb, y_effs_xgb)
+    ax.plot(y_effs, 1 - y_effb, label=f"TMVA (AUC: {auc_tmva:.2f})", color="blue")
+    ax.plot(
+        y_effs_xgb,
+        1 - y_effb_xgb,
+        label=f"XGBoost (AUC: {auc_xgb:.2f})",
+        color="cyan",
+        linestyle="--",
+    )
 
     ax.margins(x=0.02)
     ax.set_xlabel("Gamma Efficiency (Signal)")
@@ -66,11 +74,32 @@ def plot_roc(ax, y_effs, y_effb, y_effs_xgb, y_effb_xgb):
     ax.set_title("ROC")
 
 
+def plot_score_distributions(ax, x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb):
+    """Reconstructs and plots the probability density of the MVA scores."""
+    # The derivative of the efficiency curve is the probability density function (PDF)
+    # We use negative gradient because efficiency decreases as threshold increases
+    pdf_s_tmva = -np.gradient(y_effs, x_root)
+    pdf_b_tmva = -np.gradient(y_effb, x_root)
+
+    pdf_s_xgb = -np.gradient(y_effs_xgb, x_joblib)
+    pdf_b_xgb = -np.gradient(y_effb_xgb, x_joblib)
+
+    ax.fill_between(x_root, pdf_s_tmva, alpha=0.2, color="blue", label="TMVA Signal")
+    ax.fill_between(x_root, pdf_b_tmva, alpha=0.2, color="red", label="TMVA Background")
+
+    ax.plot(x_joblib, pdf_s_xgb, color="cyan", linestyle="--", label="XGB Signal")
+    ax.plot(x_joblib, pdf_b_xgb, color="darkorange", linestyle="--", label="XGB Background")
+
+    ax.set_xlabel("MVA Score (Normalized)")
+    ax.set_ylabel("Probability Density")
+    ax.set_title("Score Distributions")
+
+
 def main():
     """Plot TMVA and XGBoost performance metrics."""
     parser = argparse.ArgumentParser(description="Plot TMVA and XGBoost metrics.")
-    parser.add_argument("root_file", help="Path to the .root file")
-    parser.add_argument("joblib_file", help="Path to the .joblib file")
+    parser.add_argument("root_file", help="Path to the  TMVA BDT .root file")
+    parser.add_argument("joblib_file", help="Path to the XGB BDT .joblib file")
     args = parser.parse_args()
 
     # 1. TMVA
@@ -95,18 +124,19 @@ def main():
     y_effs_xgb = df_xgboost["signal_efficiency"]
     y_effb_xgb = df_xgboost["background_efficiency"]
 
-    fig, axs = plt.subplots(1, 3, figsize=(18, 4), sharex=False)
+    fig, axs = plt.subplots(2, 2, figsize=(16, 16), sharex=False)
     fig.set_constrained_layout(True)
 
-    for ax in axs:
+    for ax in axs.flatten():
         ax.tick_params(labelsize=10)
         ax.grid(True, alpha=0.2)
 
-    plot_efficiencies(axs[0], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb)
-    plot_qfactor(axs[1], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
-    plot_roc(axs[2], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
+    plot_efficiencies(axs[0, 0], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb)
+    plot_qfactor(axs[0, 1], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
+    plot_roc(axs[1, 0], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
+    plot_score_distributions(axs[1, 1], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb)
 
-    for ax in axs:
+    for ax in axs.flatten():
         ax.legend(fontsize=9, frameon=False, loc="best")
 
     plt.tight_layout()
