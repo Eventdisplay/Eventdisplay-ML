@@ -25,7 +25,7 @@ def plot_efficiencies(ax, x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_x
     ax.plot(x_root, y_effb, label="TMVA BDT Eff B", color="red", linestyle="-", linewidth=2)
     ax.plot(x_joblib, y_effs_xgb, label="XGB Eff S", color="cyan", linestyle="--", linewidth=2)
     ax.plot(
-        x_joblib, y_effb_xgb, label="XGB Eff B", color="darkorange", linestyle="--", linewidth=2
+        x_joblib, y_effb_xgb, label="XGB Eff B", color="darkorange", linestyle="--", linewidth=4
     )
 
     ax.set_xlabel("Cut value (Threshold)")
@@ -48,6 +48,7 @@ def plot_qfactor(ax, y_effs, y_effb, y_effs_xgb, y_effb_xgb):
         label=f"XGBoost (Max Q: {np.max(q_xgb):.2f})",
         color="cyan",
         linestyle="--",
+        linewidth=4,
     )
 
     ax.set_xlabel(r"Gamma Efficiency ($\epsilon_{\gamma}$)")
@@ -66,6 +67,7 @@ def plot_roc(ax, y_effs, y_effb, y_effs_xgb, y_effb_xgb):
         label=f"XGBoost (AUC: {auc_xgb:.2f})",
         color="cyan",
         linestyle="--",
+        linewidth=4,
     )
 
     ax.margins(x=0.02)
@@ -87,8 +89,10 @@ def plot_score_distributions(ax, x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y
     ax.fill_between(x_root, pdf_s_tmva, alpha=0.2, color="blue", label="TMVA Signal")
     ax.fill_between(x_root, pdf_b_tmva, alpha=0.2, color="red", label="TMVA Background")
 
-    ax.plot(x_joblib, pdf_s_xgb, color="cyan", linestyle="--", label="XGB Signal")
-    ax.plot(x_joblib, pdf_b_xgb, color="darkorange", linestyle="--", label="XGB Background")
+    ax.plot(x_joblib, pdf_s_xgb, color="cyan", linestyle="--", label="XGB Signal", linewidth=4)
+    ax.plot(
+        x_joblib, pdf_b_xgb, color="darkorange", linestyle="--", label="XGB Background", linewidth=4
+    )
 
     ax.set_xlabel("MVA Score (Normalized)")
     ax.set_ylabel("Probability Density")
@@ -110,9 +114,10 @@ def main():
         x_root_raw = (
             effs_rt.axis().centers() if hasattr(effs_rt, "axis") else effs_rt.values(axis=0)
         )
-        max_val = np.max(np.abs(x_root_raw))
-        # map [-max_val, max_val] -> [0, 1]
-        x_root = (x_root_raw + max_val) / (2 * max_val)
+        x_min = np.min(x_root_raw)
+        x_max = np.max(x_root_raw)
+        # map [-x_min, x_max] -> [0, 1]
+        x_root = (x_root_raw - x_min) / (x_max - x_min)
         y_effs = effs_rt.values()
         y_effb = effb_rt.values()
 
