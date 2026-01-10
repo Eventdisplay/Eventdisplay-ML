@@ -1,7 +1,7 @@
 """
 Plot gamma efficiency containment levels from mscw XGB gh MC files.
 
-Allows to corr check the gamma efficiency at different containment levels
+Allows to check the gamma efficiency at different containment levels
 as function of zenith angle, wobble offset, and NSB level.
 """
 
@@ -20,7 +20,21 @@ _logger = logging.getLogger(__name__)
 
 
 def get_containment_data(directory):
-    """Parse files and calculates containment levels."""
+    """
+    Parse files in mscw MC directory and calculates containment levels.
+
+    Fixed 70 and 95% containment levels are calculated for each file.
+
+    Parameters
+    ----------
+    directory : str or Path
+        Directory containing .xgb_gh.root files.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns: ze, wob, nsb, p70, p95
+    """
     directory = Path(directory)
     results = []
     # Regex to extract parameters from filename: 50deg_1.25wob_NOISE600.mscw.xgb_gh.root
