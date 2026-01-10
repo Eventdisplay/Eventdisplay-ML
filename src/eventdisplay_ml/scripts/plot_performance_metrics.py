@@ -9,6 +9,7 @@ Compare performance of TMVA and XGB gamma/hadron separator (efficiency based met
 
 import argparse
 import logging
+from pathlib import Path
 
 import joblib
 import matplotlib.pyplot as plt
@@ -99,15 +100,10 @@ def plot_score_distributions(ax, x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y
     ax.set_title("Score Distributions")
 
 
-def main():
-    """Plot TMVA and XGBoost performance metrics."""
-    parser = argparse.ArgumentParser(description="Plot TMVA and XGBoost metrics.")
-    parser.add_argument("root_file", help="Path to the  TMVA BDT .root file")
-    parser.add_argument("joblib_file", help="Path to the XGB BDT .joblib file")
-    args = parser.parse_args()
-
-    # 1. TMVA
-    with uproot.open(args.root_file) as rf:
+def load_efficiency_tmva(path, ebin, zebin=0):
+    """Load efficiencies from TMVA root files."""
+    file_path = Path(path) / f"BDT_{ebin}_{zebin}.root"
+    with uproot.open(file_path) as rf:
         base_path = "Method_BDT/BDT_0"
         effs_rt = rf[f"{base_path}/MVA_BDT_0_effS"]
         effb_rt = rf[f"{base_path}/MVA_BDT_0_effB"]
@@ -121,33 +117,55 @@ def main():
         y_effs = effs_rt.values()
         y_effb = effb_rt.values()
 
+    return x_root, y_effs, y_effb
+
+
+def load_efficiency_xgb(path, ebin, ntel=4):
+    """Load efficiencies from XGB files."""
     # 2. XGBoost
-    data_joblib = joblib.load(args.joblib_file)
+    data_joblib = joblib.load(Path(path) / f"gammahadron_bdt_ntel{ntel}_ebin{ebin}.joblib")
     df_xgboost = data_joblib["models"]["xgboost"]["efficiency"]
 
     x_joblib = df_xgboost["threshold"]
     y_effs_xgb = df_xgboost["signal_efficiency"]
     y_effb_xgb = df_xgboost["background_efficiency"]
 
-    fig, axs = plt.subplots(2, 2, figsize=(16, 16), sharex=False)
-    fig.set_constrained_layout(True)
+    return x_joblib, y_effs_xgb, y_effb_xgb
 
-    for ax in axs.flatten():
-        ax.tick_params(labelsize=10)
-        ax.grid(True, alpha=0.2)
 
-    plot_efficiencies(axs[0, 0], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb)
-    plot_qfactor(axs[0, 1], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
-    plot_roc(axs[1, 0], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
-    plot_score_distributions(axs[1, 1], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb)
+def main():
+    """Plot TMVA and XGBoost performance metrics."""
+    parser = argparse.ArgumentParser(description="Plot TMVA and XGBoost metrics.")
+    parser.add_argument("root_dir", help="Path to the  TMVA BDT .root file")
+    parser.add_argument("joblib_dir", help="Path to the XGB BDT .joblib file")
+    args = parser.parse_args()
 
-    for ax in axs.flatten():
-        ax.legend(fontsize=9, frameon=False, loc="best")
+    # assume energy binning is identical in XGB and TMVA files.
+    for ebin in range(9):
+        x_root, y_effs, y_effb = load_efficiency_tmva(args.root_dir, ebin)
+        x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(args.joblib_dir, ebin)
 
-    plt.tight_layout()
-    _logger.info("Plotting plot_performance_metrics")
-    plt.savefig("plot_performance_metrics.png", dpi=300, bbox_inches="tight")
-    plt.close(fig)
+        fig, axs = plt.subplots(2, 2, figsize=(16, 16), sharex=False)
+        fig.set_constrained_layout(True)
+
+        for ax in axs.flatten():
+            ax.tick_params(labelsize=10)
+            ax.grid(True, alpha=0.2)
+
+        plot_efficiencies(axs[0, 0], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb)
+        plot_qfactor(axs[0, 1], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
+        plot_roc(axs[1, 0], y_effs, y_effb, y_effs_xgb, y_effb_xgb)
+        plot_score_distributions(
+            axs[1, 1], x_root, y_effs, y_effb, x_joblib, y_effs_xgb, y_effb_xgb
+        )
+
+        for ax in axs.flatten():
+            ax.legend(fontsize=9, frameon=False, loc="best")
+
+        plt.tight_layout()
+        _logger.info(f"Plotting plot_performance_metrics for ebin {ebin}")
+        plt.savefig(f"plot_performance_metrics_ebin{ebin}.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 
 if __name__ == "__main__":
