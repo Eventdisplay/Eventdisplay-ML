@@ -39,6 +39,7 @@ def get_containment_data(directory):
     results = []
     # Regex to extract parameters from filename: 50deg_1.25wob_NOISE600.mscw.xgb_gh.root
     pattern = re.compile(r"(\d+)deg_([\d.]+)wob_NOISE(\d+)\.mscw\.xgb_gh\.root")
+    pattern = re.compile(r"(\d+)deg_([\d.]+)wob_NOISE200\.mscw\.xgb_gh\.root")
     files = sorted(f.name for f in directory.iterdir() if f.name.endswith(".xgb_gh.root"))
 
     for filename in files:
@@ -53,8 +54,8 @@ def get_containment_data(directory):
                 if "Classification" in f:
                     tree = f["Classification"]
                     gamma_pred = tree["Gamma_Prediction"].array(library="np")
-                    p70 = np.percentile(gamma_pred, 70)
-                    p95 = np.percentile(gamma_pred, 95)
+                    p70 = np.percentile(gamma_pred, 100 - 70)
+                    p95 = np.percentile(gamma_pred, 100 - 95)
                     results.append({"ze": ze, "wob": wob, "nsb": nsb, "p70": p70, "p95": p95})
 
     return pd.DataFrame(results)
