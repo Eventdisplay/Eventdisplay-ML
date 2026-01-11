@@ -63,6 +63,40 @@ def get_containment_data(directory):
 
 
 def plot_grid(df, x_axis_var, panel_vars, title, output_name):
+    """Plot containment levels vs x_axis_var."""
+    colors = plt.cm.viridis(np.linspace(0, 1, len(df[panel_vars[0]].unique())))
+    line_vars = sorted(df[panel_vars[0]].unique())
+    cols = sorted(df[panel_vars[1]].unique())
+
+    _, axes = plt.subplots(1, len(cols), figsize=(6 * len(cols), 5), sharey=True, squeeze=False)
+
+    for j, c_val in enumerate(cols):
+        ax = axes[0, j]
+        for k, l_val in enumerate(line_vars):
+            # Filter for the specific column AND the specific line color
+            subset = df[(df[panel_vars[1]] == c_val) & (df[panel_vars[0]] == l_val)].sort_values(
+                by=x_axis_var
+            )
+
+            if not subset.empty:
+                label_p70 = f"{l_val} {panel_vars[0]} (70%)" if j == 0 else None
+                ax.plot(subset[x_axis_var], subset["p70"], "o-", color=colors[k], label=label_p70)
+                # Use alpha or dashed for 95% to keep it clean
+                ax.plot(subset[x_axis_var], subset["p95"], "s--", color=colors[k], alpha=0.5)
+
+        ax.set_title(f"{panel_vars[1]} = {c_val}")
+        ax.set_xlabel(x_axis_var.upper())
+        if j == 0:
+            ax.set_ylabel("Gamma_Prediction Level")
+            ax.legend(title=panel_vars[0], bbox_to_anchor=(1.05, 1), loc="upper left")
+
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(output_name)
+    plt.show()
+
+
+def pplot_grid(df, x_axis_var, panel_vars, title, output_name):
     """
     Plot containment levels vs x_axis_var.
 
