@@ -47,7 +47,8 @@ def get_containment_data(directory):
         if match:
             ze = int(match.group(1))
             wob = float(match.group(2))
-            nsb = int(match.group(3))
+            # nsb = int(match.group(3))
+            nsb = 200
             _logger.info(f"Processing file: {filename} for ze={ze}, wob={wob}, nsb={nsb}")
 
             with uproot.open(directory / filename) as f:
