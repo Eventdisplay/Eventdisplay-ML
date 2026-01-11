@@ -1,7 +1,7 @@
 """
 Compare performance of TMVA and XGB gamma/hadron separator (efficiency based metrics).
 
-./plot_performance_metrics.py \
+./plot_classification_performance_metrics.py \
         AP/BDTtraining/GammaHadronBDTs_V6_DISP/V6_2016_2017_ATM61/NTel2-Soft/ \
         AP/CARE_202404/V6_2016_2017_ATM61_gamma/TrainXGBGammaHadron/
 
