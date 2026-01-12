@@ -197,6 +197,7 @@ def load_training_data(model_configs, file_list, analysis_type):
         df_flat["MCyoff"] = data_tree["MCyoff"]
         df_flat["MCe0"] = np.log10(data_tree["MCe0"])
     elif analysis_type == "classification":
+        _logger.info(f"Adding zenith binning with bins: {model_configs.get('zenith_bins_deg', [])}")
         df_flat["ze_bin"] = zenith_in_bins(
             90.0 - data_tree["ArrayPointing_Elevation"], model_configs.get("zenith_bins_deg", [])
         )
