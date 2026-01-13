@@ -149,6 +149,9 @@ def load_training_data(model_configs, file_list, analysis_type):
         "Max events to process: "
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
     )
+    if analysis_type == "classification":
+        _logger.info(f"Adding zenith binning: {model_configs.get('zenith_bins_deg', [])}")
+
     input_files = utils.read_input_file_list(file_list)
 
     branch_list = features.features(analysis_type, training=True)
@@ -169,45 +172,49 @@ def load_training_data(model_configs, file_list, analysis_type):
 
                 _logger.info(f"Processing file: {f}")
                 tree = root_file["data"]
-                df = tree.arrays(branch_list, cut=model_configs.get("pre_cuts", None), library="pd")
-                _logger.info(f"Number of events after event cut: {len(df)}")
-                if max_events_per_file and len(df) > max_events_per_file:
-                    df = df.sample(n=max_events_per_file, random_state=random_state)
-                if not df.empty:
-                    dfs.append(df)
+                df_file = tree.arrays(
+                    branch_list, cut=model_configs.get("pre_cuts", None), library="pd"
+                )
+                if df_file.empty:
+                    continue
+
+                _logger.info(f"Number of events after event cut: {len(df_file)}")
+                if max_events_per_file and len(df_file) > max_events_per_file:
+                    df_file = df_file.sample(n=max_events_per_file, random_state=random_state)
+
+                df_flat = flatten_telescope_data_vectorized(
+                    df_file,
+                    n_tel,
+                    features.telescope_features(analysis_type),
+                    analysis_type,
+                    training=True,
+                )
+                if analysis_type == "stereo_analysis":
+                    df_flat["MCxoff"] = df_file["MCxoff"]
+                    df_flat["MCyoff"] = df_file["MCyoff"]
+                    df_flat["MCe0"] = np.log10(df_file["MCe0"])
+                elif analysis_type == "classification":
+                    df_flat["ze_bin"] = zenith_in_bins(
+                        90.0 - df_file["ArrayPointing_Elevation"],
+                        model_configs.get("zenith_bins_deg", []),
+                    )
+
+                dfs.append(df_flat)
+
+                del df_file
         except Exception as e:
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
-    if len(dfs) == 0:
+    df_final = pd.concat(dfs, ignore_index=True)
+    df_final.dropna(axis=1, how="all", inplace=True)
+    _logger.info(f"Total events for n_tel={n_tel}: {len(df_final)}")
+
+    if len(df_final) == 0:
         raise ValueError("No data loaded from input files.")
 
-    data_tree = pd.concat(dfs, ignore_index=True)
-    _logger.info(f"Total events for n_tel={n_tel}: {len(data_tree)}")
+    print_variable_statistics(df_final)
 
-    df_flat = flatten_telescope_data_vectorized(
-        data_tree,
-        n_tel,
-        features.telescope_features(analysis_type),
-        analysis_type,
-        training=True,
-    )
-
-    if analysis_type == "stereo_analysis":
-        df_flat["MCxoff"] = data_tree["MCxoff"]
-        df_flat["MCyoff"] = data_tree["MCyoff"]
-        df_flat["MCe0"] = np.log10(data_tree["MCe0"])
-    elif analysis_type == "classification":
-        _logger.info(f"Adding zenith binning with bins: {model_configs.get('zenith_bins_deg', [])}")
-        df_flat["ze_bin"] = zenith_in_bins(
-            90.0 - data_tree["ArrayPointing_Elevation"], model_configs.get("zenith_bins_deg", [])
-        )
-
-    df_flat.dropna(axis=1, how="all", inplace=True)
-    _logger.info(f"Final events for n_tel={n_tel} after cleanup: {len(df_flat)}")
-
-    print_variable_statistics(df_flat)
-
-    return df_flat
+    return df_final
 
 
 def apply_image_selection(df, selected_indices, analysis_type, training=False):
