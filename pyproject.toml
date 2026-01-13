@@ -62,6 +62,8 @@ urls."documentation" = "https://github.com/Eventdisplay/Eventdisplay-ML"
 urls."repository" = "https://github.com/Eventdisplay/Eventdisplay-ML"
 scripts.eventdisplay-ml-apply-xgb-classify = "eventdisplay_ml.scripts.apply_xgb_classify:main"
 scripts.eventdisplay-ml-apply-xgb-stereo = "eventdisplay_ml.scripts.apply_xgb_stereo:main"
+scripts.eventdisplay-ml-plot-classification-performance-metrics = "eventdisplay_ml.scripts.plot_classification_performance_metrics:main"
+scripts.eventdisplay-ml-plot-classification-gamma-efficiency = "eventdisplay_ml.scripts.plot_classification_gamma_efficiency:main"
 scripts.eventdisplay-ml-train-xgb-classify = "eventdisplay_ml.scripts.train_xgb_classify:main"
 scripts.eventdisplay-ml-train-xgb-stereo = "eventdisplay_ml.scripts.train_xgb_stereo:main"
 
