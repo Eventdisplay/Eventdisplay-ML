@@ -7,6 +7,20 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v0.3.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.3.0) - 2026-01-14
+
+### New Features
+
+- Calculation classification thresholds for signal efficiencies and fill as boolean to classification trees. ([#18](https://github.com/Eventdisplay/Eventdisplay-ML/pull/18))
+- Add plotting scripts for classification efficiency.
+  Add plotting scripts to compare TMVA and XGB performance for classification ([#21](https://github.com/Eventdisplay/Eventdisplay-ML/pull/21))
+
+### Maintenance
+
+- Add Zenodo entry to: https://doi.org/10.5281/zenodo.18117884 . ([#17](https://github.com/Eventdisplay/Eventdisplay-ML/pull/17))
+- Improve memory efficiency of training: loading and flattening data frames per file. ([#24](https://github.com/Eventdisplay/Eventdisplay-ML/pull/24))
+
+
 ## [v0.2.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.2.0) - 2026-01-01
 
 ### New Features
