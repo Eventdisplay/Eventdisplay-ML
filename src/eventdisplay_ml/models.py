@@ -256,9 +256,25 @@ def apply_regression_models(df, model_configs):
         flatten_data = flatten_feature_data(
             group_df, n_tel, analysis_type="stereo_analysis", training=False
         )
+
+        # Store base reconstructed values before reindexing (they're in flatten_data)
+        xoff_base = flatten_data["Xoff_weighted_bdt"].values
+        yoff_base = flatten_data["Yoff_weighted_bdt"].values
+        erec_base = flatten_data["Erec"].values  # Already log10
+
         flatten_data = flatten_data.reindex(columns=models[n_tel]["features"])
         model = models[n_tel]["model"]
-        preds[group_df.index] = model.predict(flatten_data)
+
+        # Model predicts differences, convert back to absolute values
+        diff_preds = model.predict(flatten_data)
+
+        # Add back the base reconstructed values to get absolute predictions
+        abs_preds = np.copy(diff_preds)
+        abs_preds[:, 0] = diff_preds[:, 0] + xoff_base  # Xoff
+        abs_preds[:, 1] = diff_preds[:, 1] + yoff_base  # Yoff
+        abs_preds[:, 2] = diff_preds[:, 2] + erec_base  # log10(E)
+
+        preds[group_df.index] = abs_preds
 
     return preds[:, 0], preds[:, 1], preds[:, 2]
 
@@ -481,7 +497,9 @@ def train_regression(df, model_configs):
         _logger.warning(f"Skipping training for n_tel={n_tel} due to empty data.")
         return None
 
-    x_cols = df.columns.difference(model_configs["targets"])
+    # Exclude both target columns and true MC value columns from features
+    excluded_cols = set(model_configs["targets"]) | {"MCxoff_true", "MCyoff_true", "MCe0_true"}
+    x_cols = df.columns.difference(excluded_cols)
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]

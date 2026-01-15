@@ -197,9 +197,16 @@ def load_training_data(model_configs, file_list, analysis_type):
                     training=True,
                 )
                 if analysis_type == "stereo_analysis":
-                    df_flat["MCxoff"] = df_file["MCxoff"]
-                    df_flat["MCyoff"] = df_file["MCyoff"]
-                    df_flat["MCe0"] = np.log10(df_file["MCe0"])
+                    # Training targets are now differences between MC truth and reconstructed values
+                    df_flat["MCxoff"] = df_file["MCxoff"] - df_file["Xoff"]
+                    df_flat["MCyoff"] = df_file["MCyoff"] - df_file["Yoff"]
+                    df_flat["MCe0"] = np.log10(df_file["MCe0"]) - np.log10(
+                        np.clip(df_file["Erec"], 1e-6, None)
+                    )
+                    # Store true MC values for evaluation
+                    df_flat["MCxoff_true"] = df_file["MCxoff"]
+                    df_flat["MCyoff_true"] = df_file["MCyoff"]
+                    df_flat["MCe0_true"] = np.log10(df_file["MCe0"])
                     df_flat["airmass"] = 1.0 / np.cos(
                         np.radians(90.0 - df_file["ArrayPointing_Elevation"])
                     )
@@ -328,6 +335,8 @@ def flatten_telescope_variables(n_tel, flat_features, index):
 def extra_columns(df, analysis_type, training):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
+        # Rename Xoff -> Xoff_weighted_bdt and Yoff -> Yoff_weighted_bdt
+        # The original Xoff and Yoff will be excluded from training features
         return pd.DataFrame(
             {
                 "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),

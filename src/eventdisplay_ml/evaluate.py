@@ -83,7 +83,14 @@ def evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name):
     if name == "xgboost":
         shap_feature_importance(model, x_test, y_data.columns)
 
-    df_pred = pd.DataFrame(y_pred, columns=target_features("stereo_analysis"))
+    # Convert difference predictions back to absolute values for resolution calculation
+    df_pred = pd.DataFrame(y_pred, columns=target_features("stereo_analysis"), index=y_test.index)
+
+    # Add back base reconstructed values to get absolute predictions
+    df_pred["MCxoff"] = df_pred["MCxoff"] + df.loc[y_test.index, "Xoff_weighted_bdt"].values
+    df_pred["MCyoff"] = df_pred["MCyoff"] + df.loc[y_test.index, "Yoff_weighted_bdt"].values
+    df_pred["MCe0"] = df_pred["MCe0"] + df.loc[y_test.index, "Erec"].values
+
     calculate_resolution(
         df_pred,
         y_test,
@@ -123,14 +130,15 @@ def target_variance(y_test, y_pred, targets):
 
 def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
     """Compute angular and energy resolution based on predictions."""
+    # Use true MC values stored during training (not the difference targets)
     results_df = pd.DataFrame(
         {
-            "MCxoff_true": y_test["MCxoff"].values,
-            "MCyoff_true": y_test["MCyoff"].values,
+            "MCxoff_true": df.loc[y_test.index, "MCxoff_true"].values,
+            "MCyoff_true": df.loc[y_test.index, "MCyoff_true"].values,
             "MCxoff_pred": y_pred["MCxoff"].values,
             "MCyoff_pred": y_pred["MCyoff"].values,
             "MCe0_pred": y_pred["MCe0"].values,
-            "MCe0": df.loc[y_test.index, "MCe0"].values,
+            "MCe0": df.loc[y_test.index, "MCe0_true"].values,
         }
     )
 

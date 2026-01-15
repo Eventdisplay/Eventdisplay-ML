@@ -40,6 +40,8 @@ def excluded_features(analysis_type, ntel):
     """
     if analysis_type == "stereo_analysis":
         return {
+            "Xoff",  # Use Xoff_weighted_bdt instead
+            "Yoff",  # Use Yoff_weighted_bdt instead
             *[f"fpointing_dx_{i}" for i in range(ntel)],
             *[f"fpointing_dy_{i}" for i in range(ntel)],
         }
