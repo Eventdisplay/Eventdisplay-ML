@@ -10,8 +10,9 @@ XGB_REGRESSION_HYPERPARAMETERS = {
     "xgboost": {
         "model": None,
         "hyper_parameters": {
-            "n_estimators": 1000,
-            "learning_rate": 0.1,  # Shrinkage
+            "n_estimators": 5000,
+            "learning_rate": 0.05,  # Shrinkage
+            "early_stopping_rounds": 50,
             "max_depth": 5,
             "min_child_weight": 1.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
             "objective": "reg:squarederror",

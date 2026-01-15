@@ -185,6 +185,9 @@ def load_training_data(model_configs, file_list, analysis_type):
                     f"Number of events before / after event cut: {len(tree)} / {len(df_file)}"
                     f" (fraction retained: {len(df_file) / len(tree):.4f})"
                 )
+                # clip intersection results to avoid misconstructed events
+                df_file["Xoff_intersect"] = df_file["Xoff_intersect"].clip(-5, 5)
+                df_file["Yoff_intersect"] = df_file["Yoff_intersect"].clip(-5, 5)
 
                 df_flat = flatten_telescope_data_vectorized(
                     df_file,
@@ -197,6 +200,9 @@ def load_training_data(model_configs, file_list, analysis_type):
                     df_flat["MCxoff"] = df_file["MCxoff"]
                     df_flat["MCyoff"] = df_file["MCyoff"]
                     df_flat["MCe0"] = np.log10(df_file["MCe0"])
+                    df_flat["airmass"] = 1.0 / np.cos(
+                        np.radians(90.0 - df_file["ArrayPointing_Elevation"])
+                    )
                 elif analysis_type == "classification":
                     df_flat["ze_bin"] = zenith_in_bins(
                         90.0 - df_file["ArrayPointing_Elevation"],
@@ -299,6 +305,7 @@ def flatten_telescope_variables(n_tel, flat_features, index):
             new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
         new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        new_cols[f"size_dist2_{i}"] = df_flat[f"size_{i}"] * (df_flat[f"dist_{i}"] ** 2)
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
         if f"size_{i}" in df_flat:
