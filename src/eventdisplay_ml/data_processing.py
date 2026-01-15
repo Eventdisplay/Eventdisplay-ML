@@ -200,9 +200,6 @@ def load_training_data(model_configs, file_list, analysis_type):
                     df_flat["MCxoff"] = df_file["MCxoff"]
                     df_flat["MCyoff"] = df_file["MCyoff"]
                     df_flat["MCe0"] = np.log10(df_file["MCe0"])
-                    df_flat["airmass"] = 1.0 / np.cos(
-                        np.radians(90.0 - df_file["ArrayPointing_Elevation"])
-                    )
                 elif analysis_type == "classification":
                     df_flat["ze_bin"] = zenith_in_bins(
                         90.0 - df_file["ArrayPointing_Elevation"],
@@ -338,11 +335,10 @@ def extra_columns(df, analysis_type, training):
             "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
             "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
             "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+            "airmass": (1.0 / np.cos(np.radians(90.0 - df["ArrayPointing_Elevation"]))).astype(
+                np.float32
+            ),
         }
-        if not training:
-            data["airmass"] = (
-                1.0 / np.cos(np.radians(90.0 - df["ArrayPointing_Elevation"]))
-            ).astype(np.float32)
 
         return pd.DataFrame(data, index=df.index)
 
