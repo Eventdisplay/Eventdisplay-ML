@@ -302,7 +302,8 @@ def flatten_telescope_variables(n_tel, flat_features, index):
             new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
         new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        new_cols[f"size_dist2_{i}"] = df_flat[f"size_{i}"] * (df_flat[f"dist_{i}"] ** 2)
+        size_dist2 = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+        new_cols[f"size_dist2_{i}"] = np.log10(np.clip(size_dist2, 1e-12, None))
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
         if f"size_{i}" in df_flat:
@@ -328,10 +329,10 @@ def extra_columns(df, analysis_type, training):
         data = {
             "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
             "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-            "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
-            "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
-            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
-            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
+            "Xoff_intersect": df["Xoff_intersect"].clip(-5.0, 5.0).astype(np.float32),
+            "Yoff_intersect": df["Yoff_intersect"].clip(-5.0, 5.0).astype(np.float32),
+            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"].clip(-5.0, 5.0)).astype(np.float32),
+            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"].clip(-5.0, 5.0)).astype(np.float32),
             "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
             "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
             "EmissionHeight": df["EmissionHeight"].astype(np.float32),

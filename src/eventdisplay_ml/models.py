@@ -11,7 +11,7 @@ import uproot
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
 
-from eventdisplay_ml import features, utils
+from eventdisplay_ml import data_processing, features, utils
 from eventdisplay_ml.data_processing import (
     apply_image_selection,
     energy_in_bins,
@@ -257,6 +257,8 @@ def apply_regression_models(df, model_configs):
             group_df, n_tel, analysis_type="stereo_analysis", training=False
         )
         flatten_data = flatten_data.reindex(columns=models[n_tel]["features"])
+        data_processing.print_variable_statistics(flatten_data)
+
         model = models[n_tel]["model"]
         preds[group_df.index] = model.predict(flatten_data)
 
