@@ -498,7 +498,7 @@ def train_regression(df, model_configs):
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name} for n_tel={n_tel}...")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train, eval_set=[(x_test, y_test)], verbose=True)
+        model.fit(x_train, y_train, eval_set=[(x_test, y_test)])
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 

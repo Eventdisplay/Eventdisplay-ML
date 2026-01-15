@@ -328,20 +328,23 @@ def flatten_telescope_variables(n_tel, flat_features, index):
 def extra_columns(df, analysis_type, training):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
-        return pd.DataFrame(
-            {
-                "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
-                "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-                "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
-                "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
-                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
-                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
-                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
-                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
-                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-            },
-            index=df.index,
-        )
+        data = {
+            "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
+            "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
+            "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
+            "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
+            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
+            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
+            "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
+            "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
+            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+        }
+        if not training:
+            data["airmass"] = (
+                1.0 / np.cos(np.radians(90.0 - df["ArrayPointing_Elevation"]))
+            ).astype(np.float32)
+
+        return pd.DataFrame(data, index=df.index)
 
     if "classification" in analysis_type:
         data = {
