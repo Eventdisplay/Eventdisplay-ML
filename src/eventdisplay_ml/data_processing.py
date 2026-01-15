@@ -178,9 +178,13 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if df_file.empty:
                     continue
 
-                _logger.info(f"Number of events after event cut: {len(df_file)}")
                 if max_events_per_file and len(df_file) > max_events_per_file:
                     df_file = df_file.sample(n=max_events_per_file, random_state=random_state)
+
+                _logger.info(
+                    f"Number of events before / after event cut: {len(tree)} / {len(df_file)}"
+                    f" (fraction retained: {len(df_file) / len(tree):.4f})"
+                )
 
                 df_flat = flatten_telescope_data_vectorized(
                     df_file,
@@ -208,6 +212,10 @@ def load_training_data(model_configs, file_list, analysis_type):
     df_final = pd.concat(dfs, ignore_index=True)
     df_final.dropna(axis=1, how="all", inplace=True)
     _logger.info(f"Total events for n_tel={n_tel}: {len(df_final)}")
+    if analysis_type == "classification":
+        counts = df_final["ze_bin"].value_counts().sort_index()
+        for zb, n in counts.items():
+            _logger.info(f"\tze_bin={zb}: {n} events")
 
     if len(df_final) == 0:
         raise ValueError("No data loaded from input files.")
