@@ -181,9 +181,10 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if max_events_per_file and len(df_file) > max_events_per_file:
                     df_file = df_file.sample(n=max_events_per_file, random_state=random_state)
 
+                n_before = tree.num_entries
                 _logger.info(
-                    f"Number of events before / after event cut: {len(tree)} / {len(df_file)}"
-                    f" (fraction retained: {len(df_file) / len(tree):.4f})"
+                    f"Number of events before / after event cut: {n_before} / {len(df_file)}"
+                    f" (fraction retained: {len(df_file) / n_before:.4f})"
                 )
                 # clip intersection results to avoid misconstructed events
                 df_file["Xoff_intersect"] = df_file["Xoff_intersect"].clip(-5, 5)
