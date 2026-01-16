@@ -186,9 +186,8 @@ def load_training_data(model_configs, file_list, analysis_type):
                     f"Number of events before / after event cut: {n_before} / {len(df_file)}"
                     f" (fraction retained: {len(df_file) / n_before:.4f})"
                 )
-                # clip intersection results to avoid misconstructed events
-                df_file["Xoff_intersect"] = df_file["Xoff_intersect"].clip(-5, 5)
-                df_file["Yoff_intersect"] = df_file["Yoff_intersect"].clip(-5, 5)
+                # Apply clip intervals to avoid misconstruced events
+                apply_clip_intervals(df_file, features.clip_intervals())
 
                 df_flat = flatten_telescope_data_vectorized(
                     df_file,
@@ -291,11 +290,47 @@ def _pad_to_four(arr_like):
     return arr_like
 
 
+def apply_clip_intervals(df, clip_intervals, n_tel=None, apply_log10=None):
+    """
+    Apply clip intervals to matching columns in dataframe.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame to apply clipping to (modified in place).
+    clip_intervals : dict
+        Dictionary mapping variable base names to (min, max) tuples.
+    n_tel : int, optional
+        Number of telescopes. If provided, applies to per-telescope columns (var_0, var_1, etc.).
+    apply_log10 : list, optional
+        List of variable base names to apply log10 transformation after clipping.
+    """
+    if apply_log10 is None:
+        apply_log10 = []
+
+    for var_base, (vmin, vmax) in clip_intervals.items():
+        if n_tel is not None:
+            # Apply to per-telescope columns
+            for i in range(n_tel):
+                col_name = f"{var_base}_{i}"
+                if col_name in df.columns:
+                    df[col_name] = df[col_name].clip(vmin, vmax)
+                    if var_base in apply_log10:
+                        df[col_name] = np.log10(df[col_name])
+        else:
+            # Apply to non-telescope columns
+            if var_base in df.columns:
+                df[var_base] = df[var_base].clip(vmin, vmax)
+                if var_base in apply_log10:
+                    df[var_base] = np.log10(df[var_base])
+
+
 def flatten_telescope_variables(n_tel, flat_features, index):
     """Generate dataframe for telescope variables flattened for n_tel telescopes."""
     df_flat = pd.DataFrame(flat_features, index=index)
     df_flat = df_flat.astype(np.float32)
 
+    clip_intervals = features.clip_intervals()
     new_cols = {}
     for i in range(n_tel):
         if f"Disp_T_{i}" in df_flat:
@@ -304,17 +339,16 @@ def flatten_telescope_variables(n_tel, flat_features, index):
         new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         size_dist2 = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
-        new_cols[f"size_dist2_{i}"] = np.log10(np.clip(size_dist2, 1e-12, None))
+        if "size_dist2" in clip_intervals:
+            size_dist2 = np.clip(size_dist2, *clip_intervals["size_dist2"])
+        new_cols[f"size_dist2_{i}"] = np.log10(size_dist2)
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
-        if f"size_{i}" in df_flat:
-            df_flat[f"size_{i}"] = np.log10(np.clip(df_flat[f"size_{i}"], 1e-6, None))
-        if f"E_{i}" in df_flat:
-            df_flat[f"E_{i}"] = np.log10(np.clip(df_flat[f"E_{i}"], 1e-6, None))
-        if f"ES_{i}" in df_flat:
-            df_flat[f"ES_{i}"] = np.log10(np.clip(df_flat[f"ES_{i}"], 1e-6, None))
+    # Apply clip intervals and log10 transformation for per-telescope variables
+    apply_clip_intervals(df_flat, clip_intervals, n_tel=n_tel, apply_log10=["size", "E", "ES"])
 
-        # pointing corrections
+    # pointing corrections
+    for i in range(n_tel):
         if f"cen_x_{i}" in df_flat and f"fpointing_dx_{i}" in df_flat:
             df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
         if f"cen_y_{i}" in df_flat and f"fpointing_dy_{i}" in df_flat:
@@ -326,34 +360,37 @@ def flatten_telescope_variables(n_tel, flat_features, index):
 
 def extra_columns(df, analysis_type, training):
     """Add extra columns required for analysis type."""
+    clip_intervals = features.clip_intervals()
+
     if analysis_type == "stereo_analysis":
         data = {
             "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
             "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-            "Xoff_intersect": df["Xoff_intersect"].clip(-5.0, 5.0).astype(np.float32),
-            "Yoff_intersect": df["Yoff_intersect"].clip(-5.0, 5.0).astype(np.float32),
-            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"].clip(-5.0, 5.0)).astype(np.float32),
-            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"].clip(-5.0, 5.0)).astype(np.float32),
-            "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
-            "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
+            "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
+            "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
+            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
+            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
+            "Erec": df["Erec"].astype(np.float32),
+            "ErecS": df["ErecS"].astype(np.float32),
             "EmissionHeight": df["EmissionHeight"].astype(np.float32),
         }
-
-        return pd.DataFrame(data, index=df.index)
+        df_extra = pd.DataFrame(data, index=df.index)
+        apply_clip_intervals(df_extra, clip_intervals, apply_log10=["Erec", "ErecS"])
+        return df_extra
 
     if "classification" in analysis_type:
         data = {
             "MSCW": df["MSCW"].astype(np.float32),
             "MSCL": df["MSCL"].astype(np.float32),
-            "EChi2S": np.log10(np.clip(df["EChi2S"], 1e-6, None)).astype(np.float32),
+            "EChi2S": df["EChi2S"].astype(np.float32),
             "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-            "EmissionHeightChi2": np.log10(np.clip(df["EmissionHeightChi2"], 1e-6, None)).astype(
-                np.float32
-            ),
+            "EmissionHeightChi2": df["EmissionHeightChi2"].astype(np.float32),
         }
         if not training:
             data["ze_bin"] = df["ze_bin"].astype(np.float32)
-        return pd.DataFrame(data, index=df.index)
+        df_extra = pd.DataFrame(data, index=df.index)
+        apply_clip_intervals(df_extra, clip_intervals, apply_log10=["EChi2S", "EmissionHeightChi2"])
+        return df_extra
 
     raise ValueError(f"Unknown analysis_type: {analysis_type}")
 

@@ -139,6 +139,36 @@ def _classification_features():
     return var_tel + var_array + ["Erec"]
 
 
+def clip_intervals():
+    """
+    Get clip intervals for variables to avoid misconstruced events and handle log transformations.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping variable names to clip intervals (min, max).
+        Use None for no lower/upper bound.
+    """
+    return {
+        # Intersection results - avoid misconstructed events
+        "Xoff_intersect": (-5.0, 5.0),
+        "Yoff_intersect": (-5.0, 5.0),
+        # Energy-related variables - log10 transformation with lower bound
+        "Erec": (1e-6, None),
+        "ErecS": (1e-6, None),
+        "EChi2S": (1e-6, None),
+        "EmissionHeightChi2": (1e-6, None),
+        # Per-telescope energy and size variables - log10 transformation with lower bound
+        "size": (1e-6, None),
+        "E": (1e-6, None),
+        "ES": (1e-6, None),
+        # Derived variables - avoid numerical issues
+        "size_dist2": (1e-12, None),
+        # Physical bounds
+        "EmissionHeight": (0, 120),  # top of atmosphere
+    }
+
+
 def features(analysis_type, training=True):
     """
     Get features based on analysis type.
