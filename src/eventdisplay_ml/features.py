@@ -141,7 +141,7 @@ def _classification_features():
 
 def clip_intervals():
     """
-    Get clip intervals for variables to avoid misconstruced events and handle log transformations.
+    Get clip intervals for variables.
 
     Returns
     -------
@@ -150,22 +150,26 @@ def clip_intervals():
         Use None for no lower/upper bound.
     """
     return {
-        # Intersection results - avoid misconstructed events
+        # Intersection results - avoid badly reconstructed events
         "Xoff_intersect": (-5.0, 5.0),
         "Yoff_intersect": (-5.0, 5.0),
+        "Diff_Yoff": (-5.0, 5.0),
+        "Diff_Xoff": (-5.0, 5.0),
         # Energy-related variables - log10 transformation with lower bound
-        "Erec": (1e-6, None),
-        "ErecS": (1e-6, None),
-        "EChi2S": (1e-6, None),
+        "Erec": (1e-3, None),
+        "ErecS": (1e-3, None),
+        "EChi2S": (1e-3, None),
         "EmissionHeightChi2": (1e-6, None),
         # Per-telescope energy and size variables - log10 transformation with lower bound
-        "size": (1e-6, None),
-        "E": (1e-6, None),
-        "ES": (1e-6, None),
+        "size": (1, None),
+        "E": (1e-3, None),
+        "ES": (1e-3, None),
         # Derived variables - avoid numerical issues
         "size_dist2": (1e-12, None),
+        "tgrad_x": (-50.0, 50.0),
         # Physical bounds
         "EmissionHeight": (0, 120),  # top of atmosphere
+        "R_core": (-10, None),  # badly reconstructed events
     }
 
 
