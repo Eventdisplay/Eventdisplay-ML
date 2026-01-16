@@ -336,9 +336,6 @@ def extra_columns(df, analysis_type, training):
             "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
             "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
             "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-            "airmass": (1.0 / np.cos(np.radians(90.0 - df["ArrayPointing_Elevation"]))).astype(
-                np.float32
-            ),
         }
 
         return pd.DataFrame(data, index=df.index)

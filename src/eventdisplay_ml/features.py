@@ -116,7 +116,6 @@ def _regression_features(training):
         "Erec",
         "ErecS",
         "EmissionHeight",
-        "ArrayPointing_Elevation",
     ]
     if training:
         return [*target_features("stereo_analysis"), *var]
