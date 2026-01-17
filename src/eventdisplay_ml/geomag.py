@@ -8,6 +8,7 @@ import numpy as np
 FIELD_COMPONENTS = {
     "VERITAS": {
         "BX": 25.2e-6,  # Tesla
+        "BY": 0.0,  # Tesla
         "BZ": 40.88e-6,  # Tesla
     }
 }
@@ -33,6 +34,7 @@ def calculate_geomagnetic_angles(azimuth, elevation, site="VERITAS"):
     """
     try:
         bx = FIELD_COMPONENTS[site]["BX"]
+        by = FIELD_COMPONENTS[site]["BY"]
         bz = FIELD_COMPONENTS[site]["BZ"]
     except KeyError as exc:
         raise KeyError(f"Geomagnetic field components for site '{site}' are not defined.") from exc
@@ -41,12 +43,11 @@ def calculate_geomagnetic_angles(azimuth, elevation, site="VERITAS"):
     sx = np.cos(np.radians(elevation)) * np.cos(np.radians(azimuth))  # North
     sy = np.cos(np.radians(elevation)) * np.sin(np.radians(azimuth))  # East
     sz = np.sin(np.radians(elevation))  # Up
-    sx = np.cos(np.radians(elevation)) * np.cos(np.radians(azimuth))  # North
 
     # Geomagnetic field unit vector
-    b_magnitude = np.sqrt(bx**2 + bz**2)
+    b_magnitude = np.sqrt(bx**2 + by**2 + bz**2)
     bx = bx / b_magnitude
-    by = 0.0
+    by = by / b_magnitude
     bz = -bz / b_magnitude  # magnetic field points downward
 
     # Dot product to find cos(theta_B)

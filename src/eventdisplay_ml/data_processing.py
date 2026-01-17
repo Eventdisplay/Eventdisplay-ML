@@ -293,6 +293,8 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
     """
     Apply clip intervals to matching columns in dataframe.
 
+    Modifies the dataframe in place.
+
     Parameters
     ----------
     df : pandas.DataFrame
