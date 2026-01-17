@@ -116,6 +116,8 @@ def _regression_features(training):
         "Erec",
         "ErecS",
         "EmissionHeight",
+        "ArrayPointing_Elevation",
+        "ArrayPointing_Azimuth",
     ]
     if training:
         return [*target_features("stereo_analysis"), *var]
@@ -134,9 +136,44 @@ def _classification_features():
         "MSCW",
         "MSCL",
         "ArrayPointing_Elevation",
+        "ArrayPointing_Azimuth",
     ]
     # energy used to bin the models, but not as feature
     return var_tel + var_array + ["Erec"]
+
+
+def clip_intervals():
+    """
+    Get clip intervals for variables.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping variable names to clip intervals (min, max).
+        Use None for no lower/upper bound.
+    """
+    return {
+        # Intersection results - avoid badly reconstructed events
+        "Xoff_intersect": (-5.0, 5.0),
+        "Yoff_intersect": (-5.0, 5.0),
+        "Diff_Yoff": (-5.0, 5.0),
+        "Diff_Xoff": (-5.0, 5.0),
+        # Energy-related variables - log10 transformation with lower bound
+        "Erec": (1e-3, None),
+        "ErecS": (1e-3, None),
+        "EChi2S": (1e-3, None),
+        "EmissionHeightChi2": (1e-6, None),
+        # Per-telescope energy and size variables - log10 transformation with lower bound
+        "size": (1, None),
+        "E": (1e-3, None),
+        "ES": (1e-3, None),
+        # Derived variables - avoid numerical issues
+        "size_dist2": (1e-12, None),
+        "tgrad_x": (-50.0, 50.0),
+        # Physical bounds
+        "EmissionHeight": (0, 120),  # top of atmosphere
+        "R_core": (-10, None),  # badly reconstructed events
+    }
 
 
 def features(analysis_type, training=True):
