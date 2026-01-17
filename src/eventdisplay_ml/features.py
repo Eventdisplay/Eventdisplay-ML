@@ -116,6 +116,8 @@ def _regression_features(training):
         "Erec",
         "ErecS",
         "EmissionHeight",
+        "ArrayPointing_Elevation",
+        "ArrayPointing_Azimuth",
     ]
     if training:
         return [*target_features("stereo_analysis"), *var]
@@ -134,6 +136,7 @@ def _classification_features():
         "MSCW",
         "MSCL",
         "ArrayPointing_Elevation",
+        "ArrayPointing_Azimuth",
     ]
     # energy used to bin the models, but not as feature
     return var_tel + var_array + ["Erec"]

@@ -11,6 +11,7 @@ import pandas as pd
 import uproot
 
 from eventdisplay_ml import features, utils
+from eventdisplay_ml.geomag import calculate_geomagnetic_angles
 
 _logger = logging.getLogger(__name__)
 
@@ -365,6 +366,9 @@ def extra_columns(df, analysis_type, training):
             "Erec": df["Erec"].astype(np.float32),
             "ErecS": df["ErecS"].astype(np.float32),
             "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+            "Geomagnetic_Angle": calculate_geomagnetic_angles(
+                df["ArrayPointing_Azimuth"], df["ArrayPointing_Elevation"]
+            ),
         }
     elif "classification" in analysis_type:
         data = {
