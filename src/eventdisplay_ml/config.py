@@ -81,8 +81,6 @@ def configure_training(analysis_type):
     _logger.info(f"Model output prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Train vs test fraction: {model_configs['train_test_fraction']}")
     _logger.info(f"Max events: {model_configs['max_events']}")
-    if analysis_type == "classification":
-        _logger.info(f"Energy bin {model_configs['energy_bin_number']}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
@@ -92,6 +90,7 @@ def configure_training(analysis_type):
     if analysis_type == "stereo_analysis":
         model_configs["pre_cuts"] = pre_cuts_regression(model_configs.get("n_tel"))
     elif analysis_type == "classification":
+        _logger.info(f"Energy bin {model_configs['energy_bin_number']}")
         model_parameters = utils.load_model_parameters(
             model_configs["model_parameters"], model_configs["energy_bin_number"]
         )

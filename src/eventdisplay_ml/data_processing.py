@@ -178,9 +178,17 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if df_file.empty:
                     continue
 
-                _logger.info(f"Number of events after event cut: {len(df_file)}")
                 if max_events_per_file and len(df_file) > max_events_per_file:
                     df_file = df_file.sample(n=max_events_per_file, random_state=random_state)
+
+                n_before = tree.num_entries
+                _logger.info(
+                    f"Number of events before / after event cut: {n_before} / {len(df_file)}"
+                    f" (fraction retained: {len(df_file) / n_before:.4f})"
+                )
+                # clip intersection results to avoid misconstructed events
+                df_file["Xoff_intersect"] = df_file["Xoff_intersect"].clip(-5, 5)
+                df_file["Yoff_intersect"] = df_file["Yoff_intersect"].clip(-5, 5)
 
                 df_flat = flatten_telescope_data_vectorized(
                     df_file,
@@ -208,6 +216,10 @@ def load_training_data(model_configs, file_list, analysis_type):
     df_final = pd.concat(dfs, ignore_index=True)
     df_final.dropna(axis=1, how="all", inplace=True)
     _logger.info(f"Total events for n_tel={n_tel}: {len(df_final)}")
+    if analysis_type == "classification":
+        counts = df_final["ze_bin"].value_counts().sort_index()
+        for zb, n in counts.items():
+            _logger.info(f"\tze_bin={zb}: {n} events")
 
     if len(df_final) == 0:
         raise ValueError("No data loaded from input files.")
@@ -291,6 +303,8 @@ def flatten_telescope_variables(n_tel, flat_features, index):
             new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
         new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
         new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        size_dist2 = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+        new_cols[f"size_dist2_{i}"] = np.log10(np.clip(size_dist2, 1e-12, None))
         new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
         if f"size_{i}" in df_flat:
@@ -313,20 +327,19 @@ def flatten_telescope_variables(n_tel, flat_features, index):
 def extra_columns(df, analysis_type, training):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
-        return pd.DataFrame(
-            {
-                "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
-                "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-                "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
-                "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
-                "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
-                "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
-                "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
-                "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
-                "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-            },
-            index=df.index,
-        )
+        data = {
+            "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
+            "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
+            "Xoff_intersect": df["Xoff_intersect"].clip(-5.0, 5.0).astype(np.float32),
+            "Yoff_intersect": df["Yoff_intersect"].clip(-5.0, 5.0).astype(np.float32),
+            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"].clip(-5.0, 5.0)).astype(np.float32),
+            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"].clip(-5.0, 5.0)).astype(np.float32),
+            "Erec": np.log10(np.clip(df["Erec"], 1e-6, None)).astype(np.float32),
+            "ErecS": np.log10(np.clip(df["ErecS"], 1e-6, None)).astype(np.float32),
+            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+        }
+
+        return pd.DataFrame(data, index=df.index)
 
     if "classification" in analysis_type:
         data = {
