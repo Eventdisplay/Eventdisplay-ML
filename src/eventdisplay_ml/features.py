@@ -152,23 +152,27 @@ def clip_intervals():
         Dictionary mapping variable names to clip intervals (min, max).
         Use None for no lower/upper bound.
     """
+    fov_max = 15.0
+    energy_min = 1e-3
     return {
         # Intersection results - avoid badly reconstructed events
-        "Xoff_intersect": (-5.0, 5.0),
-        "Yoff_intersect": (-5.0, 5.0),
-        "Diff_Yoff": (-5.0, 5.0),
-        "Diff_Xoff": (-5.0, 5.0),
+        "Xoff_weighted_bdt": (-fov_max, fov_max),
+        "Yoff_weighted_bdt": (-fov_max, fov_max),
+        "Xoff_intersect": (-fov_max, fov_max),
+        "Yoff_intersect": (-fov_max, fov_max),
+        "Diff_Xoff": (-fov_max, fov_max),
+        "Diff_Yoff": (-fov_max, fov_max),
         # Energy-related variables - log10 transformation with lower bound
-        "Erec": (1e-3, None),
-        "ErecS": (1e-3, None),
-        "EChi2S": (1e-3, None),
+        "Erec": (energy_min, None),
+        "ErecS": (energy_min, None),
+        "EChi2S": (energy_min, None),
         "EmissionHeightChi2": (1e-6, None),
         # Per-telescope energy and size variables - log10 transformation with lower bound
         "size": (1, None),
-        "E": (1e-3, None),
-        "ES": (1e-3, None),
+        "E": (energy_min, None),
+        "ES": (energy_min, None),
         # Derived variables - avoid numerical issues
-        "size_dist2": (1e-12, None),
+        "size_dist2": (1.0, None),
         "tgrad_x": (-50.0, 50.0),
         # Physical bounds
         "EmissionHeight": (0, 120),  # top of atmosphere

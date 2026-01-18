@@ -24,6 +24,11 @@ from eventdisplay_ml.evaluate import (
     evaluation_efficiency,
 )
 
+# Evaluation uses fixed log-energy bins; reuse them to report training availability
+_EVAL_LOG_E_MIN = -1
+_EVAL_LOG_E_MAX = 2
+_EVAL_LOG_E_BINS = 6
+
 _logger = logging.getLogger(__name__)
 
 
@@ -279,7 +284,7 @@ def apply_regression_models(df, model_configs):
     Apply trained XGBoost model for stereo analysis to all events.
 
     All events are processed with a single model trained on all multiplicities.
-    Features are created for all telescopes with -99 defaults for missing telescopes.
+    Features are created for all telescopes with DEFAULT_FILL_VALUE defaults for missing telescopes.
 
     Parameters
     ----------
@@ -331,7 +336,7 @@ def apply_classification_models(df, model_configs, threshold_keys):
     Apply trained XGBoost classification model to all events.
 
     All events are processed with models trained on all multiplicities.
-    Features are created for all telescopes with -99 defaults for missing telescopes.
+    Features are created for all telescopes with DEFAULT_FILL_VALUE defaults for missing telescopes.
 
     Parameters
     ----------
@@ -572,6 +577,8 @@ def train_regression(df, model_configs):
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
 
+    _log_energy_bin_counts(df)
+
     x_train, x_test, y_train, y_test = train_test_split(
         x_data,
         y_data,
@@ -633,3 +640,17 @@ def train_classification(df, model_configs):
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
 
     return model_configs
+
+
+def _log_energy_bin_counts(df):
+    """Log counts of training events per evaluation energy bin using true log10 energy."""
+    if "MCe0" not in df:
+        _logger.warning("MCe0 not found; skipping energy-bin availability printout.")
+        return
+
+    bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
+    categories = pd.cut(df["MCe0"], bins=bins, include_lowest=True)
+    counts = categories.value_counts(sort=False)
+    _logger.info("Training events per energy bin (log10 E true):")
+    for interval, count in counts.items():
+        _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")

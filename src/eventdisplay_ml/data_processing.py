@@ -15,6 +15,9 @@ from eventdisplay_ml.geomag import calculate_geomagnetic_angles
 
 _logger = logging.getLogger(__name__)
 
+# Default fill value for missing telescope-dependent data
+DEFAULT_FILL_VALUE = np.nan
+
 
 def read_telescope_config(root_file):
     """
@@ -113,9 +116,9 @@ def _ensure_fpointing_columns(df):
 def _ensure_optional_scalar_columns(df, missing_optional):
     """Fill optional scalar columns like Erec/ErecS with defaults when missing."""
     if "Erec" in missing_optional and "Erec" not in df:
-        df["Erec"] = np.full(len(df), -99.0, dtype=np.float32)
+        df["Erec"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
     if "ErecS" in missing_optional and "ErecS" not in df:
-        df["ErecS"] = np.full(len(df), -99.0, dtype=np.float32)
+        df["ErecS"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
 
 
 def flatten_telescope_data_vectorized(
@@ -125,7 +128,7 @@ def flatten_telescope_data_vectorized(
     Vectorized flattening of telescope array columns.
 
     Converts per-telescope arrays into individual feature columns indexed by actual
-    telescope ID. Features are mapped to telescope indices directly, with -99 fill
+    telescope ID. Features are mapped to telescope indices directly, with NaN fill
     values for missing telescopes.
 
     Parameters
@@ -148,12 +151,12 @@ def flatten_telescope_data_vectorized(
     pandas.DataFrame
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
         for telescope index ``i``, plus derived features, and array features.
-        Missing telescopes are filled with -99.
+        Missing telescopes are filled with NaN.
     """
     flat_features = {}
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
-    default_value = -99.0
+    default_value = DEFAULT_FILL_VALUE
 
     # Determine max telescope ID from config or use default
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
@@ -265,7 +268,7 @@ def load_training_data(model_configs, file_list, analysis_type):
     Load and flatten training data from the mscw file.
 
     Processes all events regardless of telescope multiplicity. Features are created
-    for all telescopes with default value -99 for missing telescopes.
+    for all telescopes with default value NaN for missing telescopes.
     Reads telescope configuration from the ROOT file to determine the number
     and types of telescopes.
 
@@ -455,9 +458,9 @@ def _pad_to_four(arr_like):
 
 def apply_clip_intervals(df, n_tel=None, apply_log10=None):
     """
-    Apply clip intervals to matching columns in dataframe.
+    Apply clip intervals to matching columns.
 
-    Modifies the dataframe in place. Handles -99 default values for missing telescopes
+    Modifies the dataframe in place. Handles NaN default values for missing telescopes
     by preserving them throughout clipping and log10 transformation.
 
     Parameters
@@ -476,30 +479,18 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
 
     for var_base, (vmin, vmax) in clip_intervals.items():
         if n_tel is not None:
-            # Apply to per-telescope columns
             for i in range(n_tel):
                 col_name = f"{var_base}_{i}"
                 if col_name in df.columns:
-                    # Preserve -99 default values
-                    mask_valid = df[col_name] != -99.0
-
-                    # Clip only valid values
+                    mask_valid = df[col_name].notna()
                     df.loc[mask_valid, col_name] = df.loc[mask_valid, col_name].clip(vmin, vmax)
-
-                    # Apply log10 to valid values only
                     if var_base in apply_log10:
                         mask_to_log = mask_valid & (df[col_name] > 0)
                         df.loc[mask_to_log, col_name] = np.log10(df.loc[mask_to_log, col_name])
         else:
-            # Apply to non-telescope columns
             if var_base in df.columns:
-                # Preserve -99 default values
-                mask_valid = df[var_base] != -99.0
-
-                # Clip only valid values
+                mask_valid = df[var_base].notna()
                 df.loc[mask_valid, var_base] = df.loc[mask_valid, var_base].clip(vmin, vmax)
-
-                # Apply log10 to valid values only
                 if var_base in apply_log10:
                     mask_to_log = mask_valid & (df[var_base] > 0)
                     df.loc[mask_to_log, var_base] = np.log10(df.loc[mask_to_log, var_base])
@@ -508,7 +499,7 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
 def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     """Generate dataframe for telescope variables flattened for all telescopes.
 
-    Creates features for all telescope IDs, using -99 as default value for missing data.
+    Creates features for all telescope IDs, using NaN as default value for missing data.
 
     Parameters
     ----------
