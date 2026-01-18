@@ -86,41 +86,49 @@ def read_telescope_config(root_file):
 
 
 def _resolve_branch_aliases(tree, branch_list):
-    """Resolve branch name aliases (e.g. R_core vs R) and drop missing optional branches."""
-    resolved = list(branch_list)
-    rename_map = {}
-    missing_optional = set()
+    """
+    Resolve branch name aliases (e.g. R_core vs R) and drop missing optional branches.
 
-    has_r_core = "R_core" in tree.keys()
-    has_r_fallback = "R" in tree.keys()
+    Resolves differences between CTAO and VERITAS branch naming conventions.
+    """
+    keys = set(tree.keys())
+    resolved = []
+    rename = {}
+    missing = set()
 
-    if "R_core" in resolved and not has_r_core and has_r_fallback:
-        resolved = ["R" if b == "R_core" else b for b in resolved]
-        rename_map["R"] = "R_core"
-        _logger.info("Branch 'R_core' not found; using 'R' as fallback")
-    elif "R_core" in resolved and not has_r_core and not has_r_fallback:
-        _logger.warning("Branches 'R_core' and fallback 'R' not found; column will be missing")
+    # R_core vs R
+    for b in branch_list:
+        if b == "R_core" and b not in keys:
+            if "R" in keys:
+                resolved.append("R")
+                rename["R"] = "R_core"
+                _logger.info("Branch 'R_core' not found; using 'R'")
+            else:
+                _logger.warning("Branches 'R_core' and fallback 'R' not found")
+        else:
+            resolved.append(b)
 
-    # Remove mirror_areas - it's synthesized from telconfig, not read from file
-    if "mirror_areas" in resolved:
-        resolved = [b for b in resolved if b != "mirror_areas"]
-        _logger.info("Branch 'mirror_areas' will be synthesized from telescope configuration")
+    # Drop synthesized branches
+    synthesized = {
+        "mirror_areas",
+        "tel_rel_x",
+        "tel_rel_y",
+        "tel_shower_x",
+        "tel_shower_y",
+    }
+    resolved = [b for b in resolved if b not in synthesized]
 
-    # Remove telescope relative coordinates - they're computed from tel_config and data columns
-    for synth_feat in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y"):
-        if synth_feat in resolved:
-            resolved = [b for b in resolved if b != synth_feat]
-            _logger.info(
-                f"Branch '{synth_feat}' will be computed from telescope config and Xcore/Ycore/pointing"
-            )
+    # Drop missing optional branches
+    optional = {"fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS"}
+    final = []
+    for b in resolved:
+        if b in optional and b not in keys:
+            missing.add(b)
+            _logger.info(f"Branch '{b}' not found; will fill with defaults")
+        else:
+            final.append(b)
 
-    for opt in ("fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS"):
-        if opt in resolved and opt not in tree.keys():
-            resolved = [b for b in resolved if b != opt]
-            missing_optional.add(opt)
-            _logger.info(f"Branch '{opt}' not found; will fill with defaults")
-
-    return resolved, rename_map, missing_optional
+    return final, rename, missing
 
 
 def _ensure_fpointing_columns(df):
@@ -144,55 +152,89 @@ def _ensure_optional_scalar_columns(df, missing_optional):
         df["ErecS"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
 
 
-def _calculate_shower_coordinates(tel_x, tel_y, shower_x, shower_y, elevation_deg, azimuth_deg):
-    """
-    Calculate relative telescope positions in shower coordinate system.
+def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
+    """Build constant mirror area columns from tel_config."""
+    columns = {}
+    tel_id_to_mirror = dict(zip(tel_config["tel_ids"], tel_config["mirror_areas"]))
+    for tel_idx in range(max_tel_id + 1):
+        col_name = f"mirror_areas_{tel_idx}"
+        if tel_idx in tel_id_to_mirror:
+            mirror_val = float(tel_id_to_mirror[tel_idx])
+            if mirror_val == 0.0:
+                mirror_val = 100.0
+            columns[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
+        else:
+            columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+    return columns
 
-    Parameters
-    ----------
-    tel_x, tel_y : float
-        Telescope position in ground coordinates (meters).
-    shower_x, shower_y : float
-        Shower core position in ground coordinates (meters).
-    elevation_deg : float
-        Pointing elevation in degrees.
-    azimuth_deg : float
-        Pointing azimuth in degrees.
 
-    Returns
-    -------
-    tuple of float
-        (rel_x, rel_y, shower_x_coord, shower_y_coord) where:
-        - rel_x, rel_y: relative position in ground frame (tel - core)
-        - shower_x_coord, shower_y_coord: relative position in shower coordinates
-    """
-    # Convert to radians
-    elev = np.radians(elevation_deg)
-    azim = np.radians(azimuth_deg)
+def _make_relative_coord_columns(
+    var,
+    tel_config,
+    max_tel_id,
+    n_evt,
+    core_x,
+    core_y,
+    elev_rad,
+    azim_rad,
+    valid_mask,
+    default_value,
+):
+    """Build relative/shower coordinate columns for a single synthetic variable."""
+    columns = {}
+    cos_elev = np.cos(elev_rad)
+    tel_id_to_x = dict(zip(tel_config["tel_ids"], tel_config["tel_x"]))
+    tel_id_to_y = dict(zip(tel_config["tel_ids"], tel_config["tel_y"]))
 
-    # Relative position in ground frame
-    rel_x = tel_x - shower_x
-    rel_y = tel_y - shower_y
+    for tel_idx in range(max_tel_id + 1):
+        col_name = f"{var}_{tel_idx}"
+        if tel_idx not in tel_id_to_x:
+            columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+            continue
 
-    # Shower coordinate system:
-    # - shower_y_axis points in shower direction (towards zenith direction of pointing)
-    # - shower_x_axis is perpendicular (east-west relative to shower direction)
-    # The shower direction in ground coords: (sin(elev)*cos(azim), sin(elev)*sin(azim))
-    # But we use elevation as zenith angle, so pointing vector is rotated
+        rel_x = float(tel_id_to_x[tel_idx]) - core_x
+        rel_y = float(tel_id_to_y[tel_idx]) - core_y
 
-    # Rotation from ground (east-north) to shower (along-across) coordinates
-    # Along shower: cos(azim)*cos(elev)*dx + sin(azim)*cos(elev)*dy
-    # Across shower (perpendicular): -sin(azim)*dx + cos(azim)*dy
+        shower_y_coord = np.cos(azim_rad) * cos_elev * rel_x + np.sin(azim_rad) * cos_elev * rel_y
+        shower_x_coord = -np.sin(azim_rad) * rel_x + np.cos(azim_rad) * rel_y
 
-    # Elevation affects how much of the shower is in the horizontal plane
-    cos_elev = np.cos(elev)
+        if var == "tel_rel_x":
+            result = rel_x
+        elif var == "tel_rel_y":
+            result = rel_y
+        elif var == "tel_shower_x":
+            result = shower_x_coord
+        else:
+            result = shower_y_coord
 
-    # Along shower direction (scaled by cos(elev) - shower at zenith has no horizontal extent)
-    shower_y_coord = np.cos(azim) * cos_elev * rel_x + np.sin(azim) * cos_elev * rel_y
-    # Across shower direction (perpendicular component in horizontal plane)
-    shower_x_coord = -np.sin(azim) * rel_x + np.cos(azim) * rel_y
+        result = np.where(valid_mask, result, default_value).astype(np.float32)
+        columns[col_name] = result
 
-    return rel_x, rel_y, shower_x_coord, shower_y_coord
+    return columns
+
+
+def _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value):
+    """Flatten one variable into per-telescope columns."""
+    columns = {}
+    for tel_idx in range(max_tel_id + 1):
+        col_name = f"{var}_{tel_idx}"
+
+        if var.startswith("Disp"):
+            if tel_idx < data.shape[1]:
+                columns[col_name] = data[:, tel_idx]
+            else:
+                columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+            continue
+
+        result = np.full(n_evt, default_value, dtype=np.float32)
+        for evt_idx in range(n_evt):
+            tel_list = tel_list_matrix[evt_idx]
+            if tel_idx in tel_list:
+                pos_in_list = np.where(tel_list == tel_idx)[0]
+                if len(pos_in_list) > 0 and pos_in_list[0] < data.shape[1]:
+                    result[evt_idx] = data[evt_idx, pos_in_list[0]]
+        columns[col_name] = result
+    return columns
 
 
 def flatten_telescope_data_vectorized(
@@ -232,123 +274,57 @@ def flatten_telescope_data_vectorized(
     n_evt = len(df)
     default_value = DEFAULT_FILL_VALUE
 
-    # Determine max telescope ID from config or use default
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
+    has_core_and_pointing = tel_config and {
+        "Xcore",
+        "Ycore",
+        "ArrayPointing_Elevation",
+        "ArrayPointing_Azimuth",
+    }.issubset(df.columns)
+    core_x = core_y = elev_rad = azim_rad = valid_mask = None
+    if has_core_and_pointing:
+        core_x = df["Xcore"].to_numpy(dtype=np.float64)
+        core_y = df["Ycore"].to_numpy(dtype=np.float64)
+        elev_rad = np.radians(df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64))
+        azim_rad = np.radians(df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64))
+        valid_mask = (core_x >= 0) & (core_y >= 0)
+
     for var in features:
-        # Special handling for mirror_areas: lookup from tel_config instead of reading from df
         if var == "mirror_areas" and tel_config:
-            # Create a mapping from telescope ID to mirror area
-            tel_id_to_mirror = dict(zip(tel_config["tel_ids"], tel_config["mirror_areas"]))
-            for tel_idx in range(max_tel_id + 1):
-                col_name = f"{var}_{tel_idx}"
-                if tel_idx in tel_id_to_mirror:
-                    mirror_val = float(tel_id_to_mirror[tel_idx])
-                    # Convert zero to 100
-                    if mirror_val == 0.0:
-                        mirror_val = 100.0
-                    flat_features[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
-                else:
+            flat_features.update(
+                _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value)
+            )
+            continue
+
+        if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
+            if has_core_and_pointing:
+                _logger.info(f"Computing synthetic feature: {var}")
+                flat_features.update(
+                    _make_relative_coord_columns(
+                        var,
+                        tel_config,
+                        max_tel_id,
+                        n_evt,
+                        core_x,
+                        core_y,
+                        elev_rad,
+                        azim_rad,
+                        valid_mask,
+                        default_value,
+                    )
+                )
+            else:
+                _logger.warning(f"Cannot compute {var}: missing Xcore/Ycore or pointing direction")
+                for tel_idx in range(max_tel_id + 1):
+                    col_name = f"{var}_{tel_idx}"
                     flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
             continue
 
-        # Special handling for telescope relative coordinates from tel_config
-        if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
-            if (
-                "Xcore" in df.columns
-                and "Ycore" in df.columns
-                and "ArrayPointing_Elevation" in df.columns
-                and "ArrayPointing_Azimuth" in df.columns
-            ):
-                _logger.info(f"Computing synthetic feature: {var}")
-
-                # Extract event data once as numpy arrays (vectorized)
-                core_x = df["Xcore"].to_numpy(dtype=np.float64)
-                core_y = df["Ycore"].to_numpy(dtype=np.float64)
-                elev = df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64)
-                azim = df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64)
-
-                # Mark invalid core positions
-                valid_mask = (core_x >= 0) & (core_y >= 0)
-
-                # Create mappings from telescope ID to position
-                tel_id_to_x = dict(zip(tel_config["tel_ids"], tel_config["tel_x"]))
-                tel_id_to_y = dict(zip(tel_config["tel_ids"], tel_config["tel_y"]))
-
-                # Vectorized coordinate transformation for all telescopes
-                for tel_idx in range(max_tel_id + 1):
-                    col_name = f"{var}_{tel_idx}"
-                    if tel_idx in tel_id_to_x:
-                        tel_x = float(tel_id_to_x[tel_idx])
-                        tel_y = float(tel_id_to_y[tel_idx])
-
-                        # Vectorized calculation for all events at once
-                        rel_x = tel_x - core_x
-                        rel_y = tel_y - core_y
-
-                        # Convert angles to radians (vectorized)
-                        elev_rad = np.radians(elev)
-                        azim_rad = np.radians(azim)
-                        cos_elev = np.cos(elev_rad)
-
-                        # Vectorized shower coordinate transformation
-                        # Along shower direction (scaled by cos(elev) - shower at zenith has no horizontal extent)
-                        shower_y_coord = (
-                            np.cos(azim_rad) * cos_elev * rel_x
-                            + np.sin(azim_rad) * cos_elev * rel_y
-                        )
-                        # Across shower direction (perpendicular component in horizontal plane)
-                        shower_x_coord = -np.sin(azim_rad) * rel_x + np.cos(azim_rad) * rel_y
-
-                        # Select output based on variable type
-                        if var == "tel_rel_x":
-                            result = rel_x
-                        elif var == "tel_rel_y":
-                            result = rel_y
-                        elif var == "tel_shower_x":
-                            result = shower_x_coord
-                        else:  # tel_shower_y
-                            result = shower_y_coord
-
-                        # Apply validity mask: set invalid core positions to DEFAULT_FILL_VALUE
-                        result = np.where(valid_mask, result, default_value)
-                        flat_features[col_name] = result.astype(np.float32)
-                    else:
-                        flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-                continue
-            # Missing required columns, skip
-            _logger.warning(f"Cannot compute {var}: missing Xcore/Ycore or pointing direction")
-            for tel_idx in range(max_tel_id + 1):
-                col_name = f"{var}_{tel_idx}"
-                flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-            continue
-
         data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
-
-        for tel_idx in range(max_tel_id + 1):  # Iterate over all possible telescope indices
-            col_name = f"{var}_{tel_idx}"
-
-            if var.startswith("Disp"):
-                # Case 1: Simple index - look up data by direct index
-                if tel_idx < data.shape[1]:
-                    flat_features[col_name] = data[:, tel_idx]
-                else:
-                    flat_features[col_name] = np.full(len(df), default_value)
-            else:
-                # Case 2: Index lookup via DispTelList_T
-                # For each event, find if tel_idx is in its DispTelList_T
-                # If yes, extract data at that position in the data array
-                result = np.full(len(df), default_value, dtype=np.float32)
-
-                for evt_idx in range(n_evt):
-                    tel_list = tel_list_matrix[evt_idx]
-                    if tel_idx in tel_list:
-                        # Find position of tel_idx in tel_list
-                        pos_in_list = np.where(tel_list == tel_idx)[0]
-                        if len(pos_in_list) > 0 and pos_in_list[0] < data.shape[1]:
-                            result[evt_idx] = data[evt_idx, pos_in_list[0]]
-
-                flat_features[col_name] = result
+        flat_features.update(
+            _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value)
+        )
 
     df_flat = flatten_telescope_variables(n_tel, flat_features, df.index, tel_config)
     return pd.concat([df_flat, extra_columns(df, analysis_type, training)], axis=1)
