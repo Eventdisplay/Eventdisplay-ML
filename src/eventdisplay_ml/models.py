@@ -70,9 +70,6 @@ def load_classification_models(model_prefix, model_name):
     """
     Load XGBoost classification models for different telescope multiplicities from a directory.
 
-    First attempts to load unified models (ntelall) that handle all multiplicities.
-    Falls back to loading separate models for n_tel 2, 3, 4 for backward compatibility.
-
     Parameters
     ----------
     model_prefix : str
@@ -282,14 +279,14 @@ def apply_regression_models(df, model_configs):
     Apply trained XGBoost model for stereo analysis to all events.
 
     All events are processed with a single model trained on all multiplicities.
-    Features are created for all 4 telescopes with -99 defaults for missing telescopes.
+    Features are created for all telescopes with -99 defaults for missing telescopes.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
     model_configs : dict
-        Preloaded models dictionary.
+        Preloaded models dictionary with 'tel_config' key.
 
     Returns
     -------
@@ -304,7 +301,12 @@ def apply_regression_models(df, model_configs):
 
     _logger.info(f"Processing {len(df)} events with single model (all multiplicities)")
 
-    flatten_data = flatten_feature_data(df, 4, analysis_type="stereo_analysis", training=False)
+    tel_config = model_configs.get("tel_config")
+    n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
+
+    flatten_data = flatten_feature_data(
+        df, n_tel, analysis_type="stereo_analysis", training=False, tel_config=tel_config
+    )
 
     models = model_configs["models"]
     # Get model from first available n_tel key (should be the trained model on all data)
@@ -329,7 +331,7 @@ def apply_classification_models(df, model_configs, threshold_keys):
     Apply trained XGBoost classification model to all events.
 
     All events are processed with models trained on all multiplicities.
-    Features are created for all 4 telescopes with -99 defaults for missing telescopes.
+    Features are created for all telescopes with -99 defaults for missing telescopes.
 
     Parameters
     ----------
@@ -337,6 +339,7 @@ def apply_classification_models(df, model_configs, threshold_keys):
         Chunk of events to process.
     model_configs : dict
         Preloaded models dictionary with structure {n_tel: {e_bin: {model, features, thresholds}}}
+        and 'tel_config' key.
     threshold_keys : list[int]
         Efficiency thresholds (percent) for which to compute binary gamma flags.
 
@@ -352,6 +355,9 @@ def apply_classification_models(df, model_configs, threshold_keys):
     class_probability = np.full(len(df), np.nan, dtype=np.float32)
     is_gamma = {eff: np.zeros(len(df), dtype=np.uint8) for eff in threshold_keys}
     models = model_configs["models"]
+
+    tel_config = model_configs.get("tel_config")
+    n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
 
     # Group only by Energy Bin (e_bin) - no multiplicity filtering
     for e_bin, group_df in df.groupby("e_bin"):
@@ -374,7 +380,7 @@ def apply_classification_models(df, model_configs, threshold_keys):
         _logger.info(f"Processing {len(group_df)} events with bin={e_bin}")
 
         flatten_data = flatten_feature_data(
-            group_df, 4, analysis_type="classification", training=False
+            group_df, n_tel, analysis_type="classification", training=False, tel_config=tel_config
         )
         model = models[available_n_tel][e_bin]["model"]
         flatten_data = flatten_data.reindex(columns=models[available_n_tel][e_bin]["features"])
@@ -402,8 +408,19 @@ def process_file_chunked(analysis_type, model_configs):
     """
     branch_list = features.features(analysis_type, training=False)
     _logger.info(f"Using branches: {branch_list}")
+    rename_map = {}
 
     selected_indices = utils.parse_image_selection(model_configs.get("image_selection"))
+
+    # Read telescope configuration from input file and resolve branch aliases
+    with uproot.open(model_configs.get("input_file")) as root_file:
+        tel_config = data_processing.read_telescope_config(root_file)
+        model_configs["tel_config"] = tel_config
+
+        tree = root_file["data"]
+        branch_list, rename_map, missing_optional = data_processing._resolve_branch_aliases(
+            tree, branch_list
+        )
 
     max_events = model_configs.get("max_events", None)
     chunk_size = model_configs.get("chunk_size", 500000)
@@ -433,6 +450,11 @@ def process_file_chunked(analysis_type, model_configs):
         ):
             if df_chunk.empty:
                 continue
+
+            if rename_map:
+                df_chunk.rename(columns=rename_map, inplace=True)
+            data_processing._ensure_optional_scalar_columns(df_chunk, missing_optional)
+            data_processing._ensure_fpointing_columns(df_chunk)
 
             df_chunk = apply_image_selection(df_chunk, selected_indices, analysis_type)
             if df_chunk.empty:
