@@ -577,21 +577,40 @@ def train_regression(df, model_configs):
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
 
-    _log_energy_bin_counts(df)
+    # Calculate energy bin weights for balancing
+    bin_result = _log_energy_bin_counts(df)
+    sample_weights = bin_result[2] if bin_result else None
 
-    x_train, x_test, y_train, y_test = train_test_split(
-        x_data,
-        y_data,
-        train_size=model_configs.get("train_test_fraction", 0.5),
-        random_state=model_configs.get("random_state", None),
-    )
+    if sample_weights is not None:
+        x_train, x_test, y_train, y_test, weights_train, _ = train_test_split(
+            x_data,
+            y_data,
+            sample_weights,
+            train_size=model_configs.get("train_test_fraction", 0.5),
+            random_state=model_configs.get("random_state", None),
+        )
+    else:
+        x_train, x_test, y_train, y_test = train_test_split(
+            x_data,
+            y_data,
+            train_size=model_configs.get("train_test_fraction", 0.5),
+            random_state=model_configs.get("random_state", None),
+        )
+        weights_train = None
 
     _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    if weights_train is not None:
+        _logger.info(
+            f"Using energy-bin-based sample weights (mean={weights_train.mean():.3f}, std={weights_train.std():.3f})"
+        )
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name} for n_tel={n_tel}...")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train)
+        if weights_train is not None:
+            model.fit(x_train, y_train, sample_weight=weights_train)
+        else:
+            model.fit(x_train, y_train)
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 
@@ -643,10 +662,20 @@ def train_classification(df, model_configs):
 
 
 def _log_energy_bin_counts(df):
-    """Log counts of training events per evaluation energy bin using true log10 energy."""
+    """Log counts of training events per evaluation energy bin using true log10 energy.
+
+    Returns
+    -------
+    tuple or None
+        (bin_edges, counts_dict, weights_array) where:
+        - bin_edges: np.ndarray of bin boundaries
+        - counts_dict: dict mapping intervals to event counts
+        - weights_array: np.ndarray of inverse-count weights for each event (normalized)
+        Returns None if MCe0 not found.
+    """
     if "MCe0" not in df:
         _logger.warning("MCe0 not found; skipping energy-bin availability printout.")
-        return
+        return None
 
     bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
     categories = pd.cut(df["MCe0"], bins=bins, include_lowest=True)
@@ -654,3 +683,21 @@ def _log_energy_bin_counts(df):
     _logger.info("Training events per energy bin (log10 E true):")
     for interval, count in counts.items():
         _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")
+
+    # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
+    bin_indices = pd.cut(df["MCe0"], bins=bins, include_lowest=True, labels=False)
+    count_per_bin = counts.values
+    # Inverse of count (avoiding divide by zero)
+    inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
+    # Normalize so mean weight is 1.0
+    inverse_counts = inverse_counts / inverse_counts.mean()
+
+    # Assign weight to each event based on its bin
+    weights = np.ones(len(df), dtype=np.float32)
+    for i, inv_count in enumerate(inverse_counts):
+        mask = bin_indices == i
+        weights[mask] = inv_count
+
+    _logger.info(f"Energy bin weights (inverse-count, normalized): {inverse_counts}")
+
+    return bins, dict(counts.items()), weights

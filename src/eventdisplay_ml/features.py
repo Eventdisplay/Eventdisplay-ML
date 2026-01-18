@@ -86,6 +86,10 @@ def telescope_features(analysis_type):
         "fpointing_dx",
         "fpointing_dy",
         "mirror_areas",
+        "tel_rel_x",
+        "tel_rel_y",
+        "tel_shower_x",
+        "tel_shower_y",
     ]
     if analysis_type == "classification":
         return var
@@ -119,6 +123,8 @@ def _regression_features(training):
         "EmissionHeight",
         "ArrayPointing_Elevation",
         "ArrayPointing_Azimuth",
+        "Xcore",
+        "Ycore",
     ]
     if training:
         return [*target_features("stereo_analysis"), *var]
@@ -153,7 +159,7 @@ def clip_intervals():
         Dictionary mapping variable names to clip intervals (min, max).
         Use None for no lower/upper bound.
     """
-    fov_max = 15.0
+    fov_max = 7.0
     energy_min = 1e-3
     return {
         # Intersection results - avoid badly reconstructed events
@@ -163,6 +169,8 @@ def clip_intervals():
         "Yoff_intersect": (-fov_max, fov_max),
         "Diff_Xoff": (-fov_max, fov_max),
         "Diff_Yoff": (-fov_max, fov_max),
+        "DispXoff_T": (-fov_max, fov_max),
+        "DispYoff_T": (-fov_max, fov_max),
         # Energy-related variables - log10 transformation with lower bound
         "Erec": (energy_min, None),
         "ErecS": (energy_min, None),

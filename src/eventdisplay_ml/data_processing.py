@@ -35,6 +35,8 @@ def read_telescope_config(root_file):
         - 'n_tel': Total number of telescopes
         - 'tel_ids': Array of telescope IDs
         - 'mirror_areas': Array of mirror areas for each telescope
+        - 'tel_x': Array of telescope X positions
+        - 'tel_y': Array of telescope Y positions
         - 'max_tel_id': Maximum telescope ID
         - 'tel_types': Dictionary mapping mirror area to list of telescope IDs
     """
@@ -44,16 +46,22 @@ def read_telescope_config(root_file):
             "n_tel": 4,
             "tel_ids": np.array([0, 1, 2, 3]),
             "mirror_areas": np.array([1.0, 1.0, 1.0, 1.0]),
+            "tel_x": np.array([0.0, 0.0, 0.0, 0.0]),
+            "tel_y": np.array([0.0, 0.0, 0.0, 0.0]),
             "max_tel_id": 3,
             "tel_types": {1.0: [0, 1, 2, 3]},
         }
 
     telconfig_tree = root_file["telconfig"]
-    telconfig_data = telconfig_tree.arrays(["NTel", "TelID", "MirrorArea"], library="np")
+    telconfig_data = telconfig_tree.arrays(
+        ["NTel", "TelID", "MirrorArea", "TelX", "TelY"], library="np"
+    )
 
     n_tel = int(telconfig_data["NTel"][0])
     tel_ids = telconfig_data["TelID"]
     mirror_areas = telconfig_data["MirrorArea"]
+    tel_x = telconfig_data["TelX"]
+    tel_y = telconfig_data["TelY"]
     max_tel_id = int(np.max(tel_ids))
 
     # Group telescopes by mirror area (telescope type)
@@ -70,6 +78,8 @@ def read_telescope_config(root_file):
         "n_tel": n_tel,
         "tel_ids": tel_ids,
         "mirror_areas": mirror_areas,
+        "tel_x": tel_x,
+        "tel_y": tel_y,
         "max_tel_id": max_tel_id,
         "tel_types": tel_types,
     }
@@ -95,6 +105,14 @@ def _resolve_branch_aliases(tree, branch_list):
     if "mirror_areas" in resolved:
         resolved = [b for b in resolved if b != "mirror_areas"]
         _logger.info("Branch 'mirror_areas' will be synthesized from telescope configuration")
+
+    # Remove telescope relative coordinates - they're computed from tel_config and data columns
+    for synth_feat in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y"):
+        if synth_feat in resolved:
+            resolved = [b for b in resolved if b != synth_feat]
+            _logger.info(
+                f"Branch '{synth_feat}' will be computed from telescope config and Xcore/Ycore/pointing"
+            )
 
     for opt in ("fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS"):
         if opt in resolved and opt not in tree.keys():
@@ -124,6 +142,57 @@ def _ensure_optional_scalar_columns(df, missing_optional):
         df["Erec"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
     if "ErecS" in missing_optional and "ErecS" not in df:
         df["ErecS"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
+
+
+def _calculate_shower_coordinates(tel_x, tel_y, shower_x, shower_y, elevation_deg, azimuth_deg):
+    """
+    Calculate relative telescope positions in shower coordinate system.
+
+    Parameters
+    ----------
+    tel_x, tel_y : float
+        Telescope position in ground coordinates (meters).
+    shower_x, shower_y : float
+        Shower core position in ground coordinates (meters).
+    elevation_deg : float
+        Pointing elevation in degrees.
+    azimuth_deg : float
+        Pointing azimuth in degrees.
+
+    Returns
+    -------
+    tuple of float
+        (rel_x, rel_y, shower_x_coord, shower_y_coord) where:
+        - rel_x, rel_y: relative position in ground frame (tel - core)
+        - shower_x_coord, shower_y_coord: relative position in shower coordinates
+    """
+    # Convert to radians
+    elev = np.radians(elevation_deg)
+    azim = np.radians(azimuth_deg)
+
+    # Relative position in ground frame
+    rel_x = tel_x - shower_x
+    rel_y = tel_y - shower_y
+
+    # Shower coordinate system:
+    # - shower_y_axis points in shower direction (towards zenith direction of pointing)
+    # - shower_x_axis is perpendicular (east-west relative to shower direction)
+    # The shower direction in ground coords: (sin(elev)*cos(azim), sin(elev)*sin(azim))
+    # But we use elevation as zenith angle, so pointing vector is rotated
+
+    # Rotation from ground (east-north) to shower (along-across) coordinates
+    # Along shower: cos(azim)*cos(elev)*dx + sin(azim)*cos(elev)*dy
+    # Across shower (perpendicular): -sin(azim)*dx + cos(azim)*dy
+
+    # Elevation affects how much of the shower is in the horizontal plane
+    cos_elev = np.cos(elev)
+
+    # Along shower direction (scaled by cos(elev) - shower at zenith has no horizontal extent)
+    shower_y_coord = np.cos(azim) * cos_elev * rel_x + np.sin(azim) * cos_elev * rel_y
+    # Across shower direction (perpendicular component in horizontal plane)
+    shower_x_coord = -np.sin(azim) * rel_x + np.cos(azim) * rel_y
+
+    return rel_x, rel_y, shower_x_coord, shower_y_coord
 
 
 def flatten_telescope_data_vectorized(
@@ -181,6 +250,77 @@ def flatten_telescope_data_vectorized(
                     flat_features[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
                 else:
                     flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+            continue
+
+        # Special handling for telescope relative coordinates from tel_config
+        if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
+            if (
+                "Xcore" in df.columns
+                and "Ycore" in df.columns
+                and "ArrayPointing_Elevation" in df.columns
+                and "ArrayPointing_Azimuth" in df.columns
+            ):
+                _logger.info(f"Computing synthetic feature: {var}")
+
+                # Extract event data once as numpy arrays (vectorized)
+                core_x = df["Xcore"].to_numpy(dtype=np.float64)
+                core_y = df["Ycore"].to_numpy(dtype=np.float64)
+                elev = df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64)
+                azim = df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64)
+
+                # Mark invalid core positions
+                valid_mask = (core_x >= 0) & (core_y >= 0)
+
+                # Create mappings from telescope ID to position
+                tel_id_to_x = dict(zip(tel_config["tel_ids"], tel_config["tel_x"]))
+                tel_id_to_y = dict(zip(tel_config["tel_ids"], tel_config["tel_y"]))
+
+                # Vectorized coordinate transformation for all telescopes
+                for tel_idx in range(max_tel_id + 1):
+                    col_name = f"{var}_{tel_idx}"
+                    if tel_idx in tel_id_to_x:
+                        tel_x = float(tel_id_to_x[tel_idx])
+                        tel_y = float(tel_id_to_y[tel_idx])
+
+                        # Vectorized calculation for all events at once
+                        rel_x = tel_x - core_x
+                        rel_y = tel_y - core_y
+
+                        # Convert angles to radians (vectorized)
+                        elev_rad = np.radians(elev)
+                        azim_rad = np.radians(azim)
+                        cos_elev = np.cos(elev_rad)
+
+                        # Vectorized shower coordinate transformation
+                        # Along shower direction (scaled by cos(elev) - shower at zenith has no horizontal extent)
+                        shower_y_coord = (
+                            np.cos(azim_rad) * cos_elev * rel_x
+                            + np.sin(azim_rad) * cos_elev * rel_y
+                        )
+                        # Across shower direction (perpendicular component in horizontal plane)
+                        shower_x_coord = -np.sin(azim_rad) * rel_x + np.cos(azim_rad) * rel_y
+
+                        # Select output based on variable type
+                        if var == "tel_rel_x":
+                            result = rel_x
+                        elif var == "tel_rel_y":
+                            result = rel_y
+                        elif var == "tel_shower_x":
+                            result = shower_x_coord
+                        else:  # tel_shower_y
+                            result = shower_y_coord
+
+                        # Apply validity mask: set invalid core positions to DEFAULT_FILL_VALUE
+                        result = np.where(valid_mask, result, default_value)
+                        flat_features[col_name] = result.astype(np.float32)
+                    else:
+                        flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+                continue
+            # Missing required columns, skip
+            _logger.warning(f"Cannot compute {var}: missing Xcore/Ycore or pointing direction")
+            for tel_idx in range(max_tel_id + 1):
+                col_name = f"{var}_{tel_idx}"
+                flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
             continue
 
         data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
