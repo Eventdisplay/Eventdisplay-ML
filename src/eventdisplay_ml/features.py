@@ -85,6 +85,7 @@ def telescope_features(analysis_type):
         "R_core",
         "fpointing_dx",
         "fpointing_dy",
+        "mirror_areas",
     ]
     if analysis_type == "classification":
         return var

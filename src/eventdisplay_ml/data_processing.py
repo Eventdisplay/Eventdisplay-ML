@@ -91,6 +91,11 @@ def _resolve_branch_aliases(tree, branch_list):
     elif "R_core" in resolved and not has_r_core and not has_r_fallback:
         _logger.warning("Branches 'R_core' and fallback 'R' not found; column will be missing")
 
+    # Remove mirror_areas - it's synthesized from telconfig, not read from file
+    if "mirror_areas" in resolved:
+        resolved = [b for b in resolved if b != "mirror_areas"]
+        _logger.info("Branch 'mirror_areas' will be synthesized from telescope configuration")
+
     for opt in ("fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS"):
         if opt in resolved and opt not in tree.keys():
             resolved = [b for b in resolved if b != opt]
@@ -162,6 +167,22 @@ def flatten_telescope_data_vectorized(
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
     for var in features:
+        # Special handling for mirror_areas: lookup from tel_config instead of reading from df
+        if var == "mirror_areas" and tel_config:
+            # Create a mapping from telescope ID to mirror area
+            tel_id_to_mirror = dict(zip(tel_config["tel_ids"], tel_config["mirror_areas"]))
+            for tel_idx in range(max_tel_id + 1):
+                col_name = f"{var}_{tel_idx}"
+                if tel_idx in tel_id_to_mirror:
+                    mirror_val = float(tel_id_to_mirror[tel_idx])
+                    # Convert zero to 100
+                    if mirror_val == 0.0:
+                        mirror_val = 100.0
+                    flat_features[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
+                else:
+                    flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+            continue
+
         data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
 
         for tel_idx in range(max_tel_id + 1):  # Iterate over all possible telescope indices
