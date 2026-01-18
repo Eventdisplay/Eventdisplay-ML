@@ -481,7 +481,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                 # Read telescope configuration from first file
                 if tel_config is None:
                     tel_config = read_telescope_config(root_file)
-                    model_configs["tel_config"] = tel_config  # Store for later use
+                    model_configs["tel_config"] = tel_config
 
                 _logger.info(f"Processing file: {f}")
                 tree = root_file["data"]
@@ -559,6 +559,8 @@ def apply_image_selection(df, selected_indices, analysis_type, training=False):
     """
     Filter and pad telescope lists for selected indices.
 
+    # TODO still needed?
+
     Parameters
     ----------
     df : pandas.DataFrame
@@ -608,6 +610,7 @@ def apply_image_selection(df, selected_indices, analysis_type, training=False):
 
 def _pad_to_four(arr_like):
     """Pad a per-telescope array-like to length 4 with NaN values."""
+    # TODO still needed?
     if isinstance(arr_like, (list, np.ndarray)):
         arr = np.asarray(arr_like, dtype=np.float32)
         pad = max(0, 4 - arr.shape[0])
