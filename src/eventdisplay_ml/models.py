@@ -70,6 +70,9 @@ def load_classification_models(model_prefix, model_name):
     """
     Load XGBoost classification models for different telescope multiplicities from a directory.
 
+    First attempts to load unified models (ntelall) that handle all multiplicities.
+    Falls back to loading separate models for n_tel 2, 3, 4 for backward compatibility.
+
     Parameters
     ----------
     model_prefix : str
@@ -81,14 +84,52 @@ def load_classification_models(model_prefix, model_name):
     -------
     dict, dict
         A dictionary mapping the number of telescopes (n_tel) and energy bin
-        to the corresponding loaded model objects. Also returns a dictionary
-        of model parameters.
+        to the corresponding loaded model objects. For unified models, the same
+        models are stored under a representative key (e.g., 4).
+        Also returns a dictionary of model parameters.
     """
     model_prefix = Path(model_prefix)
     model_dir_path = Path(model_prefix.parent)
 
     models = {}
     par = {}
+
+    # First try to load unified models (ntelall) for all multiplicities
+    pattern_unified = f"{model_prefix.name}_ntelall_ebin*.joblib"
+    unified_files = sorted(model_dir_path.glob(pattern_unified))
+
+    if unified_files:
+        _logger.info("Loading unified classification models for all multiplicities")
+        models.setdefault(4, {})  # Use 4 as representative key
+        for file in unified_files:
+            match = re.search(r"_ebin(\d+)\.joblib$", file.name)
+            if not match:
+                _logger.warning(f"Could not extract energy bin from filename: {file.name}")
+                continue
+            e_bin = int(match.group(1))
+            _logger.info(f"Loading unified model for e_bin={e_bin}: {file}")
+            model_data = joblib.load(file)
+            _check_bin(e_bin, model_data.get("energy_bin_number"))
+            models[4].setdefault(e_bin, {})
+            try:
+                models[4][e_bin]["model"] = model_data["models"][model_name]["model"]
+            except KeyError:
+                raise KeyError(f"Model name '{model_name}' not found in file: {file}")
+            models[4][e_bin]["features"] = model_data.get("features", [])
+            models[4][e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
+            models[4][e_bin]["thresholds"] = _calculate_classification_thresholds(
+                models[4][e_bin]["efficiency"]
+            )
+            par = _update_parameters(
+                par,
+                model_data.get("zenith_bins_deg"),
+                model_data.get("energy_bins_log10_tev", {}),
+                e_bin,
+            )
+        _logger.info(f"Loaded unified classification models. Parameters: {par}")
+        return models, par
+
+    # Fall back to loading separate models for backward compatibility
     for n_tel in range(2, 5):
         pattern = f"{model_prefix.name}_ntel{n_tel}_ebin*.joblib"
         models.setdefault(n_tel, {})
@@ -187,6 +228,9 @@ def load_regression_models(model_prefix, model_name):
     """
     Load XGBoost models for different telescope multiplicities from a directory.
 
+    First attempts to load a unified model (ntelall) that handles all multiplicities.
+    Falls back to loading separate models for n_tel 2, 3, 4 for backward compatibility.
+
     Parameters
     ----------
     model_prefix : str
@@ -198,13 +242,26 @@ def load_regression_models(model_prefix, model_name):
     -------
     dict[int, Any]
         A dictionary mapping the number of telescopes (n_tel) to the
-        corresponding loaded model objects. Only models whose files
-        exist in ``model_dir`` are included.
+        corresponding loaded model objects. For unified models, the same
+        model is stored under a representative key (e.g., 4).
     """
     model_prefix = Path(model_prefix)
     model_dir_path = Path(model_prefix.parent)
 
     models = {}
+
+    # First try to load unified model (ntelall) for all multiplicities
+    unified_model_filename = model_dir_path / f"{model_prefix.name}_ntelall.joblib"
+    if unified_model_filename.exists():
+        _logger.info(f"Loading unified model for all multiplicities: {unified_model_filename}")
+        model_data = joblib.load(unified_model_filename)
+        # Store under key 4 as representative (will be used for all multiplicities)
+        models.setdefault(4, {})["model"] = model_data["models"][model_name]["model"]
+        models[4]["features"] = model_data.get("features", [])
+        _logger.info("Loaded unified regression model for all telescope multiplicities.")
+        return models, {}
+
+    # Fall back to loading separate models for backward compatibility
     for n_tel in range(2, 5):
         model_filename = model_dir_path / f"{model_prefix.name}_ntel{n_tel}.joblib"
         if model_filename.exists():
@@ -245,7 +302,6 @@ def apply_regression_models(df, model_configs):
     """
     preds = np.full((len(df), 3), np.nan, dtype=np.float32)
 
-    # All events are processed together
     _logger.info(f"Processing {len(df)} events with single model (all multiplicities)")
 
     flatten_data = flatten_feature_data(df, 4, analysis_type="stereo_analysis", training=False)

@@ -6,7 +6,7 @@ image parameters to train multi-target regression BDTs to predict x,y offsets.
 
 Uses energy related values to estimate event energy.
 
-Trains a single BDT on all telescope multiplicity events (2, 3, 4).
+Trains a single BDT on all telescope multiplicity events.
 Features are indexed by actual telescope ID, with -99 fill values for missing telescopes.
 """
 
