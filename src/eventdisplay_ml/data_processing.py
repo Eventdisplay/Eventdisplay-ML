@@ -20,15 +20,16 @@ def flatten_telescope_data_vectorized(df, n_tel, features, analysis_type, traini
     """
     Vectorized flattening of telescope array columns.
 
-    Converts per-telescope arrays into individual feature columns, handles
-    telescope indexing via DispTelList_T, and creates derived features.
+    Converts per-telescope arrays into individual feature columns indexed by actual
+    telescope ID. Features are mapped to telescope indices directly, so size_2 always
+    corresponds to telescope 2, with -99 fill values for missing telescopes.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Input DataFrame containing telescope data.
     n_tel : int
-        Number of telescopes to flatten for.
+        Number of telescopes to flatten for (maximum telescope index).
     features : list[str]
         List of training variable names to flatten.
     analysis_type : str
@@ -40,31 +41,39 @@ def flatten_telescope_data_vectorized(df, n_tel, features, analysis_type, traini
     -------
     pandas.DataFrame
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
-        for telescope index ``i``, plus derived features, and array features.
+        for telescope index ``i`` (0-3), plus derived features, and array features.
+        Missing telescopes are filled with -99.
     """
     flat_features = {}
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
+    default_value = -99.0
 
     for var in features:
         data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
-        for i in range(n_tel):
-            col_name = f"{var}_{i}"
+
+        for tel_idx in range(4):  # Always iterate over all 4 possible telescope indices
+            col_name = f"{var}_{tel_idx}"
 
             if var.startswith("Disp"):
-                # Case 1: Simple index i
-                if i < data.shape[1]:
-                    flat_features[col_name] = data[:, i]
+                # Case 1: Simple index - look up data by direct index
+                if tel_idx < data.shape[1]:
+                    flat_features[col_name] = data[:, tel_idx]
                 else:
-                    flat_features[col_name] = np.full(len(df), np.nan)
+                    flat_features[col_name] = np.full(len(df), default_value)
             else:
                 # Case 2: Index lookup via DispTelList_T
-                target_tel_indices = tel_list_matrix[:, i].astype(int)
+                # For each event, find if tel_idx is in its DispTelList_T
+                # If yes, extract data at that position in the data array
+                result = np.full(len(df), default_value, dtype=np.float32)
 
-                row_indices = np.arange(len(df))
-                valid_mask = (target_tel_indices >= 0) & (target_tel_indices < data.shape[1])
-                result = np.full(len(df), np.nan)
-                result[valid_mask] = data[row_indices[valid_mask], target_tel_indices[valid_mask]]
+                for evt_idx in range(n_evt):
+                    tel_list = tel_list_matrix[evt_idx]
+                    if tel_idx in tel_list:
+                        # Find position of tel_idx in tel_list
+                        pos_in_list = np.where(tel_list == tel_idx)[0]
+                        if len(pos_in_list) > 0 and pos_in_list[0] < data.shape[1]:
+                            result[evt_idx] = data[evt_idx, pos_in_list[0]]
 
                 flat_features[col_name] = result
 
@@ -109,7 +118,12 @@ def _to_dense_array(col):
 
 
 def flatten_feature_data(group_df, ntel, analysis_type, training):
-    """Get flattened features for a group of events with given telescope multiplicity."""
+    """
+    Get flattened features for events.
+
+    All events are flattened to 4 telescopes with features indexed by actual
+    telescope ID. The ntel parameter is kept for compatibility.
+    """
     df_flat = flatten_telescope_data_vectorized(
         group_df,
         ntel,
@@ -118,14 +132,17 @@ def flatten_feature_data(group_df, ntel, analysis_type, training):
         training=training,
     )
     excluded_columns = set(features.target_features(analysis_type)) | set(
-        features.excluded_features(analysis_type, ntel)
+        features.excluded_features(analysis_type, 4)  # Always use 4 for all telescope exclusions
     )
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
 
 def load_training_data(model_configs, file_list, analysis_type):
     """
-    Load and flatten training data from the mscw file for the requested telescope multiplicity.
+    Load and flatten training data from the mscw file.
+
+    Processes all events regardless of telescope multiplicity. Features are created
+    for all 4 telescopes (0-3) with default value -99 for missing telescopes.
 
     Parameters
     ----------
@@ -142,10 +159,10 @@ def load_training_data(model_configs, file_list, analysis_type):
         Flattened DataFrame ready for training.
     """
     max_events = model_configs.get("max_events", None)
-    n_tel = model_configs["n_tel"]
     random_state = model_configs.get("random_state", None)
 
-    _logger.info(f"--- Loading and Flattening Data for {analysis_type} for n_tel = {n_tel} ---")
+    _logger.info(f"--- Loading and Flattening Data for {analysis_type} ---")
+    _logger.info("Processing all events regardless of multiplicity")
     _logger.info(
         "Max events to process: "
         f"{max_events if max_events is not None and max_events > 0 else 'All available'}"
@@ -188,9 +205,10 @@ def load_training_data(model_configs, file_list, analysis_type):
                     f" (fraction retained: {len(df_file) / n_before:.4f})"
                 )
 
+                # Always flatten to 4 telescopes
                 df_flat = flatten_telescope_data_vectorized(
                     df_file,
-                    n_tel,
+                    4,  # Always use 4 for maximum telescope coverage
                     features.telescope_features(analysis_type),
                     analysis_type,
                     training=True,
@@ -213,7 +231,14 @@ def load_training_data(model_configs, file_list, analysis_type):
 
     df_final = pd.concat(dfs, ignore_index=True)
     df_final.dropna(axis=1, how="all", inplace=True)
-    _logger.info(f"Total events for n_tel={n_tel}: {len(df_final)}")
+    _logger.info(f"Total events loaded: {len(df_final)}")
+
+    # Log multiplicity distribution
+    if "DispNImages" in df_final.columns:
+        mult_counts = df_final["DispNImages"].value_counts().sort_index()
+        for mult, count in mult_counts.items():
+            _logger.info(f"\tDispNImages={int(mult)}: {count} events")
+
     if analysis_type == "classification":
         counts = df_final["ze_bin"].value_counts().sort_index()
         for zb, n in counts.items():
@@ -293,7 +318,8 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
     """
     Apply clip intervals to matching columns in dataframe.
 
-    Modifies the dataframe in place.
+    Modifies the dataframe in place. Handles -99 default values for missing telescopes
+    by preserving them throughout clipping and log10 transformation.
 
     Parameters
     ----------
@@ -315,37 +341,56 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
             for i in range(n_tel):
                 col_name = f"{var_base}_{i}"
                 if col_name in df.columns:
-                    df[col_name] = df[col_name].clip(vmin, vmax)
+                    # Preserve -99 default values
+                    mask_valid = df[col_name] != -99.0
+
+                    # Clip only valid values
+                    df.loc[mask_valid, col_name] = df.loc[mask_valid, col_name].clip(vmin, vmax)
+
+                    # Apply log10 to valid values only
                     if var_base in apply_log10:
-                        df[col_name] = np.log10(df[col_name])
+                        mask_to_log = mask_valid & (df[col_name] > 0)
+                        df.loc[mask_to_log, col_name] = np.log10(df.loc[mask_to_log, col_name])
         else:
             # Apply to non-telescope columns
             if var_base in df.columns:
-                df[var_base] = df[var_base].clip(vmin, vmax)
+                # Preserve -99 default values
+                mask_valid = df[var_base] != -99.0
+
+                # Clip only valid values
+                df.loc[mask_valid, var_base] = df.loc[mask_valid, var_base].clip(vmin, vmax)
+
+                # Apply log10 to valid values only
                 if var_base in apply_log10:
-                    df[var_base] = np.log10(df[var_base])
+                    mask_to_log = mask_valid & (df[var_base] > 0)
+                    df.loc[mask_to_log, var_base] = np.log10(df.loc[mask_to_log, var_base])
 
 
 def flatten_telescope_variables(n_tel, flat_features, index):
-    """Generate dataframe for telescope variables flattened for n_tel telescopes."""
+    """Generate dataframe for telescope variables flattened for all 4 telescopes.
+
+    Always creates features for telescopes 0-3, using -99 as default value for missing data.
+    """
     df_flat = pd.DataFrame(flat_features, index=index)
     df_flat = df_flat.astype(np.float32)
 
     new_cols = {}
-    for i in range(n_tel):
+    for i in range(4):  # Always iterate over all 4 telescopes
         if f"Disp_T_{i}" in df_flat:
             new_cols[f"disp_x_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"cosphi_{i}"]
             new_cols[f"disp_y_{i}"] = df_flat[f"Disp_T_{i}"] * df_flat[f"sinphi_{i}"]
-        new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
-        new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        new_cols[f"size_dist2_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
-        new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+        if f"loss_{i}" in df_flat and f"dist_{i}" in df_flat:
+            new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
+            new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        if f"width_{i}" in df_flat and f"length_{i}" in df_flat:
+            new_cols[f"size_dist2_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
+            new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
 
-    apply_clip_intervals(df_flat, n_tel=n_tel, apply_log10=["size", "E", "ES", "size_dist2"])
+    apply_clip_intervals(df_flat, n_tel=4, apply_log10=["size", "E", "ES", "size_dist2"])
 
-    for i in range(n_tel):
+    for i in range(4):  # Always iterate over all 4 telescopes
         if f"cen_x_{i}" in df_flat and f"fpointing_dx_{i}" in df_flat:
             df_flat[f"cen_x_{i}"] = df_flat[f"cen_x_{i}"] + df_flat[f"fpointing_dx_{i}"]
         if f"cen_y_{i}" in df_flat and f"fpointing_dy_{i}" in df_flat:

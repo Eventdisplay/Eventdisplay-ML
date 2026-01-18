@@ -222,7 +222,10 @@ def load_regression_models(model_prefix, model_name):
 
 def apply_regression_models(df, model_configs):
     """
-    Apply trained XGBoost models for stereo analysis to a DataFrame chunk.
+    Apply trained XGBoost model for stereo analysis to all events.
+
+    All events are processed with a single model trained on all multiplicities.
+    Features are created for all 4 telescopes with -99 defaults for missing telescopes.
 
     Parameters
     ----------
@@ -242,39 +245,42 @@ def apply_regression_models(df, model_configs):
     """
     preds = np.full((len(df), 3), np.nan, dtype=np.float32)
 
-    grouped = df.groupby("DispNImages")
+    # All events are processed together
+    _logger.info(f"Processing {len(df)} events with single model (all multiplicities)")
+
+    flatten_data = flatten_feature_data(df, 4, analysis_type="stereo_analysis", training=False)
+
     models = model_configs["models"]
+    # Get model from first available n_tel key (should be the trained model on all data)
+    available_n_tel = next(iter(models.keys())) if models else None
 
-    for n_tel, group_df in grouped:
-        n_tel = int(n_tel)
-        if n_tel < 2 or n_tel not in models:
-            _logger.warning(f"No model for n_tel={n_tel}")
-            continue
+    if available_n_tel is None:
+        _logger.error("No trained models available")
+        return preds[:, 0], preds[:, 1], preds[:, 2]
 
-        _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
+    model_data = models[available_n_tel]
+    flatten_data = flatten_data.reindex(columns=model_data["features"])
+    data_processing.print_variable_statistics(flatten_data)
 
-        flatten_data = flatten_feature_data(
-            group_df, n_tel, analysis_type="stereo_analysis", training=False
-        )
-        flatten_data = flatten_data.reindex(columns=models[n_tel]["features"])
-        data_processing.print_variable_statistics(flatten_data)
-
-        model = models[n_tel]["model"]
-        preds[group_df.index] = model.predict(flatten_data)
+    model = model_data["model"]
+    preds = model.predict(flatten_data)
 
     return preds[:, 0], preds[:, 1], preds[:, 2]
 
 
 def apply_classification_models(df, model_configs, threshold_keys):
     """
-    Apply trained XGBoost classification models to a DataFrame chunk.
+    Apply trained XGBoost classification model to all events.
+
+    All events are processed with models trained on all multiplicities.
+    Features are created for all 4 telescopes with -99 defaults for missing telescopes.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
     model_configs : dict
-        Preloaded models dictionary
+        Preloaded models dictionary with structure {n_tel: {e_bin: {model, features, thresholds}}}
     threshold_keys : list[int]
         Efficiency thresholds (percent) for which to compute binary gamma flags.
 
@@ -285,44 +291,44 @@ def apply_classification_models(df, model_configs, threshold_keys):
         with the index of ``df``.
     is_gamma : dict[int, numpy.ndarray]
         Mapping from efficiency threshold (percent) to binary arrays (0/1) indicating
-        whether each event passes the corresponding classification threshold using
-        that bin's stored thresholds.
+        whether each event passes the corresponding classification threshold.
     """
     class_probability = np.full(len(df), np.nan, dtype=np.float32)
     is_gamma = {eff: np.zeros(len(df), dtype=np.uint8) for eff in threshold_keys}
     models = model_configs["models"]
 
-    # 1. Group by Number of Images (n_tel)
-    for n_tel, group_ntel_df in df.groupby("DispNImages"):
-        n_tel = int(n_tel)
-        if n_tel < 2 or n_tel not in models:
-            _logger.warning(f"No model for n_tel={n_tel}")
+    # Group only by Energy Bin (e_bin) - no multiplicity filtering
+    for e_bin, group_df in df.groupby("e_bin"):
+        e_bin = int(e_bin)
+        if e_bin == -1:
+            _logger.warning("Skipping events with e_bin = -1")
             continue
 
-        # 2. Group by Energy Bin (e_bin)
-        for e_bin, group_df in group_ntel_df.groupby("e_bin"):
-            e_bin = int(e_bin)
-            if e_bin == -1:
-                _logger.warning("Skipping events with e_bin = -1")
-                continue
-            if e_bin not in models[n_tel]:
-                _logger.warning(f"No model for n_tel={n_tel}, e_bin={e_bin}")
-                continue
+        # Find first available n_tel for this e_bin (they should all have the same model)
+        available_n_tel = None
+        for n_tel in models:
+            if e_bin in models[n_tel]:
+                available_n_tel = n_tel
+                break
 
-            _logger.info(f"Processing {len(group_df)} events: n_tel={n_tel}, bin={e_bin}")
+        if available_n_tel is None:
+            _logger.warning(f"No model available for e_bin={e_bin}")
+            continue
 
-            flatten_data = flatten_feature_data(
-                group_df, n_tel, analysis_type="classification", training=False
-            )
-            model = models[n_tel][e_bin]["model"]
-            flatten_data = flatten_data.reindex(columns=models[n_tel][e_bin]["features"])
-            class_probs = model.predict_proba(flatten_data)[:, 1]
-            class_probability[group_df.index] = class_probs
+        _logger.info(f"Processing {len(group_df)} events with bin={e_bin}")
 
-            thresholds = models[n_tel][e_bin].get("thresholds", {})
-            for eff, threshold in thresholds.items():
-                if eff in is_gamma:
-                    is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
+        flatten_data = flatten_feature_data(
+            group_df, 4, analysis_type="classification", training=False
+        )
+        model = models[available_n_tel][e_bin]["model"]
+        flatten_data = flatten_data.reindex(columns=models[available_n_tel][e_bin]["features"])
+        class_probs = model.predict_proba(flatten_data)[:, 1]
+        class_probability[group_df.index] = class_probs
+
+        thresholds = models[available_n_tel][e_bin].get("thresholds", {})
+        for eff, threshold in thresholds.items():
+            if eff in is_gamma:
+                is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
 
     return class_probability, is_gamma
 

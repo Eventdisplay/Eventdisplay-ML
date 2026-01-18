@@ -87,18 +87,17 @@ def _load_hyper_parameters_from_file(config_file):
 
 
 def pre_cuts_regression(n_tel):
-    """Get pre-cuts for regression analysis."""
-    event_cut = f"(DispNImages == {n_tel})"
+    """Get pre-cuts for regression analysis (no multiplicity filter)."""
+    event_cut = ""
     if PRE_CUTS_REGRESSION:
-        event_cut += " & " + " & ".join(f"({c})" for c in PRE_CUTS_REGRESSION)
-    _logger.info(f"Pre-cuts (n_tel={n_tel}): {event_cut}")
-    return event_cut
+        event_cut = " & ".join(f"({c})" for c in PRE_CUTS_REGRESSION)
+    _logger.info(f"Pre-cuts (regression): {event_cut if event_cut else 'None'}")
+    return event_cut if event_cut else None
 
 
 def pre_cuts_classification(n_tel, e_min, e_max):
-    """Get pre-cuts for classification analysis."""
-    event_cut = f"(DispNImages == {n_tel})"
-    event_cut += f" & (Erec >= {e_min}) & (Erec < {e_max})"
+    """Get pre-cuts for classification analysis (no multiplicity filter)."""
+    event_cut = f"(Erec >= {e_min}) & (Erec < {e_max})"
     event_cut += " & " + " & ".join(f"({c})" for c in PRE_CUTS_CLASSIFICATION)
-    _logger.info(f"Pre-cuts (n_tel={n_tel}): {event_cut}")
+    _logger.info(f"Pre-cuts (classification): {event_cut}")
     return event_cut
