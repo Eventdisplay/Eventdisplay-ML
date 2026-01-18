@@ -89,9 +89,9 @@ def evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name):
         y_test,
         df,
         percentiles=[68, 90, 95],
-        log_e_min=-1,
-        log_e_max=2,
-        n_bins=6,
+        log_e_min=-2,
+        log_e_max=2.5,
+        n_bins=9,
         name=name,
     )
 

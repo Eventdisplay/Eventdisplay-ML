@@ -25,9 +25,9 @@ from eventdisplay_ml.evaluate import (
 )
 
 # Evaluation uses fixed log-energy bins; reuse them to report training availability
-_EVAL_LOG_E_MIN = -1
-_EVAL_LOG_E_MAX = 2
-_EVAL_LOG_E_BINS = 6
+_EVAL_LOG_E_MIN = -2
+_EVAL_LOG_E_MAX = 2.5
+_EVAL_LOG_E_BINS = 9
 
 _logger = logging.getLogger(__name__)
 
