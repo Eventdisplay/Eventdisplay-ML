@@ -134,93 +134,66 @@ def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, 
         }
     )
 
-    # Add previous methods for comparison
-    if "Xoff_weighted_bdt" in df.columns and "Yoff_weighted_bdt" in df.columns:
-        results_df["Xoff_weighted_bdt"] = df.loc[y_test.index, "Xoff_weighted_bdt"].values
-        results_df["Yoff_weighted_bdt"] = df.loc[y_test.index, "Yoff_weighted_bdt"].values
-
-    if "ErecS" in df.columns:
-        results_df["ErecS"] = df.loc[y_test.index, "ErecS"].values
+    # Optional previous method columns
+    for col in ["Xoff_weighted_bdt", "Yoff_weighted_bdt", "ErecS"]:
+        if col in df.columns:
+            results_df[col] = df.loc[y_test.index, col].values
 
     # Calculate angular resolution for BDT prediction
-    results_df["DeltaTheta"] = np.sqrt(
-        (results_df["MCxoff_true"] - results_df["MCxoff_pred"]) ** 2
-        + (results_df["MCyoff_true"] - results_df["MCyoff_pred"]) ** 2
+    results_df["DeltaTheta"] = np.hypot(
+        results_df["MCxoff_true"] - results_df["MCxoff_pred"],
+        results_df["MCyoff_true"] - results_df["MCyoff_pred"],
     )
 
     # Calculate angular resolution for previous method (weighted_bdt)
     if "Xoff_weighted_bdt" in results_df.columns:
-        results_df["DeltaTheta_weighted"] = np.sqrt(
-            (results_df["MCxoff_true"] - results_df["Xoff_weighted_bdt"]) ** 2
-            + (results_df["MCyoff_true"] - results_df["Yoff_weighted_bdt"]) ** 2
+        results_df["DeltaTheta_weighted"] = np.hypot(
+            results_df["MCxoff_true"] - results_df["Xoff_weighted_bdt"],
+            results_df["MCyoff_true"] - results_df["Yoff_weighted_bdt"],
         )
 
-    # Calculate energy resolution for BDT prediction
-    results_df["DeltaMCe0"] = np.abs(
-        np.power(10, results_df["MCe0_pred"]) - np.power(10, results_df["MCe0"])
-    ) / np.power(10, results_df["MCe0"])
+    # Energy resolutions
+    def rel_error(pred_col):
+        return (
+            np.abs(10 ** results_df[pred_col] - 10 ** results_df["MCe0"]) / 10 ** results_df["MCe0"]
+        )
 
-    # Calculate energy resolution for previous method (ErecS)
-    # Note: ErecS is stored as log10(ErecS) in the dataframe after processing
+    results_df["DeltaMCe0"] = rel_error("MCe0_pred")
     if "ErecS" in results_df.columns:
-        results_df["DeltaMCe0_ErecS"] = np.abs(
-            np.power(10, results_df["ErecS"]) - np.power(10, results_df["MCe0"])
-        ) / np.power(10, results_df["MCe0"])
+        results_df["DeltaMCe0_ErecS"] = rel_error("ErecS")
 
+    # Bin by LogE
     results_df["LogE"] = results_df["MCe0"]
     bins = np.linspace(log_e_min, log_e_max, n_bins + 1)
     results_df["E_bin"] = pd.cut(results_df["LogE"], bins=bins, include_lowest=True)
     results_df.dropna(subset=["E_bin"], inplace=True)
-
     g = results_df.groupby("E_bin", observed=False)
     mean_loge_by_bin = g["LogE"].mean().round(3)
 
-    def percentile_series(col, p):
-        return g[col].quantile(p / 100)
+    def log_percentiles(col, label, method):
+        data = {f"{label}_{p}%": g[col].quantile(p / 100).values for p in percentiles}
+        df_out = pd.DataFrame(data, index=mean_loge_by_bin.index)
+        df_out.insert(0, "Mean Log10(E)", mean_loge_by_bin.values)
+        df_out.index.name = "Log10(E) Bin Range"
+        df_out = df_out.dropna()
+        _logger.info(f"--- {method} vs Log10(MCe0) ---")
+        _logger.info(f"Calculated over {n_bins} bins [{log_e_min}, {log_e_max}]")
+        _logger.info(f"\n{df_out.to_markdown(floatfmt='.4f')}")
 
-    # Angular resolution comparison
+    # Compute and log percentiles for angular and energy resolutions
     for col, label, method in [
         ("DeltaTheta", "Theta", f"{name} (BDT)"),
-        ("DeltaTheta_weighted", "Theta", "Previous (weighted_bdt)")
-        if "DeltaTheta_weighted" in results_df.columns
-        else (None, None, None),
+        ("DeltaTheta_weighted", "Theta", "Previous (weighted_bdt)"),
     ]:
-        if col is None:
-            continue
-        data = {f"{label}_{p}%": percentile_series(col, p).values for p in percentiles}
+        if col in results_df.columns:
+            log_percentiles(col, label, method)
 
-        output_df = pd.DataFrame(data, index=mean_loge_by_bin.index)
-        output_df.insert(0, "Mean Log10(E)", mean_loge_by_bin.values)
-        output_df.index.name = "Log10(E) Bin Range"
-        output_df = output_df.dropna()
-
-        _logger.info(f"--- {method} Angular Resolution vs. Log10(MCe0) ---")
-        _logger.info(
-            f"Calculated over {n_bins} bins between Log10(E) = {log_e_min} and {log_e_max}"
-        )
-        _logger.info(f"\n{output_df.to_markdown(floatfmt='.4f')}")
-
-    # Energy resolution comparison
     for col, label, method in [
         ("DeltaMCe0", "DeltaE", f"{name} (BDT)"),
-        ("DeltaMCe0_ErecS", "DeltaE", "Previous (ErecS)")
-        if "DeltaMCe0_ErecS" in results_df.columns
-        else (None, None, None),
+        ("DeltaMCe0_ErecS", "DeltaE", "Previous (ErecS)"),
     ]:
-        if col is None:
-            continue
-        data = {f"{label}_{p}%": percentile_series(col, p).values for p in percentiles}
-
-        output_df = pd.DataFrame(data, index=mean_loge_by_bin.index)
-        output_df.insert(0, "Mean Log10(E)", mean_loge_by_bin.values)
-        output_df.index.name = "Log10(E) Bin Range"
-        output_df = output_df.dropna()
-
-        _logger.info(f"--- {method} Energy Resolution vs. Log10(MCe0) ---")
-        _logger.info(
-            f"Calculated over {n_bins} bins between Log10(E) = {log_e_min} and {log_e_max}"
-        )
-        _logger.info(f"\n{output_df.to_markdown(floatfmt='.4f')}")
+        if col in results_df.columns:
+            log_percentiles(col, label, method)
 
 
 def feature_importance(model, x_cols, target_names, name=None):
