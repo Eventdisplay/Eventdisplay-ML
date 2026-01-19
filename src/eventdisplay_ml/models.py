@@ -24,7 +24,7 @@ from eventdisplay_ml.evaluate import (
     evaluation_efficiency,
 )
 
-# Evaluation uses fixed log-energy bins; reuse them to report training availability
+# Energy ranges for evaluation bins (log10(E/TeV))
 _EVAL_LOG_E_MIN = -2
 _EVAL_LOG_E_MAX = 2.5
 _EVAL_LOG_E_BINS = 9
@@ -38,7 +38,6 @@ def save_models(model_configs):
         model_configs,
         utils.output_file_name(
             model_configs.get("model_prefix"),
-            model_configs.get("n_tel"),
             model_configs.get("energy_bin_number"),
         ),
     )
@@ -73,7 +72,7 @@ def load_models(analysis_type, model_prefix, model_name):
 
 def load_classification_models(model_prefix, model_name):
     """
-    Load XGBoost classification models for different telescope multiplicities from a directory.
+    Load XGBoost classification models.
 
     Parameters
     ----------
@@ -85,9 +84,7 @@ def load_classification_models(model_prefix, model_name):
     Returns
     -------
     dict, dict
-        A dictionary mapping the number of telescopes (n_tel) and energy bin
-        to the corresponding loaded model objects. For unified models, the same
-        models are stored under a representative key (e.g., 4).
+        A dictionary mapping energy bins to the corresponding loaded model objects.
         Also returns a dictionary of model parameters.
     """
     model_prefix = Path(model_prefix)
@@ -96,73 +93,36 @@ def load_classification_models(model_prefix, model_name):
     models = {}
     par = {}
 
-    # First try to load unified models (ntelall) for all multiplicities
-    pattern_unified = f"{model_prefix.name}_ntelall_ebin*.joblib"
-    unified_files = sorted(model_dir_path.glob(pattern_unified))
+    pattern = f"{model_prefix.name}__ebin*.joblib"
+    files = sorted(model_dir_path.glob(pattern))
 
-    if unified_files:
-        _logger.info("Loading unified classification models for all multiplicities")
-        models.setdefault(4, {})  # Use 4 as representative key
-        for file in unified_files:
-            match = re.search(r"_ebin(\d+)\.joblib$", file.name)
-            if not match:
-                _logger.warning(f"Could not extract energy bin from filename: {file.name}")
-                continue
-            e_bin = int(match.group(1))
-            _logger.info(f"Loading unified model for e_bin={e_bin}: {file}")
-            model_data = joblib.load(file)
-            _check_bin(e_bin, model_data.get("energy_bin_number"))
-            models[4].setdefault(e_bin, {})
-            try:
-                models[4][e_bin]["model"] = model_data["models"][model_name]["model"]
-            except KeyError:
-                raise KeyError(f"Model name '{model_name}' not found in file: {file}")
-            models[4][e_bin]["features"] = model_data.get("features", [])
-            models[4][e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
-            models[4][e_bin]["thresholds"] = _calculate_classification_thresholds(
-                models[4][e_bin]["efficiency"]
-            )
-            par = _update_parameters(
-                par,
-                model_data.get("zenith_bins_deg"),
-                model_data.get("energy_bins_log10_tev", {}),
-                e_bin,
-            )
-        _logger.info(f"Loaded unified classification models. Parameters: {par}")
-        return models, par
-
-    # Fall back to loading separate models for backward compatibility
-    for n_tel in range(2, 5):
-        pattern = f"{model_prefix.name}_ntel{n_tel}_ebin*.joblib"
-        models.setdefault(n_tel, {})
-        for file in sorted(model_dir_path.glob(pattern)):
-            match = re.search(r"_ebin(\d+)\.joblib$", file.name)
-            if not match:
-                _logger.warning(f"Could not extract energy bin from filename: {file.name}")
-                continue
-            e_bin = int(match.group(1))
-            _logger.info(f"Loading model for n_tel={n_tel}, e_bin={e_bin}: {file}")
-            model_data = joblib.load(file)
-            _check_bin(e_bin, model_data.get("energy_bin_number"))
-            _check_bin(n_tel, model_data.get("n_tel"))
-            models[n_tel].setdefault(e_bin, {})
-            try:
-                models[n_tel][e_bin]["model"] = model_data["models"][model_name]["model"]
-            except KeyError:
-                raise KeyError(f"Model name '{model_name}' not found in file: {file}")
-            models[n_tel][e_bin]["features"] = model_data.get("features", [])
-            models[n_tel][e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
-            models[n_tel][e_bin]["thresholds"] = _calculate_classification_thresholds(
-                models[n_tel][e_bin]["efficiency"]
-            )
-            par = _update_parameters(
-                par,
-                model_data.get("zenith_bins_deg"),
-                model_data.get("energy_bins_log10_tev", {}),
-                e_bin,
-            )
-
-    _logger.info(f"Loaded classification model parameters: {par}")
+    _logger.info("Loading classification models")
+    for file in files:
+        match = re.search(r"_ebin(\d+)\.joblib$", file.name)
+        if not match:
+            _logger.warning(f"Could not extract energy bin from filename: {file.name}")
+            continue
+        e_bin = int(match.group(1))
+        _logger.info(f"Loading model for e_bin={e_bin}: {file}")
+        model_data = joblib.load(file)
+        _check_bin(e_bin, model_data.get("energy_bin_number"))
+        models.setdefault(e_bin, {})
+        try:
+            models[e_bin]["model"] = model_data["models"][model_name]["model"]
+        except KeyError:
+            raise KeyError(f"Model name '{model_name}' not found in file: {file}")
+        models[e_bin]["features"] = model_data.get("features", [])
+        models[e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
+        models[e_bin]["thresholds"] = _calculate_classification_thresholds(
+            models[e_bin]["efficiency"]
+        )
+        par = _update_parameters(
+            par,
+            model_data.get("zenith_bins_deg"),
+            model_data.get("energy_bins_log10_tev", {}),
+            e_bin,
+        )
+    _logger.info(f"Loaded classification models. Parameters: {par}")
     return models, par
 
 
@@ -228,10 +188,7 @@ def _update_parameters(full_params, zenith_bins, energy_bin, e_bin_number):
 
 def load_regression_models(model_prefix, model_name):
     """
-    Load XGBoost models for different telescope multiplicities from a directory.
-
-    First attempts to load a unified model (ntelall) that handles all multiplicities.
-    Falls back to loading separate models for n_tel 2, 3, 4 for backward compatibility.
+    Load XGBoost models.
 
     Parameters
     ----------
@@ -242,40 +199,20 @@ def load_regression_models(model_prefix, model_name):
 
     Returns
     -------
-    dict[int, Any]
-        A dictionary mapping the number of telescopes (n_tel) to the
-        corresponding loaded model objects. For unified models, the same
-        model is stored under a representative key (e.g., 4).
+    dict
+        Model dictionary.
     """
-    model_prefix = Path(model_prefix)
-    model_dir_path = Path(model_prefix.parent)
+    model_path = Path(model_prefix).with_suffix(".joblib")
+    _logger.info(f"Loading regression model: {model_path}")
 
-    models = {}
-
-    # First try to load unified model (ntelall) for all multiplicities
-    unified_model_filename = model_dir_path / f"{model_prefix.name}_ntelall.joblib"
-    if unified_model_filename.exists():
-        _logger.info(f"Loading unified model for all multiplicities: {unified_model_filename}")
-        model_data = joblib.load(unified_model_filename)
-        # Store under key 4 as representative (will be used for all multiplicities)
-        models.setdefault(4, {})["model"] = model_data["models"][model_name]["model"]
-        models[4]["features"] = model_data.get("features", [])
-        _logger.info("Loaded unified regression model for all telescope multiplicities.")
-        return models, {}
-
-    # Fall back to loading separate models for backward compatibility
-    for n_tel in range(2, 5):
-        model_filename = model_dir_path / f"{model_prefix.name}_ntel{n_tel}.joblib"
-        if model_filename.exists():
-            _logger.info(f"Loading model for n_tel={n_tel}: {model_filename}")
-            model_data = joblib.load(model_filename)
-            _check_bin(n_tel, model_data.get("n_tel"))
-            models.setdefault(n_tel, {})["model"] = model_data["models"][model_name]["model"]
-            models[n_tel]["features"] = model_data.get("features", [])
-        else:
-            _logger.warning(f"Model not found: {model_filename}")
-
-    _logger.info("Loaded regression models.")
+    model_data = joblib.load(model_path)
+    models = {
+        model_name: {
+            "model": model_data["models"][model_name]["model"],
+            "features": model_data.get("features", []),
+        }
+    }
+    _logger.info("Loaded regression model.")
     return models, {}
 
 
@@ -304,7 +241,7 @@ def apply_regression_models(df, model_configs):
     """
     preds = np.full((len(df), 3), np.nan, dtype=np.float32)
 
-    _logger.info(f"Processing {len(df)} events with single model (all multiplicities)")
+    _logger.info(f"Processing {len(df)} events")
 
     tel_config = model_configs.get("tel_config")
     n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
@@ -314,14 +251,7 @@ def apply_regression_models(df, model_configs):
     )
 
     models = model_configs["models"]
-    # Get model from first available n_tel key (should be the trained model on all data)
-    available_n_tel = next(iter(models.keys())) if models else None
-
-    if available_n_tel is None:
-        _logger.error("No trained models available")
-        return preds[:, 0], preds[:, 1], preds[:, 2]
-
-    model_data = models[available_n_tel]
+    model_data = next(iter(models.values()))
     flatten_data = flatten_data.reindex(columns=model_data["features"])
     data_processing.print_variable_statistics(flatten_data)
 
@@ -364,22 +294,10 @@ def apply_classification_models(df, model_configs, threshold_keys):
     tel_config = model_configs.get("tel_config")
     n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
 
-    # Group only by Energy Bin (e_bin) - no multiplicity filtering
     for e_bin, group_df in df.groupby("e_bin"):
         e_bin = int(e_bin)
         if e_bin == -1:
             _logger.warning("Skipping events with e_bin = -1")
-            continue
-
-        # Find first available n_tel for this e_bin (they should all have the same model)
-        available_n_tel = None
-        for n_tel in models:
-            if e_bin in models[n_tel]:
-                available_n_tel = n_tel
-                break
-
-        if available_n_tel is None:
-            _logger.warning(f"No model available for e_bin={e_bin}")
             continue
 
         _logger.info(f"Processing {len(group_df)} events with bin={e_bin}")
@@ -387,12 +305,12 @@ def apply_classification_models(df, model_configs, threshold_keys):
         flatten_data = flatten_feature_data(
             group_df, n_tel, analysis_type="classification", training=False, tel_config=tel_config
         )
-        model = models[available_n_tel][e_bin]["model"]
-        flatten_data = flatten_data.reindex(columns=models[available_n_tel][e_bin]["features"])
+        model = models[e_bin]["model"]
+        flatten_data = flatten_data.reindex(columns=models[e_bin]["features"])
         class_probs = model.predict_proba(flatten_data)[:, 1]
         class_probability[group_df.index] = class_probs
 
-        thresholds = models[available_n_tel][e_bin].get("thresholds", {})
+        thresholds = models[e_bin].get("thresholds", {})
         for eff, threshold in thresholds.items():
             if eff in is_gamma:
                 is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
@@ -466,6 +384,14 @@ def process_file_chunked(analysis_type, model_configs):
                 continue
             if max_events is not None and total_processed >= max_events:
                 break
+
+            # Truncate chunk if it would exceed max_events
+            if max_events is not None:
+                remaining = max_events - total_processed
+                if remaining <= 0:
+                    break
+                if len(df_chunk) > remaining:
+                    df_chunk = df_chunk.iloc[:remaining]
 
             # Reset index to local chunk indices (0, 1, 2, ...) to avoid
             # index out-of-bounds when indexing chunk-sized output arrays
