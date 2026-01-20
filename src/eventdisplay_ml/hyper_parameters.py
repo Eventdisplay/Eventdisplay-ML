@@ -15,7 +15,7 @@ XGB_REGRESSION_HYPERPARAMETERS = {
             "max_depth": 5,
             "min_child_weight": 1.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
             "objective": "reg:squarederror",
-            "n_jobs": 4,
+            "n_jobs": 8,
             "random_state": None,
             "tree_method": "hist",
             "subsample": 0.7,  # Default sensible value
@@ -36,6 +36,7 @@ XGB_CLASSIFICATION_HYPERPARAMETERS = {
             "subsample": 0.8,
             "colsample_bytree": 0.8,
             "random_state": None,
+            "n_jobs": 8,
         },
     }
 }

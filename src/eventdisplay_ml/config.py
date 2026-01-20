@@ -73,6 +73,12 @@ def configure_training(analysis_type):
             help="Energy bin number for selection (optional).",
             default=0,
         )
+    parser.add_argument(
+        "--max_cores",
+        type=int,
+        help="Maximum number of CPU cores to use for training.",
+        default=1,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -81,10 +87,12 @@ def configure_training(analysis_type):
     _logger.info(f"Model output prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Train vs test fraction: {model_configs['train_test_fraction']}")
     _logger.info(f"Max events: {model_configs['max_events']}")
+    _logger.info(f"Max CPU cores: {model_configs['max_cores']}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
     )
+    model_configs["models"]["xgboost"]["hyper_parameters"]["n_jobs"] = model_configs["max_cores"]
     model_configs["targets"] = target_features(analysis_type)
 
     if analysis_type == "stereo_analysis":
@@ -155,6 +163,12 @@ def configure_apply(analysis_type):
         default=500000,
         help="Number of events to process per chunk (default: 500000)",
     )
+    parser.add_argument(
+        "--max_cores",
+        type=int,
+        help="Maximum number of CPU cores to use for processing.",
+        default=1,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -163,6 +177,8 @@ def configure_apply(analysis_type):
     _logger.info(f"Model prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Output file: {model_configs.get('output_file')}")
     _logger.info(f"Image selection: {model_configs.get('image_selection')}")
+    _logger.info(f"Max events: {model_configs.get('max_events')}")
+    _logger.info(f"Max cores: {model_configs.get('max_cores')}")
 
     model_configs["models"], par = load_models(
         analysis_type, model_configs["model_prefix"], model_configs["model_name"]
