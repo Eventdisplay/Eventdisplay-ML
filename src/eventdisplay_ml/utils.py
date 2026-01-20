@@ -106,7 +106,7 @@ def load_energy_range(model_parameters):
         raise ValueError("Invalid or missing energy range in model parameters.") from exc
 
 
-def output_file_name(model_prefix, n_tel, energy_bin_number=None):
+def output_file_name(model_prefix, n_tel=None, energy_bin_number=None):
     """Generate output filename for the trained model.
 
     Parameters

@@ -37,7 +37,7 @@ def save_models(model_configs):
         model_configs,
         utils.output_file_name(
             model_configs.get("model_prefix"),
-            model_configs.get("energy_bin_number"),
+            energy_bin_number=model_configs.get("energy_bin_number"),
         ),
     )
 
@@ -92,7 +92,7 @@ def load_classification_models(model_prefix, model_name):
     models = {}
     par = {}
 
-    pattern = f"{model_prefix.name}__ebin*.joblib"
+    pattern = f"{model_prefix.name}_ebin*.joblib"
     files = sorted(model_dir_path.glob(pattern))
 
     _logger.info("Loading classification models")
@@ -238,8 +238,6 @@ def apply_regression_models(df, model_configs):
     pred_erec : numpy.ndarray
         Array of predicted Erec values for each event in the chunk.
     """
-    preds = np.full((len(df), 3), np.nan, dtype=np.float32)
-
     _logger.info(f"Processing {len(df)} events")
 
     tel_config = model_configs.get("tel_config")
@@ -272,7 +270,7 @@ def apply_classification_models(df, model_configs, threshold_keys):
     df : pandas.DataFrame
         Chunk of events to process.
     model_configs : dict
-        Preloaded models dictionary with structure {n_tel: {e_bin: {model, features, thresholds}}}
+        Preloaded models dictionary with structure {e_bin: {model, features, thresholds}}
         and 'tel_config' key.
     threshold_keys : list[int]
         Efficiency thresholds (percent) for which to compute binary gamma flags.
@@ -375,9 +373,6 @@ def process_file_chunked(analysis_type, model_configs):
                 df_chunk.rename(columns=rename_map, inplace=True)
             data_processing._ensure_optional_scalar_columns(df_chunk, missing_optional)
             data_processing._ensure_fpointing_columns(df_chunk)
-
-            if max_events is not None and total_processed >= max_events:
-                break
 
             # Truncate chunk if it would exceed max_events
             if max_events is not None:
@@ -487,7 +482,6 @@ def train_regression(df, model_configs):
     model_configs : dict
         Dictionary of model configurations.
     """
-    n_tel = model_configs["n_tel"]
     if df.empty:
         _logger.warning("Skipping training due to empty data.")
         return None
@@ -518,14 +512,15 @@ def train_regression(df, model_configs):
         )
         weights_train = None
 
-    _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
     if weights_train is not None:
         _logger.info(
-            f"Using energy-bin-based sample weights (mean={weights_train.mean():.3f}, std={weights_train.std():.3f})"
+            f"Using energy-bin-based sample weights (mean={weights_train.mean():.3f}, "
+            f"std={weights_train.std():.3f})"
         )
 
     for name, cfg in model_configs.get("models", {}).items():
-        _logger.info(f"Training {name} for n_tel={n_tel}...")
+        _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
         if weights_train is not None:
             model.fit(x_train, y_train, sample_weight=weights_train)

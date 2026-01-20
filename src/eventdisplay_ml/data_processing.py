@@ -280,7 +280,7 @@ def flatten_telescope_data_vectorized(
     core_y = df["Ycore"].to_numpy(dtype=np.float64)
     elev_rad = np.radians(df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64))
     azim_rad = np.radians(df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64))
-    valid_mask = (core_x >= 0) & (core_y >= 0)
+    valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
 
     for var in features:
         if var == "mirror_areas" and tel_config:
