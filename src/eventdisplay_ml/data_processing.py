@@ -361,6 +361,10 @@ def _to_dense_array(col):
     numpy.ndarray
         2D numpy array with shape (n_events, max_telescopes), padded with NaN.
     """
+    if isinstance(col, ak.Array):
+        padded = ak.pad_none(col, target=int(ak.max(ak.num(col))), axis=1)
+        return ak.to_numpy(ak.fill_none(padded, np.nan))
+
     arrays = col.tolist() if hasattr(col, "tolist") else list(col)
     try:
         return np.vstack(arrays)
@@ -481,7 +485,8 @@ def load_training_data(model_configs, file_list, analysis_type):
     tel_config = None  # Will be read from first file
     dfs = []
     executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
-    for f in input_files:
+    total_files = len(input_files)
+    for file_idx, f in enumerate(input_files, start=1):
         try:
             with uproot.open(f) as root_file:
                 if "data" not in root_file:
@@ -493,7 +498,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     tel_config = read_telescope_config(root_file)
                     model_configs["tel_config"] = tel_config
 
-                _logger.info(f"Processing file: {f}")
+                _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
                 tree = root_file["data"]
                 resolved_branch_list, rename_map, missing_optional = _resolve_branch_aliases(
                     tree, branch_list

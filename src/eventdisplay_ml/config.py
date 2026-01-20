@@ -92,6 +92,7 @@ def configure_training(analysis_type):
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
     )
+    model_configs["models"]["xgboost"]["hyper_parameters"]["n_jobs"] = model_configs["max_cores"]
     model_configs["targets"] = target_features(analysis_type)
 
     if analysis_type == "stereo_analysis":
