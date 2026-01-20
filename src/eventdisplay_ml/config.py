@@ -166,7 +166,7 @@ def configure_apply(analysis_type):
     parser.add_argument(
         "--max_cores",
         type=int,
-        help="Maximum number of CPU cores to use for training.",
+        help="Maximum number of CPU cores to use for processing.",
         default=1,
     )
 
