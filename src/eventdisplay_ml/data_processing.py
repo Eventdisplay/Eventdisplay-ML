@@ -293,6 +293,8 @@ def flatten_telescope_data_vectorized(
 
     core_x = _to_numpy_1d(df["Xcore"], np.float32)
     core_y = _to_numpy_1d(df["Ycore"], np.float32)
+    core_x[core_x <= -90000] = np.nan
+    core_y[core_y <= -90000] = np.nan
     elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
     azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
     valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
