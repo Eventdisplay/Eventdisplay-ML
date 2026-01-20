@@ -183,32 +183,40 @@ def _make_relative_coord_columns(
     """Build relative/shower coordinate columns for a single synthetic variable."""
     columns = {}
     cos_elev = np.cos(elev_rad)
-    tel_id_to_x = dict(zip(tel_config["tel_ids"], tel_config["tel_x"]))
-    tel_id_to_y = dict(zip(tel_config["tel_ids"], tel_config["tel_y"]))
+    cos_azim = np.cos(azim_rad)
+    sin_azim = np.sin(azim_rad)
+
+    all_tel_x = np.full(max_tel_id + 1, np.nan)
+    all_tel_y = np.full(max_tel_id + 1, np.nan)
+
+    for tid, tx, ty in zip(tel_config["tel_ids"], tel_config["tel_x"], tel_config["tel_y"]):
+        if tid <= max_tel_id:
+            all_tel_x[tid] = tx
+            all_tel_y[tid] = ty
+
+    rel_x = all_tel_x[:, np.newaxis] - core_x
+    rel_y = all_tel_y[:, np.newaxis] - core_y
+
+    if var == "tel_rel_x":
+        results = rel_x
+    elif var == "tel_rel_y":
+        results = rel_y
+    elif var == "tel_shower_x":
+        results = -sin_azim * rel_x + cos_azim * rel_y
+    elif var == "tel_shower_y":
+        results = cos_azim * cos_elev * rel_x + sin_azim * cos_elev * rel_y
+    else:
+        results = np.full((max_tel_id + 1, n_evt), default_value)
 
     for tel_idx in range(max_tel_id + 1):
         col_name = f"{var}_{tel_idx}"
-        if tel_idx not in tel_id_to_x:
-            columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-            continue
 
-        rel_x = float(tel_id_to_x[tel_idx]) - core_x
-        rel_y = float(tel_id_to_y[tel_idx]) - core_y
+        # If the telescope doesn't exist in config, it remains NaN from step 2
+        res = results[tel_idx]
 
-        shower_y_coord = np.cos(azim_rad) * cos_elev * rel_x + np.sin(azim_rad) * cos_elev * rel_y
-        shower_x_coord = -np.sin(azim_rad) * rel_x + np.cos(azim_rad) * rel_y
-
-        if var == "tel_rel_x":
-            result = rel_x
-        elif var == "tel_rel_y":
-            result = rel_y
-        elif var == "tel_shower_x":
-            result = shower_x_coord
-        else:
-            result = shower_y_coord
-
-        result = np.where(valid_mask, result, default_value).astype(np.float32)
-        columns[col_name] = result
+        # Apply validity mask (e.g. handle events where reconstruction failed)
+        final_values = np.where(valid_mask & ~np.isnan(res), res, default_value).astype(np.float32)
+        columns[col_name] = final_values
 
     return columns
 
@@ -216,24 +224,27 @@ def _make_relative_coord_columns(
 def _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value):
     """Flatten one variable into per-telescope columns."""
     columns = {}
-    for tel_idx in range(max_tel_id + 1):
-        col_name = f"{var}_{tel_idx}"
 
-        if var.startswith("Disp"):
+    if var.startswith("Disp"):
+        for tel_idx in range(max_tel_id + 1):
+            col_name = f"{var}_{tel_idx}"
             if tel_idx < data.shape[1]:
                 columns[col_name] = data[:, tel_idx]
             else:
                 columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-            continue
+        return columns
 
-        result = np.full(n_evt, default_value, dtype=np.float32)
-        for evt_idx in range(n_evt):
-            tel_list = tel_list_matrix[evt_idx]
-            if tel_idx in tel_list:
-                pos_in_list = np.where(tel_list == tel_idx)[0]
-                if len(pos_in_list) > 0 and pos_in_list[0] < data.shape[1]:
-                    result[evt_idx] = data[evt_idx, pos_in_list[0]]
-        columns[col_name] = result
+    full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
+    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
+    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+
+    valid_mask = tel_ids <= max_tel_id
+    full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
+        row_indices[valid_mask], col_indices[valid_mask]
+    ]
+    for tel_idx in range(max_tel_id + 1):
+        columns[f"{var}_{tel_idx}"] = full_matrix[:, tel_idx]
+
     return columns
 
 
