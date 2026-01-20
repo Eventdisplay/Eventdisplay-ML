@@ -376,7 +376,7 @@ def process_file_chunked(analysis_type, model_configs):
             if rename_map:
                 rename_present = {k: v for k, v in rename_map.items() if k in chunk_ak.fields}
                 if rename_present:
-                    chunk_ak = ak.rename_fields(chunk_ak, rename_present)
+                    chunk_ak = data_processing._rename_fields_ak(chunk_ak, rename_present)
             chunk_ak = data_processing._ensure_optional_scalar_fields(chunk_ak, missing_optional)
             chunk_ak = data_processing._ensure_fpointing_fields(chunk_ak)
 

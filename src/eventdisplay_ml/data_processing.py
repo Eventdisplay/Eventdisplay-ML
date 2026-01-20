@@ -156,6 +156,35 @@ def _ensure_optional_scalar_fields(arr, missing_optional):
     return arr
 
 
+def _rename_fields_ak(arr, rename_map):
+    """Rename fields in an Awkward Array for keys present in the array.
+
+    Parameters
+    ----------
+    arr : ak.Array
+        Input Awkward Array with record fields.
+    rename_map : dict[str, str]
+        Mapping from old field names to new field names.
+
+    Returns
+    -------
+    ak.Array
+        Array with fields renamed where applicable.
+    """
+    fields = set(getattr(arr, "fields", []) or [])
+    for old, new in (rename_map or {}).items():
+        if old in fields and old != new:
+            # Add new field with the same data
+            arr = ak.with_field(arr, arr[old], where=new)
+            # Remove the old field if the function exists; otherwise leave both
+            try:
+                arr = ak.without_field(arr, old)
+            except Exception:
+                pass
+            fields = set(getattr(arr, "fields", []) or [])
+    return arr
+
+
 def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
     """Build constant mirror area columns from tel_config."""
     columns = {}
@@ -518,7 +547,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if rename_map:
                     rename_present = {k: v for k, v in rename_map.items() if k in df_ak.fields}
                     if rename_present:
-                        df_ak = ak.rename_fields(df_ak, rename_present)
+                        df_ak = _rename_fields_ak(df_ak, rename_present)
                 # Ensure optional scalar fields and fpointing fields exist
                 df_ak = _ensure_optional_scalar_fields(df_ak, missing_optional)
                 df_ak = _ensure_fpointing_fields(df_ak)
