@@ -398,7 +398,7 @@ def _has_field(df_like, name):
         return name in (getattr(df_like, "fields", []) or [])
     try:
         return name in df_like
-    except Exception:
+    except (TypeError, AttributeError):
         return False
 
 
