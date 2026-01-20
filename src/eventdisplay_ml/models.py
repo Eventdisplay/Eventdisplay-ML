@@ -2,8 +2,10 @@
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import awkward as ak
 import joblib
 import numpy as np
 import pandas as pd
@@ -356,32 +358,45 @@ def process_file_chunked(analysis_type, model_configs):
             }
         )
 
+    executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 8))
     with uproot.recreate(model_configs.get("output_file")) as root_file:
         tree = _output_tree(analysis_type, root_file, threshold_keys)
         total_processed = 0
 
-        for df_chunk in uproot.iterate(
+        for chunk_ak in uproot.iterate(
             f"{model_configs.get('input_file')}:data",
             branch_list,
-            library="pd",
+            library="ak",
             step_size=model_configs.get("chunk_size"),
+            decompression_executor=executor,
         ):
-            if df_chunk.empty:
+            if len(chunk_ak) == 0:
                 continue
 
             if rename_map:
-                df_chunk.rename(columns=rename_map, inplace=True)
-            data_processing._ensure_optional_scalar_columns(df_chunk, missing_optional)
-            data_processing._ensure_fpointing_columns(df_chunk)
+                rename_present = {k: v for k, v in rename_map.items() if k in chunk_ak.fields}
+                if rename_present:
+                    chunk_ak = ak.rename_fields(chunk_ak, rename_present)
+            chunk_ak = data_processing._ensure_optional_scalar_fields(chunk_ak, missing_optional)
+            chunk_ak = data_processing._ensure_fpointing_fields(chunk_ak)
 
-            # Truncate chunk if it would exceed max_events
             if max_events is not None:
                 remaining = max_events - total_processed
                 if remaining <= 0:
                     break
-                if len(df_chunk) > remaining:
-                    df_chunk = df_chunk.iloc[:remaining]
+                if len(chunk_ak) > remaining:
+                    chunk_ak = chunk_ak[:remaining]
 
+            chunk_dict = {}
+            for field in chunk_ak.fields:
+                field_data = chunk_ak[field]
+                try:
+                    ak.num(field_data)
+                    chunk_dict[field] = ak.to_list(field_data)
+                except (TypeError, ValueError):
+                    chunk_dict[field] = data_processing._to_numpy_1d(field_data)
+
+            df_chunk = pd.DataFrame(chunk_dict)
             # Reset index to local chunk indices (0, 1, 2, ...) to avoid
             # index out-of-bounds when indexing chunk-sized output arrays
             df_chunk = df_chunk.reset_index(drop=True)

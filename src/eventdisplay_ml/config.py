@@ -163,6 +163,12 @@ def configure_apply(analysis_type):
         default=500000,
         help="Number of events to process per chunk (default: 500000)",
     )
+    parser.add_argument(
+        "--max_cores",
+        type=int,
+        help="Maximum number of CPU cores to use for training.",
+        default=1,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -171,11 +177,14 @@ def configure_apply(analysis_type):
     _logger.info(f"Model prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Output file: {model_configs.get('output_file')}")
     _logger.info(f"Image selection: {model_configs.get('image_selection')}")
+    _logger.info(f"Max events: {model_configs.get('max_events')}")
+    _logger.info(f"Max cores: {model_configs.get('max_cores')}")
 
     model_configs["models"], par = load_models(
         analysis_type, model_configs["model_prefix"], model_configs["model_name"]
     )
     model_configs["energy_bins_log10_tev"] = par.get("energy_bins_log10_tev", [])
     model_configs["zenith_bins_deg"] = par.get("zenith_bins_deg", [])
+    model_configs["max_cores"] = model_configs["max_cores"]
 
     return model_configs
