@@ -185,6 +185,5 @@ def configure_apply(analysis_type):
     )
     model_configs["energy_bins_log10_tev"] = par.get("energy_bins_log10_tev", [])
     model_configs["zenith_bins_deg"] = par.get("zenith_bins_deg", [])
-    model_configs["max_cores"] = model_configs["max_cores"]
 
     return model_configs
