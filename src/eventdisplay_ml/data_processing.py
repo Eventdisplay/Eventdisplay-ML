@@ -133,21 +133,8 @@ def _resolve_branch_aliases(tree, branch_list):
     return final, rename, missing
 
 
-def _ensure_fpointing_columns(df):
+def _ensure_fpointing_fields(arr):
     """Ensure fpointing_dx and fpointing_dy exist; fill zeros if missing."""
-
-    def _zero_like_tel_list(tel_list):
-        length = len(tel_list) if hasattr(tel_list, "__len__") else 0
-        return np.zeros(length, dtype=np.float32)
-
-    if "fpointing_dx" not in df:
-        df["fpointing_dx"] = df["DispTelList_T"].apply(_zero_like_tel_list)
-    if "fpointing_dy" not in df:
-        df["fpointing_dy"] = df["DispTelList_T"].apply(_zero_like_tel_list)
-
-
-def _ensure_fpointing_fields_ak(arr):
-    """Ensure fpointing_dx and fpointing_dy exist in an Awkward Array; fill zeros if missing."""
     fields = set(getattr(arr, "fields", []) or [])
     if "DispTelList_T" in fields:
         zeros_like_tel = ak.values_astype(ak.zeros_like(arr["DispTelList_T"]), np.float32)
@@ -158,16 +145,8 @@ def _ensure_fpointing_fields_ak(arr):
     return arr
 
 
-def _ensure_optional_scalar_columns(df, missing_optional):
-    """Fill optional scalar columns like Erec/ErecS with defaults when missing."""
-    if "Erec" in missing_optional and "Erec" not in df:
-        df["Erec"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
-    if "ErecS" in missing_optional and "ErecS" not in df:
-        df["ErecS"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
-
-
-def _ensure_optional_scalar_fields_ak(arr, missing_optional):
-    """Fill optional scalar fields like Erec/ErecS with defaults when missing for Awkward arrays."""
+def _ensure_optional_scalar_fields(arr, missing_optional):
+    """Fill optional scalar fields like Erec/ErecS with defaults when missing."""
     fields = set(getattr(arr, "fields", []) or [])
     n = len(arr)
     if "Erec" in missing_optional and "Erec" not in fields:
@@ -306,7 +285,7 @@ def flatten_telescope_data_vectorized(
         Missing telescopes are filled with NaN.
     """
     flat_features = {}
-    tel_list_matrix = _to_dense_array(df["DispTelList_T"])  # supports pandas or ak via .tolist()
+    tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
     default_value = DEFAULT_FILL_VALUE
 
@@ -530,8 +509,8 @@ def load_training_data(model_configs, file_list, analysis_type):
                     if rename_present:
                         df_ak = ak.rename_fields(df_ak, rename_present)
                 # Ensure optional scalar fields and fpointing fields exist
-                df_ak = _ensure_optional_scalar_fields_ak(df_ak, missing_optional)
-                df_ak = _ensure_fpointing_fields_ak(df_ak)
+                df_ak = _ensure_optional_scalar_fields(df_ak, missing_optional)
+                df_ak = _ensure_fpointing_fields(df_ak)
                 if len(df_ak) == 0:
                     continue
 
