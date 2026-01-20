@@ -1,12 +1,12 @@
 """
-Train XGBoost BDTs stereo reconstruction (direction, energy).
+Train XGBoost BDTs for stereo reconstruction (direction, energy).
 
 Uses x,y offsets calculated from intersection and dispBDT methods plus
 image parameters to train multi-target regression BDTs to predict x,y offsets.
 
 Uses energy related values to estimate event energy.
 
-Separate BDTs are trained for 2, 3, and 4 telescope multiplicity events.
+Trains a single BDT on all telescope multiplicity events.
 """
 
 import logging

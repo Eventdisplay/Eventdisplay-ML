@@ -106,15 +106,27 @@ def load_energy_range(model_parameters):
         raise ValueError("Invalid or missing energy range in model parameters.") from exc
 
 
-def output_file_name(model_prefix, n_tel, energy_bin_number=None):
-    """Generate output filename for the trained model."""
+def output_file_name(model_prefix, n_tel=None, energy_bin_number=None):
+    """Generate output filename for the trained model.
+
+    Parameters
+    ----------
+    model_prefix : str or Path
+        Base path for the model file.
+    n_tel : int or None
+        Number of telescopes. If None, uses 'all' to indicate model handles all multiplicities.
+    energy_bin_number : int, optional
+        Energy bin number for classification models.
+    """
     model_prefix = Path(model_prefix)
 
     output_dir = model_prefix.parent
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
-    filename = f"{model_prefix!s}_ntel{n_tel}"
+    filename = f"{model_prefix!s}"
+    if n_tel is not None:
+        filename = f"{model_prefix!s}_ntel{n_tel}"
     if energy_bin_number is not None:
         filename += f"_ebin{energy_bin_number}"
     filename += ".joblib"

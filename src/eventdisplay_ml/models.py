@@ -2,8 +2,10 @@
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import awkward as ak
 import joblib
 import numpy as np
 import pandas as pd
@@ -13,7 +15,6 @@ from sklearn.model_selection import train_test_split
 
 from eventdisplay_ml import data_processing, features, utils
 from eventdisplay_ml.data_processing import (
-    apply_image_selection,
     energy_in_bins,
     flatten_feature_data,
     zenith_in_bins,
@@ -24,6 +25,11 @@ from eventdisplay_ml.evaluate import (
     evaluation_efficiency,
 )
 
+# Energy ranges for evaluation bins (log10(E/TeV))
+_EVAL_LOG_E_MIN = -2
+_EVAL_LOG_E_MAX = 2.5
+_EVAL_LOG_E_BINS = 9
+
 _logger = logging.getLogger(__name__)
 
 
@@ -33,8 +39,7 @@ def save_models(model_configs):
         model_configs,
         utils.output_file_name(
             model_configs.get("model_prefix"),
-            model_configs.get("n_tel"),
-            model_configs.get("energy_bin_number"),
+            energy_bin_number=model_configs.get("energy_bin_number"),
         ),
     )
 
@@ -68,7 +73,7 @@ def load_models(analysis_type, model_prefix, model_name):
 
 def load_classification_models(model_prefix, model_name):
     """
-    Load XGBoost classification models for different telescope multiplicities from a directory.
+    Load XGBoost classification models.
 
     Parameters
     ----------
@@ -80,46 +85,45 @@ def load_classification_models(model_prefix, model_name):
     Returns
     -------
     dict, dict
-        A dictionary mapping the number of telescopes (n_tel) and energy bin
-        to the corresponding loaded model objects. Also returns a dictionary
-        of model parameters.
+        A dictionary mapping energy bins to the corresponding loaded model objects.
+        Also returns a dictionary of model parameters.
     """
     model_prefix = Path(model_prefix)
     model_dir_path = Path(model_prefix.parent)
 
     models = {}
     par = {}
-    for n_tel in range(2, 5):
-        pattern = f"{model_prefix.name}_ntel{n_tel}_ebin*.joblib"
-        models.setdefault(n_tel, {})
-        for file in sorted(model_dir_path.glob(pattern)):
-            match = re.search(r"_ebin(\d+)\.joblib$", file.name)
-            if not match:
-                _logger.warning(f"Could not extract energy bin from filename: {file.name}")
-                continue
-            e_bin = int(match.group(1))
-            _logger.info(f"Loading model for n_tel={n_tel}, e_bin={e_bin}: {file}")
-            model_data = joblib.load(file)
-            _check_bin(e_bin, model_data.get("energy_bin_number"))
-            _check_bin(n_tel, model_data.get("n_tel"))
-            models[n_tel].setdefault(e_bin, {})
-            try:
-                models[n_tel][e_bin]["model"] = model_data["models"][model_name]["model"]
-            except KeyError:
-                raise KeyError(f"Model name '{model_name}' not found in file: {file}")
-            models[n_tel][e_bin]["features"] = model_data.get("features", [])
-            models[n_tel][e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
-            models[n_tel][e_bin]["thresholds"] = _calculate_classification_thresholds(
-                models[n_tel][e_bin]["efficiency"]
-            )
-            par = _update_parameters(
-                par,
-                model_data.get("zenith_bins_deg"),
-                model_data.get("energy_bins_log10_tev", {}),
-                e_bin,
-            )
 
-    _logger.info(f"Loaded classification model parameters: {par}")
+    pattern = f"{model_prefix.name}_ebin*.joblib"
+    files = sorted(model_dir_path.glob(pattern))
+
+    _logger.info("Loading classification models")
+    for file in files:
+        match = re.search(r"_ebin(\d+)\.joblib$", file.name)
+        if not match:
+            _logger.warning(f"Could not extract energy bin from filename: {file.name}")
+            continue
+        e_bin = int(match.group(1))
+        _logger.info(f"Loading model for e_bin={e_bin}: {file}")
+        model_data = joblib.load(file)
+        _check_bin(e_bin, model_data.get("energy_bin_number"))
+        models.setdefault(e_bin, {})
+        try:
+            models[e_bin]["model"] = model_data["models"][model_name]["model"]
+        except KeyError:
+            raise KeyError(f"Model name '{model_name}' not found in file: {file}")
+        models[e_bin]["features"] = model_data.get("features", [])
+        models[e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
+        models[e_bin]["thresholds"] = _calculate_classification_thresholds(
+            models[e_bin]["efficiency"]
+        )
+        par = _update_parameters(
+            par,
+            model_data.get("zenith_bins_deg"),
+            model_data.get("energy_bins_log10_tev", {}),
+            e_bin,
+        )
+    _logger.info(f"Loaded classification models. Parameters: {par}")
     return models, par
 
 
@@ -185,7 +189,7 @@ def _update_parameters(full_params, zenith_bins, energy_bin, e_bin_number):
 
 def load_regression_models(model_prefix, model_name):
     """
-    Load XGBoost models for different telescope multiplicities from a directory.
+    Load XGBoost models.
 
     Parameters
     ----------
@@ -196,40 +200,36 @@ def load_regression_models(model_prefix, model_name):
 
     Returns
     -------
-    dict[int, Any]
-        A dictionary mapping the number of telescopes (n_tel) to the
-        corresponding loaded model objects. Only models whose files
-        exist in ``model_dir`` are included.
+    dict
+        Model dictionary.
     """
-    model_prefix = Path(model_prefix)
-    model_dir_path = Path(model_prefix.parent)
+    model_path = Path(model_prefix).with_suffix(".joblib")
+    _logger.info(f"Loading regression model: {model_path}")
 
-    models = {}
-    for n_tel in range(2, 5):
-        model_filename = model_dir_path / f"{model_prefix.name}_ntel{n_tel}.joblib"
-        if model_filename.exists():
-            _logger.info(f"Loading model for n_tel={n_tel}: {model_filename}")
-            model_data = joblib.load(model_filename)
-            _check_bin(n_tel, model_data.get("n_tel"))
-            models.setdefault(n_tel, {})["model"] = model_data["models"][model_name]["model"]
-            models[n_tel]["features"] = model_data.get("features", [])
-        else:
-            _logger.warning(f"Model not found: {model_filename}")
-
-    _logger.info("Loaded regression models.")
+    model_data = joblib.load(model_path)
+    models = {
+        model_name: {
+            "model": model_data["models"][model_name]["model"],
+            "features": model_data.get("features", []),
+        }
+    }
+    _logger.info("Loaded regression model.")
     return models, {}
 
 
 def apply_regression_models(df, model_configs):
     """
-    Apply trained XGBoost models for stereo analysis to a DataFrame chunk.
+    Apply trained XGBoost model for stereo analysis to all events.
+
+    All events are processed with a single model trained on all multiplicities.
+    Features are created for all telescopes with DEFAULT_FILL_VALUE defaults for missing telescopes.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
     model_configs : dict
-        Preloaded models dictionary.
+        Preloaded models dictionary with 'tel_config' key.
 
     Returns
     -------
@@ -240,41 +240,40 @@ def apply_regression_models(df, model_configs):
     pred_erec : numpy.ndarray
         Array of predicted Erec values for each event in the chunk.
     """
-    preds = np.full((len(df), 3), np.nan, dtype=np.float32)
+    _logger.info(f"Processing {len(df)} events")
 
-    grouped = df.groupby("DispNImages")
+    tel_config = model_configs.get("tel_config")
+    n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
+
+    flatten_data = flatten_feature_data(
+        df, n_tel, analysis_type="stereo_analysis", training=False, tel_config=tel_config
+    )
+
     models = model_configs["models"]
+    model_data = next(iter(models.values()))
+    flatten_data = flatten_data.reindex(columns=model_data["features"])
+    data_processing.print_variable_statistics(flatten_data)
 
-    for n_tel, group_df in grouped:
-        n_tel = int(n_tel)
-        if n_tel < 2 or n_tel not in models:
-            _logger.warning(f"No model for n_tel={n_tel}")
-            continue
-
-        _logger.info(f"Processing {len(group_df)} events with n_tel={n_tel}")
-
-        flatten_data = flatten_feature_data(
-            group_df, n_tel, analysis_type="stereo_analysis", training=False
-        )
-        flatten_data = flatten_data.reindex(columns=models[n_tel]["features"])
-        data_processing.print_variable_statistics(flatten_data)
-
-        model = models[n_tel]["model"]
-        preds[group_df.index] = model.predict(flatten_data)
+    model = model_data["model"]
+    preds = model.predict(flatten_data)
 
     return preds[:, 0], preds[:, 1], preds[:, 2]
 
 
 def apply_classification_models(df, model_configs, threshold_keys):
     """
-    Apply trained XGBoost classification models to a DataFrame chunk.
+    Apply trained XGBoost classification model to all events.
+
+    All events are processed with models trained on all multiplicities.
+    Features are created for all telescopes with DEFAULT_FILL_VALUE defaults for missing telescopes.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Chunk of events to process.
     model_configs : dict
-        Preloaded models dictionary
+        Preloaded models dictionary with structure {e_bin: {model, features, thresholds}}
+        and 'tel_config' key.
     threshold_keys : list[int]
         Efficiency thresholds (percent) for which to compute binary gamma flags.
 
@@ -285,44 +284,35 @@ def apply_classification_models(df, model_configs, threshold_keys):
         with the index of ``df``.
     is_gamma : dict[int, numpy.ndarray]
         Mapping from efficiency threshold (percent) to binary arrays (0/1) indicating
-        whether each event passes the corresponding classification threshold using
-        that bin's stored thresholds.
+        whether each event passes the corresponding classification threshold.
     """
     class_probability = np.full(len(df), np.nan, dtype=np.float32)
     is_gamma = {eff: np.zeros(len(df), dtype=np.uint8) for eff in threshold_keys}
     models = model_configs["models"]
 
-    # 1. Group by Number of Images (n_tel)
-    for n_tel, group_ntel_df in df.groupby("DispNImages"):
-        n_tel = int(n_tel)
-        if n_tel < 2 or n_tel not in models:
-            _logger.warning(f"No model for n_tel={n_tel}")
+    tel_config = model_configs.get("tel_config")
+    n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
+
+    for e_bin, group_df in df.groupby("e_bin"):
+        e_bin = int(e_bin)
+        if e_bin == -1:
+            _logger.warning("Skipping events with e_bin = -1")
             continue
 
-        # 2. Group by Energy Bin (e_bin)
-        for e_bin, group_df in group_ntel_df.groupby("e_bin"):
-            e_bin = int(e_bin)
-            if e_bin == -1:
-                _logger.warning("Skipping events with e_bin = -1")
-                continue
-            if e_bin not in models[n_tel]:
-                _logger.warning(f"No model for n_tel={n_tel}, e_bin={e_bin}")
-                continue
+        _logger.info(f"Processing {len(group_df)} events with bin={e_bin}")
 
-            _logger.info(f"Processing {len(group_df)} events: n_tel={n_tel}, bin={e_bin}")
+        flatten_data = flatten_feature_data(
+            group_df, n_tel, analysis_type="classification", training=False, tel_config=tel_config
+        )
+        model = models[e_bin]["model"]
+        flatten_data = flatten_data.reindex(columns=models[e_bin]["features"])
+        class_probs = model.predict_proba(flatten_data)[:, 1]
+        class_probability[group_df.index] = class_probs
 
-            flatten_data = flatten_feature_data(
-                group_df, n_tel, analysis_type="classification", training=False
-            )
-            model = models[n_tel][e_bin]["model"]
-            flatten_data = flatten_data.reindex(columns=models[n_tel][e_bin]["features"])
-            class_probs = model.predict_proba(flatten_data)[:, 1]
-            class_probability[group_df.index] = class_probs
-
-            thresholds = models[n_tel][e_bin].get("thresholds", {})
-            for eff, threshold in thresholds.items():
-                if eff in is_gamma:
-                    is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
+        thresholds = models[e_bin].get("thresholds", {})
+        for eff, threshold in thresholds.items():
+            if eff in is_gamma:
+                is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
 
     return class_probability, is_gamma
 
@@ -340,8 +330,17 @@ def process_file_chunked(analysis_type, model_configs):
     """
     branch_list = features.features(analysis_type, training=False)
     _logger.info(f"Using branches: {branch_list}")
+    rename_map = {}
 
-    selected_indices = utils.parse_image_selection(model_configs.get("image_selection"))
+    # Read telescope configuration from input file and resolve branch aliases
+    with uproot.open(model_configs.get("input_file")) as root_file:
+        tel_config = data_processing.read_telescope_config(root_file)
+        model_configs["tel_config"] = tel_config
+
+        tree = root_file["data"]
+        branch_list, rename_map, missing_optional = data_processing._resolve_branch_aliases(
+            tree, branch_list
+        )
 
     max_events = model_configs.get("max_events", None)
     chunk_size = model_configs.get("chunk_size", 500000)
@@ -359,25 +358,45 @@ def process_file_chunked(analysis_type, model_configs):
             }
         )
 
+    executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 8))
     with uproot.recreate(model_configs.get("output_file")) as root_file:
         tree = _output_tree(analysis_type, root_file, threshold_keys)
         total_processed = 0
 
-        for df_chunk in uproot.iterate(
+        for chunk_ak in uproot.iterate(
             f"{model_configs.get('input_file')}:data",
             branch_list,
-            library="pd",
+            library="ak",
             step_size=model_configs.get("chunk_size"),
+            decompression_executor=executor,
         ):
-            if df_chunk.empty:
+            if len(chunk_ak) == 0:
                 continue
 
-            df_chunk = apply_image_selection(df_chunk, selected_indices, analysis_type)
-            if df_chunk.empty:
-                continue
-            if max_events is not None and total_processed >= max_events:
-                break
+            if rename_map:
+                rename_present = {k: v for k, v in rename_map.items() if k in chunk_ak.fields}
+                if rename_present:
+                    chunk_ak = ak.rename_fields(chunk_ak, rename_present)
+            chunk_ak = data_processing._ensure_optional_scalar_fields(chunk_ak, missing_optional)
+            chunk_ak = data_processing._ensure_fpointing_fields(chunk_ak)
 
+            if max_events is not None:
+                remaining = max_events - total_processed
+                if remaining <= 0:
+                    break
+                if len(chunk_ak) > remaining:
+                    chunk_ak = chunk_ak[:remaining]
+
+            chunk_dict = {}
+            for field in chunk_ak.fields:
+                field_data = chunk_ak[field]
+                try:
+                    ak.num(field_data)
+                    chunk_dict[field] = ak.to_list(field_data)
+                except (TypeError, ValueError):
+                    chunk_dict[field] = data_processing._to_numpy_1d(field_data)
+
+            df_chunk = pd.DataFrame(chunk_dict)
             # Reset index to local chunk indices (0, 1, 2, ...) to avoid
             # index out-of-bounds when indexing chunk-sized output arrays
             df_chunk = df_chunk.reset_index(drop=True)
@@ -478,9 +497,8 @@ def train_regression(df, model_configs):
     model_configs : dict
         Dictionary of model configurations.
     """
-    n_tel = model_configs["n_tel"]
     if df.empty:
-        _logger.warning(f"Skipping training for n_tel={n_tel} due to empty data.")
+        _logger.warning("Skipping training due to empty data.")
         return None
 
     x_cols = df.columns.difference(model_configs["targets"])
@@ -488,19 +506,41 @@ def train_regression(df, model_configs):
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
 
-    x_train, x_test, y_train, y_test = train_test_split(
-        x_data,
-        y_data,
-        train_size=model_configs.get("train_test_fraction", 0.5),
-        random_state=model_configs.get("random_state", None),
-    )
+    # Calculate energy bin weights for balancing
+    bin_result = _log_energy_bin_counts(df)
+    sample_weights = bin_result[2] if bin_result else None
 
-    _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    if sample_weights is not None:
+        x_train, x_test, y_train, y_test, weights_train, _ = train_test_split(
+            x_data,
+            y_data,
+            sample_weights,
+            train_size=model_configs.get("train_test_fraction", 0.5),
+            random_state=model_configs.get("random_state", None),
+        )
+    else:
+        x_train, x_test, y_train, y_test = train_test_split(
+            x_data,
+            y_data,
+            train_size=model_configs.get("train_test_fraction", 0.5),
+            random_state=model_configs.get("random_state", None),
+        )
+        weights_train = None
+
+    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    if weights_train is not None:
+        _logger.info(
+            f"Using energy-bin-based sample weights (mean={weights_train.mean():.3f}, "
+            f"std={weights_train.std():.3f})"
+        )
 
     for name, cfg in model_configs.get("models", {}).items():
-        _logger.info(f"Training {name} for n_tel={n_tel}...")
+        _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train)
+        if weights_train is not None:
+            model.fit(x_train, y_train, sample_weight=weights_train)
+        else:
+            model.fit(x_train, y_train)
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 
@@ -518,9 +558,8 @@ def train_classification(df, model_configs):
     model_configs : dict
         Dictionary of model configurations.
     """
-    n_tel = model_configs["n_tel"]
     if df[0].empty or df[1].empty:
-        _logger.warning(f"Skipping training for n_tel={n_tel} due to empty data.")
+        _logger.warning("Skipping training due to empty data.")
         return None
 
     df[0]["label"] = 1
@@ -538,10 +577,10 @@ def train_classification(df, model_configs):
         stratify=y_data,
     )
 
-    _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
 
     for name, cfg in model_configs.get("models", {}).items():
-        _logger.info(f"Training {name} for n_tel={n_tel}...")
+        _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
         model.fit(x_train, y_train)
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
@@ -549,3 +588,45 @@ def train_classification(df, model_configs):
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
 
     return model_configs
+
+
+def _log_energy_bin_counts(df):
+    """Log counts of training events per evaluation energy bin using true log10 energy.
+
+    Returns
+    -------
+    tuple or None
+        (bin_edges, counts_dict, weights_array) where:
+        - bin_edges: np.ndarray of bin boundaries
+        - counts_dict: dict mapping intervals to event counts
+        - weights_array: np.ndarray of inverse-count weights for each event (normalized)
+        Returns None if MCe0 not found.
+    """
+    if "MCe0" not in df:
+        _logger.warning("MCe0 not found; skipping energy-bin availability printout.")
+        return None
+
+    bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
+    categories = pd.cut(df["MCe0"], bins=bins, include_lowest=True)
+    counts = categories.value_counts(sort=False)
+    _logger.info("Training events per energy bin (log10 E true):")
+    for interval, count in counts.items():
+        _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")
+
+    # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
+    bin_indices = pd.cut(df["MCe0"], bins=bins, include_lowest=True, labels=False)
+    count_per_bin = counts.values
+    # Inverse of count (avoiding divide by zero)
+    inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
+    # Normalize so mean weight is 1.0
+    inverse_counts = inverse_counts / inverse_counts.mean()
+
+    # Assign weight to each event based on its bin
+    weights = np.ones(len(df), dtype=np.float32)
+    for i, inv_count in enumerate(inverse_counts):
+        mask = bin_indices == i
+        weights[mask] = inv_count
+
+    _logger.info(f"Energy bin weights (inverse-count, normalized): {inverse_counts}")
+
+    return bins, dict(counts.items()), weights

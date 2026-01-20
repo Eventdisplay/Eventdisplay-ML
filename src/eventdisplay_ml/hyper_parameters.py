@@ -15,7 +15,7 @@ XGB_REGRESSION_HYPERPARAMETERS = {
             "max_depth": 5,
             "min_child_weight": 1.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
             "objective": "reg:squarederror",
-            "n_jobs": 4,
+            "n_jobs": 8,
             "random_state": None,
             "tree_method": "hist",
             "subsample": 0.7,  # Default sensible value
@@ -36,6 +36,7 @@ XGB_CLASSIFICATION_HYPERPARAMETERS = {
             "subsample": 0.8,
             "colsample_bytree": 0.8,
             "random_state": None,
+            "n_jobs": 8,
         },
     }
 }
@@ -87,18 +88,17 @@ def _load_hyper_parameters_from_file(config_file):
 
 
 def pre_cuts_regression(n_tel):
-    """Get pre-cuts for regression analysis."""
-    event_cut = f"(DispNImages == {n_tel})"
+    """Get pre-cuts for regression analysis (no multiplicity filter)."""
+    event_cut = ""
     if PRE_CUTS_REGRESSION:
-        event_cut += " & " + " & ".join(f"({c})" for c in PRE_CUTS_REGRESSION)
-    _logger.info(f"Pre-cuts (n_tel={n_tel}): {event_cut}")
-    return event_cut
+        event_cut = " & ".join(f"({c})" for c in PRE_CUTS_REGRESSION)
+    _logger.info(f"Pre-cuts (regression): {event_cut if event_cut else 'None'}")
+    return event_cut if event_cut else None
 
 
 def pre_cuts_classification(n_tel, e_min, e_max):
-    """Get pre-cuts for classification analysis."""
-    event_cut = f"(DispNImages == {n_tel})"
-    event_cut += f" & (Erec >= {e_min}) & (Erec < {e_max})"
+    """Get pre-cuts for classification analysis (no multiplicity filter)."""
+    event_cut = f"(Erec >= {e_min}) & (Erec < {e_max})"
     event_cut += " & " + " & ".join(f"({c})" for c in PRE_CUTS_CLASSIFICATION)
-    _logger.info(f"Pre-cuts (n_tel={n_tel}): {event_cut}")
+    _logger.info(f"Pre-cuts (classification): {event_cut}")
     return event_cut
