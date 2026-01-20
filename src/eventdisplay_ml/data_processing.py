@@ -276,19 +276,11 @@ def flatten_telescope_data_vectorized(
 
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    has_core_and_pointing = tel_config and {
-        "Xcore",
-        "Ycore",
-        "ArrayPointing_Elevation",
-        "ArrayPointing_Azimuth",
-    }.issubset(df.columns)
-    core_x = core_y = elev_rad = azim_rad = valid_mask = None
-    if has_core_and_pointing:
-        core_x = df["Xcore"].to_numpy(dtype=np.float64)
-        core_y = df["Ycore"].to_numpy(dtype=np.float64)
-        elev_rad = np.radians(df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64))
-        azim_rad = np.radians(df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64))
-        valid_mask = (core_x >= 0) & (core_y >= 0)
+    core_x = df["Xcore"].to_numpy(dtype=np.float64)
+    core_y = df["Ycore"].to_numpy(dtype=np.float64)
+    elev_rad = np.radians(df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64))
+    azim_rad = np.radians(df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64))
+    valid_mask = (core_x >= 0) & (core_y >= 0)
 
     for var in features:
         if var == "mirror_areas" and tel_config:
@@ -298,27 +290,21 @@ def flatten_telescope_data_vectorized(
             continue
 
         if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
-            if has_core_and_pointing:
-                _logger.info(f"Computing synthetic feature: {var}")
-                flat_features.update(
-                    _make_relative_coord_columns(
-                        var,
-                        tel_config,
-                        max_tel_id,
-                        n_evt,
-                        core_x,
-                        core_y,
-                        elev_rad,
-                        azim_rad,
-                        valid_mask,
-                        default_value,
-                    )
+            _logger.info(f"Computing synthetic feature: {var}")
+            flat_features.update(
+                _make_relative_coord_columns(
+                    var,
+                    tel_config,
+                    max_tel_id,
+                    n_evt,
+                    core_x,
+                    core_y,
+                    elev_rad,
+                    azim_rad,
+                    valid_mask,
+                    default_value,
                 )
-            else:
-                _logger.warning(f"Cannot compute {var}: missing Xcore/Ycore or pointing direction")
-                for tel_idx in range(max_tel_id + 1):
-                    col_name = f"{var}_{tel_idx}"
-                    flat_features[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+            )
             continue
 
         data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
@@ -529,71 +515,6 @@ def load_training_data(model_configs, file_list, analysis_type):
     print_variable_statistics(df_final)
 
     return df_final
-
-
-def apply_image_selection(df, selected_indices, analysis_type, training=False):
-    """
-    Filter and pad telescope lists for selected indices.
-
-    # TODO still needed?
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Input DataFrame containing telescope data.
-    selected_indices : list[int] or None
-        List of selected telescope indices. If None or all 4 telescopes
-        are selected, the DataFrame is returned unchanged.
-    analysis_type : str, optional
-        Type of analysis (e.g., "stereo_analysis")
-    training : bool, optional
-        If True, indicates training mode. Default is False.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame with updated "DispTelList_T" and "DispNImages" columns,
-        and per-telescope variables padded to length 4 with NaN.
-    """
-    if selected_indices is None or len(selected_indices) == 4:
-        return df
-
-    selected_set = set(selected_indices)
-
-    def calculate_intersection(tel_list):
-        return [tel_idx for tel_idx in tel_list if tel_idx in selected_set]
-
-    df = df.copy()
-    df["DispTelList_T_new"] = df["DispTelList_T"].apply(calculate_intersection)
-    df["DispNImages_new"] = df["DispTelList_T_new"].apply(len)
-
-    _logger.info(
-        f"\n{df[['DispNImages', 'DispTelList_T', 'DispNImages_new', 'DispTelList_T_new']].head(20).to_string()}"
-    )
-
-    df["DispTelList_T"] = df["DispTelList_T_new"]
-    df["DispNImages"] = df["DispNImages_new"]
-    df = df.drop(columns=["DispTelList_T_new", "DispNImages_new"])
-
-    pad_vars = features.telescope_features(analysis_type)
-
-    for var_name in pad_vars:
-        if var_name in df.columns:
-            df[var_name] = df[var_name].apply(_pad_to_four)
-
-    return df
-
-
-def _pad_to_four(arr_like):
-    """Pad a per-telescope array-like to length 4 with NaN values."""
-    # TODO still needed?
-    if isinstance(arr_like, (list, np.ndarray)):
-        arr = np.asarray(arr_like, dtype=np.float32)
-        pad = max(0, 4 - arr.shape[0])
-        if pad:
-            arr = np.pad(arr, (0, pad), mode="constant", constant_values=np.nan)
-        return arr
-    return arr_like
 
 
 def apply_clip_intervals(df, n_tel=None, apply_log10=None):

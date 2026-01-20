@@ -13,7 +13,6 @@ from sklearn.model_selection import train_test_split
 
 from eventdisplay_ml import data_processing, features, utils
 from eventdisplay_ml.data_processing import (
-    apply_image_selection,
     energy_in_bins,
     flatten_feature_data,
     zenith_in_bins,
@@ -333,8 +332,6 @@ def process_file_chunked(analysis_type, model_configs):
     _logger.info(f"Using branches: {branch_list}")
     rename_map = {}
 
-    selected_indices = utils.parse_image_selection(model_configs.get("image_selection"))
-
     # Read telescope configuration from input file and resolve branch aliases
     with uproot.open(model_configs.get("input_file")) as root_file:
         tel_config = data_processing.read_telescope_config(root_file)
@@ -379,9 +376,6 @@ def process_file_chunked(analysis_type, model_configs):
             data_processing._ensure_optional_scalar_columns(df_chunk, missing_optional)
             data_processing._ensure_fpointing_columns(df_chunk)
 
-            df_chunk = apply_image_selection(df_chunk, selected_indices, analysis_type)
-            if df_chunk.empty:
-                continue
             if max_events is not None and total_processed >= max_events:
                 break
 
@@ -495,7 +489,7 @@ def train_regression(df, model_configs):
     """
     n_tel = model_configs["n_tel"]
     if df.empty:
-        _logger.warning(f"Skipping training for n_tel={n_tel} due to empty data.")
+        _logger.warning("Skipping training due to empty data.")
         return None
 
     x_cols = df.columns.difference(model_configs["targets"])
@@ -554,9 +548,8 @@ def train_classification(df, model_configs):
     model_configs : dict
         Dictionary of model configurations.
     """
-    n_tel = model_configs["n_tel"]
     if df[0].empty or df[1].empty:
-        _logger.warning(f"Skipping training for n_tel={n_tel} due to empty data.")
+        _logger.warning("Skipping training due to empty data.")
         return None
 
     df[0]["label"] = 1
@@ -574,10 +567,10 @@ def train_classification(df, model_configs):
         stratify=y_data,
     )
 
-    _logger.info(f"n_tel={n_tel}: Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
 
     for name, cfg in model_configs.get("models", {}).items():
-        _logger.info(f"Training {name} for n_tel={n_tel}...")
+        _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
         model.fit(x_train, y_train)
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
