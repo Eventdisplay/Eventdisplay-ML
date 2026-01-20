@@ -5,7 +5,9 @@ Provides common functions for flattening and preprocessing telescope array data.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
+import awkward as ak
 import numpy as np
 import pandas as pd
 import uproot
@@ -144,12 +146,35 @@ def _ensure_fpointing_columns(df):
         df["fpointing_dy"] = df["DispTelList_T"].apply(_zero_like_tel_list)
 
 
+def _ensure_fpointing_fields_ak(arr):
+    """Ensure fpointing_dx and fpointing_dy exist in an Awkward Array; fill zeros if missing."""
+    fields = set(getattr(arr, "fields", []) or [])
+    if "DispTelList_T" in fields:
+        zeros_like_tel = ak.values_astype(ak.zeros_like(arr["DispTelList_T"]), np.float32)
+        if "fpointing_dx" not in fields:
+            arr = ak.with_field(arr, zeros_like_tel, "fpointing_dx")
+        if "fpointing_dy" not in fields:
+            arr = ak.with_field(arr, zeros_like_tel, "fpointing_dy")
+    return arr
+
+
 def _ensure_optional_scalar_columns(df, missing_optional):
     """Fill optional scalar columns like Erec/ErecS with defaults when missing."""
     if "Erec" in missing_optional and "Erec" not in df:
         df["Erec"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
     if "ErecS" in missing_optional and "ErecS" not in df:
         df["ErecS"] = np.full(len(df), DEFAULT_FILL_VALUE, dtype=np.float32)
+
+
+def _ensure_optional_scalar_fields_ak(arr, missing_optional):
+    """Fill optional scalar fields like Erec/ErecS with defaults when missing for Awkward arrays."""
+    fields = set(getattr(arr, "fields", []) or [])
+    n = len(arr)
+    if "Erec" in missing_optional and "Erec" not in fields:
+        arr = ak.with_field(arr, np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32), "Erec")
+    if "ErecS" in missing_optional and "ErecS" not in fields:
+        arr = ak.with_field(arr, np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32), "ErecS")
+    return arr
 
 
 def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
@@ -281,16 +306,16 @@ def flatten_telescope_data_vectorized(
         Missing telescopes are filled with NaN.
     """
     flat_features = {}
-    tel_list_matrix = _to_dense_array(df["DispTelList_T"])
+    tel_list_matrix = _to_dense_array(df["DispTelList_T"])  # supports pandas or ak via .tolist()
     n_evt = len(df)
     default_value = DEFAULT_FILL_VALUE
 
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    core_x = df["Xcore"].to_numpy(dtype=np.float64)
-    core_y = df["Ycore"].to_numpy(dtype=np.float64)
-    elev_rad = np.radians(df["ArrayPointing_Elevation"].to_numpy(dtype=np.float64))
-    azim_rad = np.radians(df["ArrayPointing_Azimuth"].to_numpy(dtype=np.float64))
+    core_x = _to_numpy_1d(df["Xcore"], np.float64)
+    core_y = _to_numpy_1d(df["Ycore"], np.float64)
+    elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float64))
+    azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float64))
     valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
 
     for var in features:
@@ -318,13 +343,14 @@ def flatten_telescope_data_vectorized(
             )
             continue
 
-        data = _to_dense_array(df[var]) if var in df else np.full((n_evt, n_tel), np.nan)
+        data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
         flat_features.update(
             _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value)
         )
 
-    df_flat = flatten_telescope_variables(n_tel, flat_features, df.index, tel_config)
-    return pd.concat([df_flat, extra_columns(df, analysis_type, training)], axis=1)
+    index = _get_index(df, n_evt)
+    df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
+    return pd.concat([df_flat, extra_columns(df, analysis_type, training, index)], axis=1)
 
 
 def _to_padded_array(arrays):
@@ -361,6 +387,37 @@ def _to_dense_array(col):
         return np.vstack(arrays)
     except (ValueError, TypeError):
         return _to_padded_array(arrays)
+
+
+def _to_numpy_1d(x, dtype=np.float64):
+    """Convert Series/array/ak.Array to a 1D numpy array with dtype."""
+    if hasattr(x, "to_numpy"):
+        try:
+            return x.to_numpy(dtype=dtype)
+        except TypeError:
+            return np.asarray(x).astype(dtype)
+    if isinstance(x, ak.Array):
+        return ak.to_numpy(x).astype(dtype)
+    return np.asarray(x, dtype=dtype)
+
+
+def _has_field(df_like, name):
+    """Check presence of a field/column in pandas DataFrame or Awkward Array."""
+    if isinstance(df_like, pd.DataFrame):
+        return name in df_like.columns
+    if isinstance(df_like, (ak.Array, ak.Record)):
+        return name in (getattr(df_like, "fields", []) or [])
+    try:
+        return name in df_like
+    except Exception:
+        return False
+
+
+def _get_index(df_like, n):
+    """Get an index for DataFrame construction from pandas or fallback to RangeIndex."""
+    if isinstance(df_like, pd.DataFrame):
+        return df_like.index
+    return pd.RangeIndex(n)
 
 
 def flatten_feature_data(group_df, ntel, analysis_type, training, tel_config=None):
@@ -444,6 +501,7 @@ def load_training_data(model_configs, file_list, analysis_type):
 
     tel_config = None  # Will be read from first file
     dfs = []
+    executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
     for f in input_files:
         try:
             with uproot.open(f) as root_file:
@@ -461,28 +519,36 @@ def load_training_data(model_configs, file_list, analysis_type):
                 resolved_branch_list, rename_map, missing_optional = _resolve_branch_aliases(
                     tree, branch_list
                 )
-                df_file = tree.arrays(
-                    resolved_branch_list, cut=model_configs.get("pre_cuts", None), library="pd"
+                df_ak = tree.arrays(
+                    resolved_branch_list,
+                    cut=model_configs.get("pre_cuts", None),
+                    library="ak",
+                    decompression_executor=executor,
                 )
                 if rename_map:
-                    df_file.rename(columns=rename_map, inplace=True)
-                _ensure_optional_scalar_columns(df_file, missing_optional)
-                _ensure_fpointing_columns(df_file)
-                if df_file.empty:
+                    rename_present = {k: v for k, v in rename_map.items() if k in df_ak.fields}
+                    if rename_present:
+                        df_ak = ak.rename_fields(df_ak, rename_present)
+                # Ensure optional scalar fields and fpointing fields exist
+                df_ak = _ensure_optional_scalar_fields_ak(df_ak, missing_optional)
+                df_ak = _ensure_fpointing_fields_ak(df_ak)
+                if len(df_ak) == 0:
                     continue
 
-                if max_events_per_file and len(df_file) > max_events_per_file:
-                    df_file = df_file.sample(n=max_events_per_file, random_state=random_state)
+                if max_events_per_file and len(df_ak) > max_events_per_file:
+                    rng = np.random.default_rng(random_state)
+                    indices = rng.choice(len(df_ak), max_events_per_file, replace=False)
+                    df_ak = df_ak[indices]
 
                 n_before = tree.num_entries
                 _logger.info(
-                    f"Number of events before / after event cut: {n_before} / {len(df_file)}"
-                    f" (fraction retained: {len(df_file) / n_before:.4f})"
+                    f"Number of events before / after event cut: {n_before} / {len(df_ak)}"
+                    f" (fraction retained: {len(df_ak) / n_before:.4f})"
                 )
 
-                # Flatten using telescope configuration
+                # Flatten using telescope configuration (conversion to pandas happens inside)
                 df_flat = flatten_telescope_data_vectorized(
-                    df_file,
+                    df_ak,
                     tel_config["max_tel_id"] + 1,
                     features.telescope_features(analysis_type),
                     analysis_type,
@@ -490,18 +556,18 @@ def load_training_data(model_configs, file_list, analysis_type):
                     tel_config=tel_config,
                 )
                 if analysis_type == "stereo_analysis":
-                    df_flat["MCxoff"] = df_file["MCxoff"]
-                    df_flat["MCyoff"] = df_file["MCyoff"]
-                    df_flat["MCe0"] = np.log10(df_file["MCe0"])
+                    df_flat["MCxoff"] = _to_numpy_1d(df_ak["MCxoff"], np.float32)
+                    df_flat["MCyoff"] = _to_numpy_1d(df_ak["MCyoff"], np.float32)
+                    df_flat["MCe0"] = np.log10(_to_numpy_1d(df_ak["MCe0"], np.float32))
                 elif analysis_type == "classification":
                     df_flat["ze_bin"] = zenith_in_bins(
-                        90.0 - df_file["ArrayPointing_Elevation"],
+                        90.0 - _to_numpy_1d(df_ak["ArrayPointing_Elevation"], np.float64),
                         model_configs.get("zenith_bins_deg", []),
                     )
 
                 dfs.append(df_flat)
 
-                del df_file
+                del df_ak
         except Exception as e:
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
@@ -618,35 +684,42 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     return df_flat
 
 
-def extra_columns(df, analysis_type, training):
+def extra_columns(df, analysis_type, training, index):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
         data = {
-            "Xoff_weighted_bdt": df["Xoff"].astype(np.float32),
-            "Yoff_weighted_bdt": df["Yoff"].astype(np.float32),
-            "Xoff_intersect": df["Xoff_intersect"].astype(np.float32),
-            "Yoff_intersect": df["Yoff_intersect"].astype(np.float32),
-            "Diff_Xoff": (df["Xoff"] - df["Xoff_intersect"]).astype(np.float32),
-            "Diff_Yoff": (df["Yoff"] - df["Yoff_intersect"]).astype(np.float32),
-            "Erec": df["Erec"].astype(np.float32),
-            "ErecS": df["ErecS"].astype(np.float32),
-            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
+            "Xoff_weighted_bdt": _to_numpy_1d(df["Xoff"], np.float32),
+            "Yoff_weighted_bdt": _to_numpy_1d(df["Yoff"], np.float32),
+            "Xoff_intersect": _to_numpy_1d(df["Xoff_intersect"], np.float32),
+            "Yoff_intersect": _to_numpy_1d(df["Yoff_intersect"], np.float32),
+            "Diff_Xoff": (
+                _to_numpy_1d(df["Xoff"], np.float32)
+                - _to_numpy_1d(df["Xoff_intersect"], np.float32)
+            ).astype(np.float32),
+            "Diff_Yoff": (
+                _to_numpy_1d(df["Yoff"], np.float32)
+                - _to_numpy_1d(df["Yoff_intersect"], np.float32)
+            ).astype(np.float32),
+            "Erec": _to_numpy_1d(df["Erec"], np.float32),
+            "ErecS": _to_numpy_1d(df["ErecS"], np.float32),
+            "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "Geomagnetic_Angle": calculate_geomagnetic_angles(
-                df["ArrayPointing_Azimuth"], df["ArrayPointing_Elevation"]
+                _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float64),
+                _to_numpy_1d(df["ArrayPointing_Elevation"], np.float64),
             ),
         }
     elif "classification" in analysis_type:
         data = {
-            "MSCW": df["MSCW"].astype(np.float32),
-            "MSCL": df["MSCL"].astype(np.float32),
-            "EChi2S": df["EChi2S"].astype(np.float32),
-            "EmissionHeight": df["EmissionHeight"].astype(np.float32),
-            "EmissionHeightChi2": df["EmissionHeightChi2"].astype(np.float32),
+            "MSCW": _to_numpy_1d(df["MSCW"], np.float32),
+            "MSCL": _to_numpy_1d(df["MSCL"], np.float32),
+            "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
+            "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
+            "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
         }
         if not training:
-            data["ze_bin"] = df["ze_bin"].astype(np.float32)
+            data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
 
-    df_extra = pd.DataFrame(data, index=df.index)
+    df_extra = pd.DataFrame(data, index=index)
     apply_clip_intervals(
         df_extra,
         apply_log10=[
@@ -701,5 +774,6 @@ def print_variable_statistics(df):
         mean_val = np.mean(data)
         rms_val = np.sqrt(np.mean(np.square(data)))
         _logger.info(
-            f"{col:25s} min: {min_val:10.4g}  max: {max_val:10.4g}  mean: {mean_val:10.4g}  rms: {rms_val:10.4g}"
+            f"{col:25s} min: {min_val:10.4g}  max: {max_val:10.4g}  "
+            f"mean: {mean_val:10.4g}  rms: {rms_val:10.4g}"
         )

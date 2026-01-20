@@ -73,6 +73,12 @@ def configure_training(analysis_type):
             help="Energy bin number for selection (optional).",
             default=0,
         )
+    parser.add_argument(
+        "--max_cores",
+        type=int,
+        help="Maximum number of CPU cores to use for training.",
+        default=1,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -81,6 +87,7 @@ def configure_training(analysis_type):
     _logger.info(f"Model output prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Train vs test fraction: {model_configs['train_test_fraction']}")
     _logger.info(f"Max events: {model_configs['max_events']}")
+    _logger.info(f"Max CPU cores: {model_configs['max_cores']}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
