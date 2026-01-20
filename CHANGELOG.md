@@ -7,6 +7,14 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v0.4.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.4.0) - 2026-01-20
+
+### New Features
+
+- Apply unified clipping settings to feature variables. ([#28](https://github.com/Eventdisplay/Eventdisplay-ML/pull/28))
+- Add angle between pointing direction and geomagnetic field vector as feature. ([#28](https://github.com/Eventdisplay/Eventdisplay-ML/pull/28))
+
+
 ## [v0.3.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.3.0) - 2026-01-14
 
 ### New Features
