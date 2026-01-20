@@ -365,11 +365,15 @@ def _to_dense_array(col):
         padded = ak.pad_none(col, target=int(ak.max(ak.num(col))), axis=1)
         return ak.to_numpy(ak.fill_none(padded, np.nan))
 
-    arrays = col.tolist() if hasattr(col, "tolist") else list(col)
+    if isinstance(col, pd.Series):
+        col = col.values
+
     try:
-        return np.vstack(arrays)
+        ak_arr = ak.from_iter(col)
+        padded = ak.pad_none(ak_arr, target=ak.max(ak.num(ak_arr)), axis=1)
+        return ak.to_numpy(ak.fill_none(padded, np.nan))
     except (ValueError, TypeError):
-        return _to_padded_array(arrays)
+        return _to_padded_array(col)
 
 
 def _to_numpy_1d(x, dtype=np.float32):
