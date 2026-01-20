@@ -291,10 +291,10 @@ def flatten_telescope_data_vectorized(
 
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    core_x = _to_numpy_1d(df["Xcore"], np.float64)
-    core_y = _to_numpy_1d(df["Ycore"], np.float64)
-    elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float64))
-    azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float64))
+    core_x = _to_numpy_1d(df["Xcore"], np.float32)
+    core_y = _to_numpy_1d(df["Ycore"], np.float32)
+    elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
+    azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
     valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
 
     for var in features:
@@ -368,7 +368,7 @@ def _to_dense_array(col):
         return _to_padded_array(arrays)
 
 
-def _to_numpy_1d(x, dtype=np.float64):
+def _to_numpy_1d(x, dtype=np.float32):
     """Convert Series/array/ak.Array to a 1D numpy array with dtype."""
     if hasattr(x, "to_numpy"):
         try:
@@ -540,7 +540,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     df_flat["MCe0"] = np.log10(_to_numpy_1d(df_ak["MCe0"], np.float32))
                 elif analysis_type == "classification":
                     df_flat["ze_bin"] = zenith_in_bins(
-                        90.0 - _to_numpy_1d(df_ak["ArrayPointing_Elevation"], np.float64),
+                        90.0 - _to_numpy_1d(df_ak["ArrayPointing_Elevation"], np.float32),
                         model_configs.get("zenith_bins_deg", []),
                     )
 
@@ -683,8 +683,8 @@ def extra_columns(df, analysis_type, training, index):
             "ErecS": _to_numpy_1d(df["ErecS"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "Geomagnetic_Angle": calculate_geomagnetic_angles(
-                _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float64),
-                _to_numpy_1d(df["ArrayPointing_Elevation"], np.float64),
+                _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32),
+                _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
             ),
         }
     elif "classification" in analysis_type:
