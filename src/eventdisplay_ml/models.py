@@ -617,9 +617,7 @@ def _log_energy_bin_counts(df):
     # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
     bin_indices = pd.cut(df["MCe0"], bins=bins, include_lowest=True, labels=False)
     count_per_bin = counts.values
-    # Inverse of count (avoiding divide by zero)
     inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
-    # Normalize so mean weight is 1.0
     inverse_counts = inverse_counts / inverse_counts.mean()
 
     # Assign weight to each event based on its energy bin
@@ -636,8 +634,6 @@ def _log_energy_bin_counts(df):
     for mult, count in mult_counts.items():
         _logger.info(f"  {int(mult)} telescopes: {int(count)}")
 
-    # Create multiplicity weight mapping: {2: weight_2, 3: weight_3, 4: weight_4, ...}
-    # Inverse frequency normalized so average is 1.0
     w_multiplicity = (df["DispNImages"] ** 2).to_numpy().astype(np.float32)
     w_multiplicity /= np.mean(w_multiplicity)
 
