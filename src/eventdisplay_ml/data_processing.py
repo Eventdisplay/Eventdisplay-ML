@@ -11,6 +11,7 @@ import awkward as ak
 import numpy as np
 import pandas as pd
 import uproot
+from scipy.spatial import ConvexHull
 
 from eventdisplay_ml import features, utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
@@ -388,7 +389,9 @@ def flatten_telescope_data_vectorized(
 
     index = _get_index(df, n_evt)
     df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
-    return pd.concat([df_flat, extra_columns(df, analysis_type, training, index)], axis=1)
+    return pd.concat(
+        [df_flat, extra_columns(df, analysis_type, training, index, tel_config)], axis=1
+    )
 
 
 def _to_padded_array(arrays):
@@ -731,7 +734,59 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     return df_flat
 
 
-def extra_columns(df, analysis_type, training, index):
+def _calculate_array_footprint(tel_config, elev_rad, tel_list_matrix):
+    """
+    Calculate array footprint area using convex hull of active telescope positions per event.
+
+    Parameters
+    ----------
+    tel_config : dict
+        Telescope configuration with 'tel_x', 'tel_y', and 'tel_ids' arrays.
+    elev_rad : numpy.ndarray
+        Elevation angles in radians, shape (n_evt,).
+    tel_list_matrix : numpy.ndarray
+        Matrix of telescope IDs participating in each event, shape (n_evt, max_tel).
+
+    Returns
+    -------
+    numpy.ndarray
+        Array of shape (n_evt,) with footprint area for each event based on active telescopes.
+    """
+    n_evt = len(elev_rad)
+    footprints = np.zeros(n_evt, dtype=np.float32)
+
+    tel_id_to_idx = {int(tid): i for i, tid in enumerate(tel_config["tel_ids"])}
+
+    for evt_idx in range(n_evt):
+        active_tel_ids = tel_list_matrix[evt_idx]
+        active_tel_ids = active_tel_ids[~np.isnan(active_tel_ids)].astype(int)
+
+        if len(active_tel_ids) < 3:
+            footprints[evt_idx] = 0.0
+            continue
+
+        try:
+            active_positions = []
+            for tid in active_tel_ids:
+                if tid in tel_id_to_idx:
+                    idx = tel_id_to_idx[tid]
+                    x = tel_config["tel_x"][idx]
+                    y = tel_config["tel_y"][idx] * np.sin(elev_rad[evt_idx])
+                    active_positions.append([x, y])
+
+            if len(active_positions) >= 3:
+                points = np.array(active_positions)
+                footprints[evt_idx] = ConvexHull(points).volume  # In 2D, 'volume' is area
+            else:
+                footprints[evt_idx] = 0.0
+        except Exception as e:
+            _logger.debug(f"Failed to compute convex hull for event {evt_idx}: {e}")
+            footprints[evt_idx] = 0.0
+
+    return footprints
+
+
+def extra_columns(df, analysis_type, training, index, tel_config=None):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
         data = {
@@ -756,6 +811,13 @@ def extra_columns(df, analysis_type, training, index):
                 _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
             ),
         }
+        # Add array footprint if telescope configuration is available
+        if tel_config is not None:
+            elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
+            tel_list_matrix = _to_dense_array(df["DispTelList_T"])
+            data["array_footprint"] = _calculate_array_footprint(
+                tel_config, elev_rad, tel_list_matrix
+            )
     elif "classification" in analysis_type:
         data = {
             "MSCW": _to_numpy_1d(df["MSCW"], np.float32),
