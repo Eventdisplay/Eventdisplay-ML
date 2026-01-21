@@ -478,7 +478,41 @@ def _to_dense_array(col):
 
 
 def _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id):
-    """Compute per-event telescope sorting indices based on core distance."""
+    """
+    Compute per-event telescope sorting indices based on core distance.
+
+    This builds a dense distance matrix indexed by telescope ID for each event
+    and returns indices that can be used to sort telescope IDs by increasing
+    core distance. Missing telescopes (where no distance is available) are
+    effectively placed at the end of the ordering.
+
+    Parameters
+    ----------
+    r_core_data : numpy.ndarray
+        Per-event core distances for triggered telescopes.
+        Expected shape is ``(n_events, n_tel_per_event_max)`` where each
+        entry corresponds to the core distance for the telescope ID given
+        in the same position of ``tel_list_matrix``. Entries may be
+        ``NaN`` where no telescope is present.
+    tel_list_matrix : numpy.ndarray
+        Per-event list of telescope IDs.
+        Expected shape is ``(n_events, n_tel_per_event_max)`` with integer
+        telescope IDs in the range ``[0, max_tel_id]`` and ``NaN`` where
+        no telescope is present.
+    max_tel_id : int
+        Maximum telescope ID in the array. The dense distance and index
+        matrices are built with a second dimension of ``max_tel_id + 1``,
+        assuming telescope IDs are zero-based and contiguous up to this
+        value.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer array of shape ``(n_events, max_tel_id + 1)``. For each
+        event, ``indices[event]`` contains the telescope IDs sorted by
+        increasing core distance. Telescope IDs corresponding to missing
+        or ``NaN`` distances are sorted to the end.
+    """
     n_evt = tel_list_matrix.shape[0]
 
     # Pad r_core_data to cover max_tel_id
