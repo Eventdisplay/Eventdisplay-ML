@@ -11,7 +11,7 @@ import awkward as ak
 import numpy as np
 import pandas as pd
 import uproot
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, QhullError
 
 from eventdisplay_ml import features, utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
@@ -787,45 +787,49 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
     n_evt = len(elev_rad)
     footprints = np.zeros(n_evt, dtype=np.float32)
 
-    tel_id_to_idx = {int(tid): i for i, tid in enumerate(tel_config["tel_ids"])}
+    # Pre-map all telescope positions to a dense array aligned with tel_list_matrix IDs
+    max_id = int(np.nanmax(tel_list_matrix)) if np.any(~np.isnan(tel_list_matrix)) else 0
+    lookup_x = np.zeros(max_id + 1)
+    lookup_y = np.zeros(max_id + 1)
+    for tid, tx, ty in zip(tel_config["tel_ids"], tel_config["tel_x"], tel_config["tel_y"]):
+        lookup_x[int(tid)] = tx
+        lookup_y[int(tid)] = ty
 
-    # Precompute trigonometric values
-    cos_elev = np.cos(elev_rad)
+    # 1. Vectorized Transformation (Do this for ALL events at once)
+    sin_elev = np.sin(elev_rad)
     cos_azim = np.cos(azim_rad)
     sin_azim = np.sin(azim_rad)
 
-    for evt_idx in range(n_evt):
-        active_tel_ids = tel_list_matrix[evt_idx]
-        active_tel_ids = active_tel_ids[~np.isnan(active_tel_ids)].astype(int)
+    # 2. Iterate only for the ConvexHull
+    for i in range(n_evt):
+        tids = tel_list_matrix[i]
+        tids = tids[~np.isnan(tids)].astype(int)
 
-        if len(active_tel_ids) < 3:
-            footprints[evt_idx] = 0.0
+        if len(tids) < 3:
             continue
 
+        # Fast indexing
+        tx = lookup_x[tids]
+        ty = lookup_y[tids]
+
+        # Apply the rotation/projection for this specific event's geometry
+        # Standard Shower-Plane (Tilted) transformation:
+        xs = -sin_azim[i] * tx + cos_azim[i] * ty
+        ys = (cos_azim[i] * tx + sin_azim[i] * ty) * sin_elev[i]
+
         try:
-            active_positions = []
-            for tid in active_tel_ids:
-                if tid in tel_id_to_idx:
-                    idx = tel_id_to_idx[tid]
-                    tel_x = tel_config["tel_x"][idx]
-                    tel_y = tel_config["tel_y"][idx]
+            points = np.column_stack([xs, ys])
+            footprints[i] = ConvexHull(points).volume
+        except QhullError:
+            # This happens if telescopes are collinear (all in a line)
+            # or if the points are too close together for the algorithm
+            _logger.debug(f"Degenerate geometry for event {i}: telescopes are collinear.")
+            footprints[i] = 0.0
 
-                    # Transform to shower coordinates
-                    shower_x = -sin_azim[evt_idx] * tel_x + cos_azim[evt_idx] * tel_y
-                    shower_y = (
-                        cos_azim[evt_idx] * cos_elev[evt_idx] * tel_x
-                        + sin_azim[evt_idx] * cos_elev[evt_idx] * tel_y
-                    )
-                    active_positions.append([shower_x, shower_y])
-
-            if len(active_positions) >= 3:
-                points = np.array(active_positions)
-                footprints[evt_idx] = ConvexHull(points).volume  # In 2D, 'volume' is area
-            else:
-                footprints[evt_idx] = 0.0
-        except Exception as e:
-            _logger.debug(f"Failed to compute convex hull for event {evt_idx}: {e}")
-            footprints[evt_idx] = 0.0
+        except ValueError as e:
+            # This catches shape mismatches or empty arrays that slipped through
+            _logger.error(f"Value error in ConvexHull for event {i}: {e}")
+            footprints[i] = 0.0
 
     return footprints
 
