@@ -599,7 +599,8 @@ def _log_energy_bin_counts(df):
         (bin_edges, counts_dict, weights_array) where:
         - bin_edges: np.ndarray of bin boundaries
         - counts_dict: dict mapping intervals to event counts
-        - weights_array: np.ndarray of inverse-count weights for each event (normalized)
+        - weights_array: np.ndarray of inverse-count weights for each event (normalized
+                         for both energy and multiplicity)
         Returns None if MCe0 not found.
     """
     if "MCe0" not in df:
@@ -621,12 +622,39 @@ def _log_energy_bin_counts(df):
     # Normalize so mean weight is 1.0
     inverse_counts = inverse_counts / inverse_counts.mean()
 
-    # Assign weight to each event based on its bin
-    weights = np.ones(len(df), dtype=np.float32)
+    # Assign weight to each event based on its energy bin
+    w_energy = np.ones(len(df), dtype=np.float32)
     for i, inv_count in enumerate(inverse_counts):
         mask = bin_indices == i
-        weights[mask] = inv_count
+        w_energy[mask] = inv_count
 
     _logger.info(f"Energy bin weights (inverse-count, normalized): {inverse_counts}")
 
-    return bins, dict(counts.items()), weights
+    # Calculate multiplicity weights (inverse frequency)
+    mult_counts = df["DispNImages"].value_counts()
+    _logger.info("Training events per multiplicity:")
+    for mult, count in mult_counts.items():
+        _logger.info(f"  {int(mult)} telescopes: {int(count)}")
+
+    # Create multiplicity weight mapping: {2: weight_2, 3: weight_3, 4: weight_4, ...}
+    # Inverse frequency normalized so average is 1.0
+    mult_weight_map = (len(df) / (len(mult_counts) * mult_counts)).to_dict()
+    w_multiplicity = df["DispNImages"].map(mult_weight_map).to_numpy().astype(np.float32)
+
+    _logger.info(f"Multiplicity weights (inverse-frequency, normalized): {mult_weight_map}")
+
+    # Combine energy and multiplicity weights
+    combined_weights = w_energy * w_multiplicity
+
+    # Normalize combined weights so mean is 1.0 to keep learning rate effective
+    combined_weights = combined_weights / np.mean(combined_weights)
+
+    _logger.info(
+        f"Combined weights (energy x multiplicity): "
+        f"mean={combined_weights.mean():.3f}, "
+        f"std={combined_weights.std():.3f}, "
+        f"min={combined_weights.min():.3f}, "
+        f"max={combined_weights.max():.3f}"
+    )
+
+    return bins, dict(counts.items()), combined_weights

@@ -12,8 +12,8 @@ XGB_REGRESSION_HYPERPARAMETERS = {
         "hyper_parameters": {
             "n_estimators": 1000,
             "learning_rate": 0.1,  # Shrinkage
-            "max_depth": 5,
-            "min_child_weight": 1.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
+            "max_depth": 10,
+            "min_child_weight": 5.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
             "objective": "reg:squarederror",
             "n_jobs": 8,
             "random_state": None,

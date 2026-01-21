@@ -11,6 +11,7 @@ import awkward as ak
 import numpy as np
 import pandas as pd
 import uproot
+from scipy.spatial import ConvexHull, QhullError
 
 from eventdisplay_ml import features, utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
@@ -117,6 +118,7 @@ def _resolve_branch_aliases(tree, branch_list):
         "tel_rel_y",
         "tel_shower_x",
         "tel_shower_y",
+        "tel_active",
     }
     resolved = [b for b in resolved if b not in synthesized]
 
@@ -198,6 +200,19 @@ def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
             columns[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
         else:
             columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+    return columns
+
+
+def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt):
+    """Build binary telescope active columns indicating which telescopes participated in events."""
+    columns = {}
+    active_matrix = np.zeros((n_evt, max_tel_id + 1), dtype=np.float32)
+    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
+    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+    valid_mask = tel_ids <= max_tel_id
+    active_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = 1.0
+    for tel_idx in range(max_tel_id + 1):
+        columns[f"tel_active_{tel_idx}"] = active_matrix[:, tel_idx]
     return columns
 
 
@@ -335,6 +350,11 @@ def flatten_telescope_data_vectorized(
             )
             continue
 
+        if var == "tel_active":
+            _logger.info(f"Computing synthetic feature: {var}")
+            flat_features.update(_make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt))
+            continue
+
         if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
             _logger.info(f"Computing synthetic feature: {var}")
             flat_features.update(
@@ -360,7 +380,9 @@ def flatten_telescope_data_vectorized(
 
     index = _get_index(df, n_evt)
     df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
-    return pd.concat([df_flat, extra_columns(df, analysis_type, training, index)], axis=1)
+    return pd.concat(
+        [df_flat, extra_columns(df, analysis_type, training, index, tel_config)], axis=1
+    )
 
 
 def _to_padded_array(arrays):
@@ -703,7 +725,80 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     return df_flat
 
 
-def extra_columns(df, analysis_type, training, index):
+def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
+    """
+    Calculate array footprint area using convex hull of active telescope positions per event.
+
+    Telescope positions are transformed to shower-centered coordinates in the shower plane
+    before computing the footprint convex hull.
+
+    Parameters
+    ----------
+    tel_config : dict
+        Telescope configuration with 'tel_x', 'tel_y', and 'tel_ids' arrays.
+    elev_rad : numpy.ndarray
+        Elevation angles in radians, shape (n_evt,).
+    azim_rad : numpy.ndarray
+        Azimuth angles in radians, shape (n_evt,).
+    tel_list_matrix : numpy.ndarray
+        Matrix of telescope IDs participating in each event, shape (n_evt, max_tel).
+
+    Returns
+    -------
+    numpy.ndarray
+        Array of shape (n_evt,) with footprint area for each event based on active telescopes.
+    """
+    n_evt = len(elev_rad)
+    footprints = np.zeros(n_evt, dtype=np.float32)
+
+    # Pre-map all telescope positions to a dense array aligned with tel_list_matrix IDs
+    max_id = int(np.nanmax(tel_list_matrix)) if np.any(~np.isnan(tel_list_matrix)) else 0
+    lookup_x = np.zeros(max_id + 1)
+    lookup_y = np.zeros(max_id + 1)
+    for tid, tx, ty in zip(tel_config["tel_ids"], tel_config["tel_x"], tel_config["tel_y"]):
+        lookup_x[int(tid)] = tx
+        lookup_y[int(tid)] = ty
+
+    # 1. Vectorized Transformation (Do this for ALL events at once)
+    sin_elev = np.sin(elev_rad)
+    cos_azim = np.cos(azim_rad)
+    sin_azim = np.sin(azim_rad)
+
+    # 2. Iterate only for the ConvexHull
+    for i in range(n_evt):
+        tids = tel_list_matrix[i]
+        tids = tids[~np.isnan(tids)].astype(int)
+
+        if len(tids) < 3:
+            continue
+
+        # Fast indexing
+        tx = lookup_x[tids]
+        ty = lookup_y[tids]
+
+        # Apply the rotation/projection for this specific event's geometry
+        # Standard Shower-Plane (Tilted) transformation:
+        xs = -sin_azim[i] * tx + cos_azim[i] * ty
+        ys = (cos_azim[i] * tx + sin_azim[i] * ty) * sin_elev[i]
+
+        try:
+            points = np.column_stack([xs, ys])
+            footprints[i] = ConvexHull(points).volume
+        except QhullError:
+            # This happens if telescopes are collinear (all in a line)
+            # or if the points are too close together for the algorithm
+            _logger.debug(f"Degenerate geometry for event {i}: telescopes are collinear.")
+            footprints[i] = 0.0
+
+        except ValueError as e:
+            # This catches shape mismatches or empty arrays that slipped through
+            _logger.error(f"Value error in ConvexHull for event {i}: {e}")
+            footprints[i] = 0.0
+
+    return footprints
+
+
+def extra_columns(df, analysis_type, training, index, tel_config=None):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
         data = {
@@ -719,6 +814,7 @@ def extra_columns(df, analysis_type, training, index):
                 _to_numpy_1d(df["Yoff"], np.float32)
                 - _to_numpy_1d(df["Yoff_intersect"], np.float32)
             ).astype(np.float32),
+            "DispNImages": _to_numpy_1d(df["DispNImages"], np.int32),
             "Erec": _to_numpy_1d(df["Erec"], np.float32),
             "ErecS": _to_numpy_1d(df["ErecS"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
@@ -727,6 +823,14 @@ def extra_columns(df, analysis_type, training, index):
                 _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
             ),
         }
+        # Add array footprint if telescope configuration is available
+        if tel_config is not None:
+            elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
+            azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
+            tel_list_matrix = _to_dense_array(df["DispTelList_T"])
+            data["array_footprint"] = _calculate_array_footprint(
+                tel_config, elev_rad, azim_rad, tel_list_matrix
+            )
     elif "classification" in analysis_type:
         data = {
             "MSCW": _to_numpy_1d(df["MSCW"], np.float32),

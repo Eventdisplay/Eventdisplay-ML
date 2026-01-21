@@ -90,6 +90,7 @@ def telescope_features(analysis_type):
         "tel_rel_y",
         "tel_shower_x",
         "tel_shower_y",
+        "tel_active",
     ]
     if analysis_type == "classification":
         return var
