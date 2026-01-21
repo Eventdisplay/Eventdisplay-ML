@@ -287,19 +287,7 @@ def _flatten_variable_columns(
     """Flatten one variable into per-telescope columns, optionally sorted by distance."""
     columns = {}
 
-    if var.startswith("Disp"):
-        # For Disp variables, data is already per-telescope; pad then reorder
-        base = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
-        n_cols = min(data.shape[1], max_tel_id + 1)
-        base[:, :n_cols] = data[:, :n_cols]
-
-        if distance_sort_indices is not None:
-            base = base[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
-
-        for tel_idx in range(max_tel_id + 1):
-            columns[f"{var}_{tel_idx}"] = base[:, tel_idx]
-        return columns
-
+    # Map data from column positions to telescope ID positions
     full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
@@ -309,6 +297,7 @@ def _flatten_variable_columns(
         row_indices[valid_mask], col_indices[valid_mask]
     ]
 
+    # Apply distance sorting if provided
     if distance_sort_indices is not None:
         full_matrix = full_matrix[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
 
