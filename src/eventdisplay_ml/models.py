@@ -638,10 +638,10 @@ def _log_energy_bin_counts(df):
 
     # Create multiplicity weight mapping: {2: weight_2, 3: weight_3, 4: weight_4, ...}
     # Inverse frequency normalized so average is 1.0
-    mult_weight_map = (len(df) / (len(mult_counts) * mult_counts)).to_dict()
-    w_multiplicity = df["DispNImages"].map(mult_weight_map).to_numpy().astype(np.float32)
+    w_multiplicity = (df["DispNImages"] ** 2).to_numpy().astype(np.float32)
+    w_multiplicity /= np.mean(w_multiplicity)
 
-    _logger.info(f"Multiplicity weights (inverse-frequency, normalized): {mult_weight_map}")
+    _logger.info(f"Multiplicity weights (inverse-frequency, normalized): {w_multiplicity}")
 
     # Combine energy and multiplicity weights
     combined_weights = w_energy * w_multiplicity
