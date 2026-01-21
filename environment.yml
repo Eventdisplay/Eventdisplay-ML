@@ -17,6 +17,7 @@ dependencies:
   - ruff
   - scikit-learn
   - scipy
+  - shap
   - shellcheck
   - tabulate
   - towncrier

@@ -288,12 +288,16 @@ def _flatten_variable_columns(
     columns = {}
 
     if var.startswith("Disp"):
+        # For Disp variables, data is already per-telescope; pad then reorder
+        base = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
+        n_cols = min(data.shape[1], max_tel_id + 1)
+        base[:, :n_cols] = data[:, :n_cols]
+
+        if distance_sort_indices is not None:
+            base = base[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
+
         for tel_idx in range(max_tel_id + 1):
-            col_name = f"{var}_{tel_idx}"
-            if tel_idx < data.shape[1]:
-                columns[col_name] = data[:, tel_idx]
-            else:
-                columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+            columns[f"{var}_{tel_idx}"] = base[:, tel_idx]
         return columns
 
     full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
