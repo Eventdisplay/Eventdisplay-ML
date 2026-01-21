@@ -238,6 +238,9 @@ def shap_feature_importance(model, x_data, target_names, max_points=10000, n_top
 
     Uses TreeExplainer for faster computation compared to pred_contribs.
     """
+    # Normalize target_names to a list so truthiness checks are well-defined for pandas Index
+    target_names = list(target_names) if target_names is not None else []
+
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)
 
@@ -255,7 +258,7 @@ def shap_feature_importance(model, x_data, target_names, max_points=10000, n_top
                     if j < n_features:
                         _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
         else:
-            target = target_names[0] if target_names else "target"
+            target = target_names[0] if len(target_names) > 0 else "target"
             imp = np.abs(shap_vals).mean(axis=0)
             idx = np.argsort(imp)[::-1]
 
