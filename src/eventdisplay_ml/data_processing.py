@@ -278,8 +278,10 @@ def _make_relative_coord_columns(
     return columns
 
 
-def _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value):
-    """Flatten one variable into per-telescope columns."""
+def _flatten_variable_columns(
+    var, data, tel_list_matrix, max_tel_id, n_evt, default_value, r_core_data=None
+):
+    """Flatten one variable into per-telescope columns, optionally sorted by distance."""
     columns = {}
 
     if var.startswith("Disp"):
@@ -299,6 +301,34 @@ def _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, def
     full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
         row_indices[valid_mask], col_indices[valid_mask]
     ]
+
+    # Apply distance-based sorting if R_core data is available
+    if r_core_data is not None:
+        # Vectorized sorting: use argsort to reorder columns by distance
+        # Pad R_core to match max_tel_id
+        if r_core_data.shape[1] <= max_tel_id:
+            padded = np.full((n_evt, max_tel_id + 1), np.nan)
+            padded[:, : r_core_data.shape[1]] = r_core_data
+            r_core_data = padded
+
+        # For each event, create sort indices that put NaNs last
+        sort_indices = np.zeros((n_evt, max_tel_id + 1), dtype=int)
+        for evt_idx in range(n_evt):
+            distances = r_core_data[evt_idx]
+            # Create sort order: NaN-safe (NaN values go last)
+            valid_mask = ~np.isnan(distances)
+            valid_idx = np.where(valid_mask)[0]
+            nan_idx = np.where(~valid_mask)[0]
+            if len(valid_idx) > 0:
+                sorted_valid = valid_idx[np.argsort(distances[valid_idx])]
+                sort_indices[evt_idx, : len(sorted_valid)] = sorted_valid
+                if len(nan_idx) > 0:
+                    sort_indices[evt_idx, len(sorted_valid) :] = nan_idx
+            else:
+                sort_indices[evt_idx] = np.arange(max_tel_id + 1)
+
+        full_matrix = full_matrix[np.arange(n_evt)[:, np.newaxis], sort_indices]
+
     for tel_idx in range(max_tel_id + 1):
         columns[f"{var}_{tel_idx}"] = full_matrix[:, tel_idx]
 
@@ -311,9 +341,9 @@ def flatten_telescope_data_vectorized(
     """
     Vectorized flattening of telescope array columns.
 
-    Converts per-telescope arrays into individual feature columns indexed by actual
-    telescope ID. Features are mapped to telescope indices directly, with NaN fill
-    values for missing telescopes.
+    Converts per-telescope arrays into individual feature columns sorted by distance
+    to the shower core. The column index represents proximity to the core rather
+    than telescope ID (column 0 = closest telescope, column 1 = second closest, etc).
 
     Parameters
     ----------
@@ -334,8 +364,9 @@ def flatten_telescope_data_vectorized(
     -------
     pandas.DataFrame
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
-        for telescope index ``i``, plus derived features, and array features.
-        Missing telescopes are filled with NaN.
+        where ``i`` represents the i-th closest telescope to the shower core,
+        plus derived features, and array features. Missing telescopes are
+        filled with NaN.
     """
     flat_features = {}
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
@@ -351,6 +382,9 @@ def flatten_telescope_data_vectorized(
     elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
     azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
     valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
+
+    # Pre-load R_core data for distance-based sorting
+    r_core_data = _to_dense_array(df["R_core"]) if _has_field(df, "R_core") else None
 
     for var in features:
         if var == "mirror_areas" and tel_config:
@@ -384,7 +418,9 @@ def flatten_telescope_data_vectorized(
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
         flat_features.update(
-            _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value)
+            _flatten_variable_columns(
+                var, data, tel_list_matrix, max_tel_id, n_evt, default_value, r_core_data
+            )
         )
 
     index = _get_index(df, n_evt)
