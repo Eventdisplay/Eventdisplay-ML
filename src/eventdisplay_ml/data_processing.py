@@ -187,20 +187,22 @@ def _rename_fields_ak(arr, rename_map):
     return arr
 
 
-def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
-    """Build constant mirror area columns from tel_config."""
-    columns = {}
+def _make_mirror_area_columns(
+    tel_config, max_tel_id, n_evt, default_value, distance_sort_indices=None
+):
+    """Build constant mirror area columns from tel_config with optional distance sorting."""
+    base = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
     tel_id_to_mirror = dict(zip(tel_config["tel_ids"], tel_config["mirror_areas"]))
-    for tel_idx in range(max_tel_id + 1):
-        col_name = f"mirror_areas_{tel_idx}"
-        if tel_idx in tel_id_to_mirror:
-            mirror_val = float(tel_id_to_mirror[tel_idx])
-            if mirror_val == 0.0:
-                mirror_val = 100.0
-            columns[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
-        else:
-            columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-    return columns
+
+    for tel_idx, mirror_val in tel_id_to_mirror.items():
+        if tel_idx <= max_tel_id:
+            mirror_val = float(mirror_val) if mirror_val != 0.0 else 100.0
+            base[:, tel_idx] = mirror_val
+
+    if distance_sort_indices is not None:
+        base = base[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
+
+    return {f"mirror_areas_{i}": base[:, i] for i in range(max_tel_id + 1)}
 
 
 def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt):
@@ -227,6 +229,7 @@ def _make_relative_coord_columns(
     azim_rad,
     valid_mask,
     default_value,
+    distance_sort_indices=None,
 ):
     """Build relative/shower coordinate columns for a single synthetic variable."""
     columns = {}
@@ -256,21 +259,26 @@ def _make_relative_coord_columns(
     else:
         results = np.full((max_tel_id + 1, n_evt), default_value)
 
+    # results shape: (max_tel_id + 1, n_evt) -> transpose to (n_evt, max_tel_id + 1)
+    event_matrix = results.T
+
+    # Apply validity mask and default fill
+    event_matrix = np.where(
+        valid_mask[:, np.newaxis] & ~np.isnan(event_matrix), event_matrix, default_value
+    )
+
+    # Reorder by distance if provided
+    if distance_sort_indices is not None:
+        event_matrix = event_matrix[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
+
     for tel_idx in range(max_tel_id + 1):
-        col_name = f"{var}_{tel_idx}"
-
-        # If the telescope doesn't exist in config, it remains NaN from step 2
-        res = results[tel_idx]
-
-        # Apply validity mask (e.g. handle events where reconstruction failed)
-        final_values = np.where(valid_mask & ~np.isnan(res), res, default_value).astype(np.float32)
-        columns[col_name] = final_values
+        columns[f"{var}_{tel_idx}"] = event_matrix[:, tel_idx].astype(np.float32)
 
     return columns
 
 
 def _flatten_variable_columns(
-    var, data, tel_list_matrix, max_tel_id, n_evt, default_value, r_core_data=None
+    var, data, tel_list_matrix, max_tel_id, n_evt, default_value, distance_sort_indices=None
 ):
     """Flatten one variable into per-telescope columns, optionally sorted by distance."""
     columns = {}
@@ -293,32 +301,8 @@ def _flatten_variable_columns(
         row_indices[valid_mask], col_indices[valid_mask]
     ]
 
-    # Apply distance-based sorting if R_core data is available
-    if r_core_data is not None:
-        # Vectorized sorting: use argsort to reorder columns by distance
-        # Pad R_core to match max_tel_id
-        if r_core_data.shape[1] <= max_tel_id:
-            padded = np.full((n_evt, max_tel_id + 1), np.nan)
-            padded[:, : r_core_data.shape[1]] = r_core_data
-            r_core_data = padded
-
-        # For each event, create sort indices that put NaNs last
-        sort_indices = np.zeros((n_evt, max_tel_id + 1), dtype=int)
-        for evt_idx in range(n_evt):
-            distances = r_core_data[evt_idx]
-            # Create sort order: NaN-safe (NaN values go last)
-            valid_mask = ~np.isnan(distances)
-            valid_idx = np.where(valid_mask)[0]
-            nan_idx = np.where(~valid_mask)[0]
-            if len(valid_idx) > 0:
-                sorted_valid = valid_idx[np.argsort(distances[valid_idx])]
-                sort_indices[evt_idx, : len(sorted_valid)] = sorted_valid
-                if len(nan_idx) > 0:
-                    sort_indices[evt_idx, len(sorted_valid) :] = nan_idx
-            else:
-                sort_indices[evt_idx] = np.arange(max_tel_id + 1)
-
-        full_matrix = full_matrix[np.arange(n_evt)[:, np.newaxis], sort_indices]
+    if distance_sort_indices is not None:
+        full_matrix = full_matrix[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
 
     for tel_idx in range(max_tel_id + 1):
         columns[f"{var}_{tel_idx}"] = full_matrix[:, tel_idx]
@@ -376,11 +360,22 @@ def flatten_telescope_data_vectorized(
 
     # Pre-load R_core data for distance-based sorting
     r_core_data = _to_dense_array(df["R_core"]) if _has_field(df, "R_core") else None
+    distance_sort_indices = (
+        _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id)
+        if r_core_data is not None
+        else None
+    )
 
     for var in features:
         if var == "mirror_areas" and tel_config:
             flat_features.update(
-                _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value)
+                _make_mirror_area_columns(
+                    tel_config,
+                    max_tel_id,
+                    n_evt,
+                    default_value,
+                    distance_sort_indices,
+                )
             )
             continue
 
@@ -403,6 +398,7 @@ def flatten_telescope_data_vectorized(
                     azim_rad,
                     valid_mask,
                     default_value,
+                    distance_sort_indices,
                 )
             )
             continue
@@ -410,7 +406,13 @@ def flatten_telescope_data_vectorized(
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
         flat_features.update(
             _flatten_variable_columns(
-                var, data, tel_list_matrix, max_tel_id, n_evt, default_value, r_core_data
+                var,
+                data,
+                tel_list_matrix,
+                max_tel_id,
+                n_evt,
+                default_value,
+                distance_sort_indices,
             )
         )
 
@@ -463,6 +465,27 @@ def _to_dense_array(col):
         return ak.to_numpy(ak.fill_none(padded, np.nan))
     except (ValueError, TypeError):
         return _to_padded_array(col)
+
+
+def _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id):
+    """Compute per-event telescope sorting indices based on core distance."""
+    n_evt = tel_list_matrix.shape[0]
+
+    # Pad r_core_data to cover max_tel_id
+    if r_core_data.shape[1] < max_tel_id + 1:
+        padded = np.full((n_evt, max_tel_id + 1), np.nan)
+        padded[:, : r_core_data.shape[1]] = r_core_data
+        r_core_data = padded
+
+    # Build dense distance matrix aligned by telescope ID
+    distances = np.full((n_evt, max_tel_id + 1), np.nan)
+    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
+    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+    distances[row_indices, tel_ids] = r_core_data[row_indices, col_indices]
+
+    # Use NaN-safe argsort: NaN distances become inf and go last
+    dist_for_sort = np.where(np.isnan(distances), np.inf, distances)
+    return np.argsort(dist_for_sort, axis=1)
 
 
 def _to_numpy_1d(x, dtype=np.float32):
