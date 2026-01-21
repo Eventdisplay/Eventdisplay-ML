@@ -349,8 +349,10 @@ def flatten_telescope_data_vectorized(
 
     core_x = _to_numpy_1d(df["Xcore"], np.float32)
     core_y = _to_numpy_1d(df["Ycore"], np.float32)
-    core_x[core_x <= -90000] = np.nan
-    core_y[core_y <= -90000] = np.nan
+    # Filter out sentinel values and apply physical bounds
+    # shower cores beyond +-10 km are cut
+    core_x[(core_x <= -90000) | (np.abs(core_x) > 10000)] = np.nan
+    core_y[(core_y <= -90000) | (np.abs(core_y) > 10000)] = np.nan
     elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
     azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
     valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
