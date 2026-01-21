@@ -641,7 +641,13 @@ def _log_energy_bin_counts(df):
     w_multiplicity = (df["DispNImages"] ** 2).to_numpy().astype(np.float32)
     w_multiplicity /= np.mean(w_multiplicity)
 
-    _logger.info(f"Multiplicity weights (inverse-frequency, normalized): {w_multiplicity}")
+    _logger.info(
+        "Multiplicity weights (inverse-frequency, normalized): "
+        f"mean={w_multiplicity.mean():.3f}, "
+        f"std={w_multiplicity.std():.3f}, "
+        f"min={w_multiplicity.min():.3f}, "
+        f"max={w_multiplicity.max():.3f}"
+    )
 
     # Combine energy and multiplicity weights
     combined_weights = w_energy * w_multiplicity
