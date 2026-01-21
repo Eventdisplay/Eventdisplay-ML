@@ -205,14 +205,18 @@ def _make_mirror_area_columns(
     return {f"mirror_areas_{i}": base[:, i] for i in range(max_tel_id + 1)}
 
 
-def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt):
-    """Build binary telescope active columns indicating which telescopes participated in events."""
+def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, distance_sort_indices=None):
+    """Build binary telescope active columns, optionally sorted by distance."""
     columns = {}
     active_matrix = np.zeros((n_evt, max_tel_id + 1), dtype=np.float32)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
     valid_mask = tel_ids <= max_tel_id
     active_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = 1.0
+
+    if distance_sort_indices is not None:
+        active_matrix = active_matrix[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
+
     for tel_idx in range(max_tel_id + 1):
         columns[f"tel_active_{tel_idx}"] = active_matrix[:, tel_idx]
     return columns
@@ -381,7 +385,9 @@ def flatten_telescope_data_vectorized(
 
         if var == "tel_active":
             _logger.info(f"Computing synthetic feature: {var}")
-            flat_features.update(_make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt))
+            flat_features.update(
+                _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, distance_sort_indices)
+            )
             continue
 
         if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
