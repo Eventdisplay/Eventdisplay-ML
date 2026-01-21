@@ -4,7 +4,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-import shap
+import xgboost as xgb
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -234,37 +234,22 @@ def _log_importance_table(target_label, values, x_cols, name):
 
 
 def shap_feature_importance(model, x_data, target_names, max_points=10000, n_top=25):
-    """Feature importance using SHAP values for native multi-target XGBoost.
-
-    Uses TreeExplainer for faster computation compared to pred_contribs.
-    """
-    # Normalize target_names to a list so truthiness checks are well-defined for pandas Index
-    target_names = list(target_names) if target_names is not None else []
-
+    """Feature importance using SHAP values for native multi-target XGBoost."""
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)
+    n_targets = len(target_names)
 
-    try:
-        explainer = shap.TreeExplainer(model)
-        shap_vals = explainer.shap_values(x_sample)
+    dmatrix = xgb.DMatrix(x_sample)
+    shap_vals = model.get_booster().predict(dmatrix, pred_contribs=True)
+    shap_vals = shap_vals.reshape(len(x_sample), n_targets, n_features + 1)
 
-        if isinstance(shap_vals, list):
-            for i, (target, target_shap) in enumerate(zip(target_names, shap_vals)):
-                imp = np.abs(target_shap).mean(axis=0)
-                idx = np.argsort(imp)[::-1]
+    for i, target in enumerate(target_names):
+        target_shap = shap_vals[:, i, :-1]
 
-                _logger.info(f"=== SHAP Importance for {target} ===")
-                for j in idx[:n_top]:
-                    if j < n_features:
-                        _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
-        else:
-            target = target_names[0] if len(target_names) > 0 else "target"
-            imp = np.abs(shap_vals).mean(axis=0)
-            idx = np.argsort(imp)[::-1]
+        imp = np.abs(target_shap).mean(axis=0)
+        idx = np.argsort(imp)[::-1]
 
-            _logger.info(f"=== SHAP Importance for {target} ===")
-            for j in idx[:n_top]:
-                if j < n_features:
-                    _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
-    except Exception as e:
-        _logger.warning(f"Failed to compute SHAP importance: {e}")
+        _logger.info(f"=== SHAP Importance for {target} ===")
+        for j in idx[:n_top]:
+            if j < n_features:
+                _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
