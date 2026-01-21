@@ -206,22 +206,13 @@ def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
 def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt):
     """Build binary telescope active columns indicating which telescopes participated in events."""
     columns = {}
-
-    # Create a binary matrix: 1 if telescope participated, 0 otherwise
     active_matrix = np.zeros((n_evt, max_tel_id + 1), dtype=np.float32)
-
-    # Find which telescopes participated in each event from tel_list_matrix
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-
-    # Only mark telescopes that are within the valid range
     valid_mask = tel_ids <= max_tel_id
     active_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = 1.0
-
-    # Create individual columns for each telescope
     for tel_idx in range(max_tel_id + 1):
         columns[f"tel_active_{tel_idx}"] = active_matrix[:, tel_idx]
-
     return columns
 
 
@@ -734,9 +725,12 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     return df_flat
 
 
-def _calculate_array_footprint(tel_config, elev_rad, tel_list_matrix):
+def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
     """
     Calculate array footprint area using convex hull of active telescope positions per event.
+
+    Telescope positions are transformed to shower-centered coordinates in the shower plane
+    before computing the footprint convex hull.
 
     Parameters
     ----------
@@ -744,6 +738,8 @@ def _calculate_array_footprint(tel_config, elev_rad, tel_list_matrix):
         Telescope configuration with 'tel_x', 'tel_y', and 'tel_ids' arrays.
     elev_rad : numpy.ndarray
         Elevation angles in radians, shape (n_evt,).
+    azim_rad : numpy.ndarray
+        Azimuth angles in radians, shape (n_evt,).
     tel_list_matrix : numpy.ndarray
         Matrix of telescope IDs participating in each event, shape (n_evt, max_tel).
 
@@ -756,6 +752,11 @@ def _calculate_array_footprint(tel_config, elev_rad, tel_list_matrix):
     footprints = np.zeros(n_evt, dtype=np.float32)
 
     tel_id_to_idx = {int(tid): i for i, tid in enumerate(tel_config["tel_ids"])}
+
+    # Precompute trigonometric values
+    cos_elev = np.cos(elev_rad)
+    cos_azim = np.cos(azim_rad)
+    sin_azim = np.sin(azim_rad)
 
     for evt_idx in range(n_evt):
         active_tel_ids = tel_list_matrix[evt_idx]
@@ -770,9 +771,16 @@ def _calculate_array_footprint(tel_config, elev_rad, tel_list_matrix):
             for tid in active_tel_ids:
                 if tid in tel_id_to_idx:
                     idx = tel_id_to_idx[tid]
-                    x = tel_config["tel_x"][idx]
-                    y = tel_config["tel_y"][idx] * np.sin(elev_rad[evt_idx])
-                    active_positions.append([x, y])
+                    tel_x = tel_config["tel_x"][idx]
+                    tel_y = tel_config["tel_y"][idx]
+
+                    # Transform to shower coordinates
+                    shower_x = -sin_azim[evt_idx] * tel_x + cos_azim[evt_idx] * tel_y
+                    shower_y = (
+                        cos_azim[evt_idx] * cos_elev[evt_idx] * tel_x
+                        + sin_azim[evt_idx] * cos_elev[evt_idx] * tel_y
+                    )
+                    active_positions.append([shower_x, shower_y])
 
             if len(active_positions) >= 3:
                 points = np.array(active_positions)
@@ -814,9 +822,10 @@ def extra_columns(df, analysis_type, training, index, tel_config=None):
         # Add array footprint if telescope configuration is available
         if tel_config is not None:
             elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
+            azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
             tel_list_matrix = _to_dense_array(df["DispTelList_T"])
             data["array_footprint"] = _calculate_array_footprint(
-                tel_config, elev_rad, tel_list_matrix
+                tel_config, elev_rad, azim_rad, tel_list_matrix
             )
     elif "classification" in analysis_type:
         data = {
