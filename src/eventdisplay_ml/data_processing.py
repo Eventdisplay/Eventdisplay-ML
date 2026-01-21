@@ -117,6 +117,7 @@ def _resolve_branch_aliases(tree, branch_list):
         "tel_rel_y",
         "tel_shower_x",
         "tel_shower_y",
+        "tel_active",
     }
     resolved = [b for b in resolved if b not in synthesized]
 
@@ -198,6 +199,28 @@ def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
             columns[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
         else:
             columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
+    return columns
+
+
+def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt):
+    """Build binary telescope active columns indicating which telescopes participated in events."""
+    columns = {}
+
+    # Create a binary matrix: 1 if telescope participated, 0 otherwise
+    active_matrix = np.zeros((n_evt, max_tel_id + 1), dtype=np.float32)
+
+    # Find which telescopes participated in each event from tel_list_matrix
+    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
+    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+
+    # Only mark telescopes that are within the valid range
+    valid_mask = tel_ids <= max_tel_id
+    active_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = 1.0
+
+    # Create individual columns for each telescope
+    for tel_idx in range(max_tel_id + 1):
+        columns[f"tel_active_{tel_idx}"] = active_matrix[:, tel_idx]
+
     return columns
 
 
@@ -333,6 +356,11 @@ def flatten_telescope_data_vectorized(
             flat_features.update(
                 _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value)
             )
+            continue
+
+        if var == "tel_active":
+            _logger.info(f"Computing synthetic feature: {var}")
+            flat_features.update(_make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt))
             continue
 
         if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
@@ -719,6 +747,7 @@ def extra_columns(df, analysis_type, training, index):
                 _to_numpy_1d(df["Yoff"], np.float32)
                 - _to_numpy_1d(df["Yoff_intersect"], np.float32)
             ).astype(np.float32),
+            "DispNImages": _to_numpy_1d(df["DispNImages"], np.int32),
             "Erec": _to_numpy_1d(df["Erec"], np.float32),
             "ErecS": _to_numpy_1d(df["ErecS"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
