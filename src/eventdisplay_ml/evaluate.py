@@ -4,6 +4,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+import shap
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -237,12 +238,6 @@ def shap_feature_importance(model, x_data, target_names, max_points=10000, n_top
 
     Uses TreeExplainer for faster computation compared to pred_contribs.
     """
-    try:
-        import shap
-    except ImportError:
-        _logger.warning("SHAP not installed, skipping SHAP feature importance")
-        return
-
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)
 
