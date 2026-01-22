@@ -534,10 +534,7 @@ def train_regression(df, model_configs):
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        if weights_train is not None:
-            model.fit(x_train, y_train, sample_weight=weights_train)
-        else:
-            model.fit(x_train, y_train)
+        model.fit(x_train, y_train, sample_weight=weights_train)
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 
