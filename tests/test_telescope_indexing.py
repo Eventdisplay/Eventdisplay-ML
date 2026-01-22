@@ -159,7 +159,7 @@ class TestCTAOVariableIndexing:
         assert np.isnan(disp_normalized[0, 15])
 
     def test_size_imgsel_indexing(self):
-        """Size uses ImgSel_list indexing in VERITAS mode."""
+        """Size uses ImgSel_list-based variable indexing in CTAO mode."""
         # Size indexed by ImgSel_list positions
         imgsel_list = np.array([0, 4, 5, 6, 18])
         size_raw = np.array([1272.09, 2702.85, 14277.14, 16766.03, 1632.80])
