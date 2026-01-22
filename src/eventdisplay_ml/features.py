@@ -178,7 +178,7 @@ def clip_intervals():
         "EChi2S": (energy_min, None),
         "EmissionHeightChi2": (1e-6, None),
         # Per-telescope energy and size variables - log10 transformation with lower bound
-        "size": (1, None),
+        "size": (10, None),
         "E": (energy_min, None),
         "ES": (energy_min, None),
         # Derived variables - avoid numerical issues
