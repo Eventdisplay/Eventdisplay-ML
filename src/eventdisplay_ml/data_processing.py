@@ -163,7 +163,11 @@ def _rename_fields(arr, rename_map):
 def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, sort_indices=None):
     """Build constant mirror area columns from tel_config with optional sorting."""
     base = np.full((n_evt, max_tel_id + 1), DEFAULT_FILL_VALUE, dtype=np.float32)
-    tel_id_to_mirror = dict(zip(tel_config["tel_ids"], tel_config["mirror_area"]))
+    # Accept both 'mirror_area' (singular) and 'mirror_areas' (plural) for compatibility
+    mirror_areas = tel_config.get("mirror_area") or tel_config.get("mirror_areas")
+    if mirror_areas is None:
+        raise KeyError("tel_config must provide 'mirror_area' or 'mirror_areas' array")
+    tel_id_to_mirror = dict(zip(tel_config["tel_ids"], mirror_areas))
 
     for tel_idx, mirror_val in tel_id_to_mirror.items():
         if tel_idx <= max_tel_id:
