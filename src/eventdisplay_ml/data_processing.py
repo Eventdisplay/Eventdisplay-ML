@@ -164,7 +164,9 @@ def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, sort_indices=None):
     """Build constant mirror area columns from tel_config with optional sorting."""
     base = np.full((n_evt, max_tel_id + 1), DEFAULT_FILL_VALUE, dtype=np.float32)
     # Accept both 'mirror_area' (singular) and 'mirror_areas' (plural) for compatibility
-    mirror_areas = tel_config.get("mirror_area") or tel_config.get("mirror_areas")
+    mirror_areas = tel_config.get("mirror_area")
+    if mirror_areas is None:
+        mirror_areas = tel_config.get("mirror_areas")
     if mirror_areas is None:
         raise KeyError("tel_config must provide 'mirror_area' or 'mirror_areas' array")
     tel_id_to_mirror = dict(zip(tel_config["tel_ids"], mirror_areas))
@@ -296,26 +298,6 @@ def _make_relative_coord_columns(
     for tel_idx in range(max_tel_id + 1):
         columns[f"{var}_{tel_idx}"] = event_matrix[:, tel_idx].astype(np.float32)
 
-    return columns
-
-
-def _flatten_disp_indexed_variables(var, data, tel_list_matrix, max_tel_id, n_evt, default_value):
-    """Flatten Disp-indexed variables (indexed by DispTelList_T).
-
-    These are NOT sorted to preserve DispTelList_T ordering.
-    """
-    columns = {}
-    full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
-    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
-    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-
-    valid_mask = tel_ids <= max_tel_id
-    full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
-        row_indices[valid_mask], col_indices[valid_mask]
-    ]
-
-    for tel_idx in range(max_tel_id + 1):
-        columns[f"{var}_{tel_idx}"] = full_matrix[:, tel_idx]
     return columns
 
 
