@@ -85,7 +85,7 @@ def telescope_features(analysis_type):
         "R_core",
         "fpointing_dx",
         "fpointing_dy",
-        "mirror_areas",
+        "mirror_area",
         "tel_rel_x",
         "tel_rel_y",
         "tel_shower_x",

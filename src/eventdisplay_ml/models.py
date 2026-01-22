@@ -338,9 +338,7 @@ def process_file_chunked(analysis_type, model_configs):
         model_configs["tel_config"] = tel_config
 
         tree = root_file["data"]
-        branch_list, rename_map, missing_optional = data_processing._resolve_branch_aliases(
-            tree, branch_list
-        )
+        branch_list, rename_map = data_processing._resolve_branch_aliases(tree, branch_list)
 
     max_events = model_configs.get("max_events", None)
     chunk_size = model_configs.get("chunk_size", 500000)
@@ -376,8 +374,7 @@ def process_file_chunked(analysis_type, model_configs):
             if rename_map:
                 rename_present = {k: v for k, v in rename_map.items() if k in chunk_ak.fields}
                 if rename_present:
-                    chunk_ak = data_processing._rename_fields_ak(chunk_ak, rename_present)
-            chunk_ak = data_processing._ensure_optional_scalar_fields(chunk_ak, missing_optional)
+                    chunk_ak = data_processing._rename_fields(chunk_ak, rename_present)
             chunk_ak = data_processing._ensure_fpointing_fields(chunk_ak)
 
             if max_events is not None:
