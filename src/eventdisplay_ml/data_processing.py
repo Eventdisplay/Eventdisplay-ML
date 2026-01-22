@@ -845,13 +845,6 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
         f"{preview.to_string(index=False)}"
     )
 
-    def log_block(title, cols):
-        _logger.info(f"{title}\n{df_flat[cols].head(20).fillna('.').to_string(index=False)}")
-
-    log_block("Telescope sizes:", size_cols)
-    log_block("Mirror areas:", area_cols)
-    log_block("Displacements:", disp_cols)
-
     apply_clip_intervals(
         df_flat, n_tel=max_tel_id + 1, apply_log10=["size", "E", "ES", "size_dist2"]
     )
