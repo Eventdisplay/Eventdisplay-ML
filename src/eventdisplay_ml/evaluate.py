@@ -233,7 +233,7 @@ def _log_importance_table(target_label, values, x_cols, name):
     _logger.info(f"\n{df.head(25).to_markdown(index=False)}")
 
 
-def shap_feature_importance(model, x_data, target_names, max_points=10000, n_top=25):
+def shap_feature_importance(model, x_data, target_names, max_points=1000, n_top=25):
     """Feature importance using SHAP values for native multi-target XGBoost."""
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)

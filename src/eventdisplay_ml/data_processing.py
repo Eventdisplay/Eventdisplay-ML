@@ -13,7 +13,8 @@ import pandas as pd
 import uproot
 from scipy.spatial import ConvexHull, QhullError
 
-from eventdisplay_ml import features, utils
+from eventdisplay_ml import features as features_module
+from eventdisplay_ml import utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
 
 _logger = logging.getLogger(__name__)
@@ -202,7 +203,7 @@ def _make_mirror_area_columns(
     if distance_sort_indices is not None:
         base = base[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
 
-    return {f"mirror_areas_{i}": base[:, i] for i in range(max_tel_id + 1)}
+    return {f"mirror_area_{i}": base[:, i] for i in range(max_tel_id + 1)}
 
 
 def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, distance_sort_indices=None):
@@ -284,10 +285,10 @@ def _make_relative_coord_columns(
 def _flatten_variable_columns(
     var, data, tel_list_matrix, max_tel_id, n_evt, default_value, distance_sort_indices=None
 ):
-    """Flatten one variable into per-telescope columns, optionally sorted by distance."""
+    """Flatten Disp-indexed variables (aligned to DispTelList_T) into per-telescope columns."""
     columns = {}
 
-    # Map data from column positions to telescope ID positions
+    # Map data from DispTelList_T ordering to telescope ID positions
     full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
@@ -298,6 +299,34 @@ def _flatten_variable_columns(
     ]
 
     # Apply distance sorting if provided
+    if distance_sort_indices is not None:
+        full_matrix = full_matrix[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
+
+    for tel_idx in range(max_tel_id + 1):
+        columns[f"{var}_{tel_idx}"] = full_matrix[:, tel_idx]
+
+    return columns
+
+
+def _flatten_dense_variable_columns(
+    var,
+    data,
+    active_mask,
+    max_tel_id,
+    n_evt,
+    default_value,
+    distance_sort_indices=None,
+):
+    """Flatten telescope-ID-indexed variables into per-telescope columns."""
+    columns = {}
+
+    full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
+    col_cap = min(data.shape[1], max_tel_id + 1)
+    full_matrix[:, :col_cap] = data[:, :col_cap]
+
+    if active_mask is not None:
+        full_matrix = np.where(active_mask, full_matrix, default_value)
+
     if distance_sort_indices is not None:
         full_matrix = full_matrix[np.arange(n_evt)[:, np.newaxis], distance_sort_indices]
 
@@ -347,6 +376,12 @@ def flatten_telescope_data_vectorized(
 
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
+    active_mask = np.zeros((n_evt, max_tel_id + 1), dtype=bool)
+    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
+    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+    valid_tel_mask = tel_ids <= max_tel_id
+    active_mask[row_indices[valid_tel_mask], tel_ids[valid_tel_mask]] = True
+
     core_x = _to_numpy_1d(df["Xcore"], np.float32)
     core_y = _to_numpy_1d(df["Ycore"], np.float32)
     # Filter out sentinel values and apply physical bounds
@@ -357,13 +392,31 @@ def flatten_telescope_data_vectorized(
     azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
     valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
 
-    # Pre-load R_core data for distance-based sorting
+    # Pre-load size and R_core data to build sorting indices
+    size_data = _to_dense_array(df["size"]) if _has_field(df, "size") else None
     r_core_data = _to_dense_array(df["R_core"]) if _has_field(df, "R_core") else None
-    distance_sort_indices = (
-        _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id)
-        if r_core_data is not None
-        else None
-    )
+
+    # Clip size before sorting so ordering respects physical bounds
+    if size_data is not None:
+        vmin, vmax = features_module.clip_intervals().get("size", (None, None))
+        mask = ~np.isnan(size_data)
+        if vmin is not None:
+            size_data = size_data.copy()
+            size_data[mask] = np.maximum(size_data[mask], vmin)
+            mask = ~np.isnan(size_data)
+        if vmax is not None:
+            if size_data is None:
+                size_data = size_data.copy()
+            size_data[mask] = np.minimum(size_data[mask], vmax)
+
+    # Prefer sorting by mirror area (desc) then size (desc); fallback to R_core if size missing
+    distance_sort_indices = None
+    if size_data is not None and tel_config is not None:
+        distance_sort_indices = _compute_size_area_sort_indices(
+            size_data, active_mask, tel_config, max_tel_id
+        )
+    elif r_core_data is not None:
+        distance_sort_indices = _compute_distance_sort_indices(r_core_data, active_mask, max_tel_id)
 
     for var in features:
         if var == "mirror_areas" and tel_config:
@@ -405,17 +458,32 @@ def flatten_telescope_data_vectorized(
             continue
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
-        flat_features.update(
-            _flatten_variable_columns(
-                var,
-                data,
-                tel_list_matrix,
-                max_tel_id,
-                n_evt,
-                default_value,
-                distance_sort_indices,
+
+        disp_indexed = var.startswith("Disp") and var.endswith("_T")
+        if disp_indexed:
+            flat_features.update(
+                _flatten_variable_columns(
+                    var,
+                    data,
+                    tel_list_matrix,
+                    max_tel_id,
+                    n_evt,
+                    default_value,
+                    distance_sort_indices,
+                )
             )
-        )
+        else:
+            flat_features.update(
+                _flatten_dense_variable_columns(
+                    var,
+                    data,
+                    active_mask,
+                    max_tel_id,
+                    n_evt,
+                    default_value,
+                    distance_sort_indices,
+                )
+            )
 
     index = _get_index(df, n_evt)
     df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
@@ -468,7 +536,7 @@ def _to_dense_array(col):
         return _to_padded_array(col)
 
 
-def _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id):
+def _compute_distance_sort_indices(r_core_data, active_mask, max_tel_id):
     """
     Compute per-event telescope sorting indices based on core distance.
 
@@ -480,16 +548,12 @@ def _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id):
     Parameters
     ----------
     r_core_data : numpy.ndarray
-        Per-event core distances for triggered telescopes.
-        Expected shape is ``(n_events, n_tel_per_event_max)`` where each
-        entry corresponds to the core distance for the telescope ID given
-        in the same position of ``tel_list_matrix``. Entries may be
-        ``NaN`` where no telescope is present.
-    tel_list_matrix : numpy.ndarray
-        Per-event list of telescope IDs.
-        Expected shape is ``(n_events, n_tel_per_event_max)`` with integer
-        telescope IDs in the range ``[0, max_tel_id]`` and ``NaN`` where
-        no telescope is present.
+        Per-event core distances indexed directly by telescope ID.
+        Expected shape is ``(n_events, n_tel_total)`` where column ``i``
+        corresponds to telescope ID ``i``. Entries may be ``NaN``.
+    active_mask : numpy.ndarray
+        Boolean mask of shape ``(n_events, max_tel_id + 1)`` indicating
+        which telescopes participated in the event.
     max_tel_id : int
         Maximum telescope ID in the array. The dense distance and index
         matrices are built with a second dimension of ``max_tel_id + 1``,
@@ -504,23 +568,48 @@ def _compute_distance_sort_indices(r_core_data, tel_list_matrix, max_tel_id):
         increasing core distance. Telescope IDs corresponding to missing
         or ``NaN`` distances are sorted to the end.
     """
-    n_evt = tel_list_matrix.shape[0]
-
-    # Pad r_core_data to cover max_tel_id
-    if r_core_data.shape[1] < max_tel_id + 1:
-        padded = np.full((n_evt, max_tel_id + 1), np.nan)
-        padded[:, : r_core_data.shape[1]] = r_core_data
-        r_core_data = padded
+    n_evt = active_mask.shape[0]
 
     # Build dense distance matrix aligned by telescope ID
-    distances = np.full((n_evt, max_tel_id + 1), np.nan)
-    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
-    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-    distances[row_indices, tel_ids] = r_core_data[row_indices, col_indices]
+    distances = np.full((n_evt, max_tel_id + 1), np.nan, dtype=np.float32)
+    col_cap = min(r_core_data.shape[1], max_tel_id + 1)
+    distances[:, :col_cap] = r_core_data[:, :col_cap]
+
+    # Mask telescopes that are not active in this event
+    distances = np.where(active_mask, distances, np.nan)
 
     # Use NaN-safe argsort: NaN distances become inf and go last
     dist_for_sort = np.where(np.isnan(distances), np.inf, distances)
     return np.argsort(dist_for_sort, axis=1)
+
+
+def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id):
+    """Compute sorting indices: mirror area (desc) then size (desc).
+
+    Missing telescopes (NaN size or no mirror area) are sorted to the end.
+    """
+    n_evt = active_mask.shape[0]
+
+    # Map mirror areas to a dense lookup by telescope ID
+    mirror_lookup = np.full(max_tel_id + 1, np.nan, dtype=np.float32)
+    for tid, area in zip(tel_config["tel_ids"], tel_config["mirror_areas"]):
+        if tid <= max_tel_id:
+            mirror_lookup[int(tid)] = float(area)
+
+    # Build dense size matrix aligned by telescope ID
+    sizes = np.full((n_evt, max_tel_id + 1), np.nan, dtype=np.float32)
+    col_cap = min(size_data.shape[1], max_tel_id + 1)
+    sizes[:, :col_cap] = size_data[:, :col_cap]
+
+    # Mask telescopes that are not active in this event
+    sizes = np.where(active_mask, sizes, np.nan)
+
+    # Prepare sort keys: primary = mirror area (desc), secondary = size (desc)
+    area_key = np.where(np.isnan(mirror_lookup), np.inf, -mirror_lookup)
+    primary_matrix = np.broadcast_to(area_key, (n_evt, max_tel_id + 1))
+    size_key = np.where(np.isnan(sizes), np.inf, -sizes)
+
+    return np.lexsort((size_key, primary_matrix), axis=1)
 
 
 def _to_numpy_1d(x, dtype=np.float32):
@@ -576,14 +665,14 @@ def flatten_feature_data(group_df, ntel, analysis_type, training, tel_config=Non
     df_flat = flatten_telescope_data_vectorized(
         group_df,
         ntel,
-        features.telescope_features(analysis_type),
+        features_module.telescope_features(analysis_type),
         analysis_type=analysis_type,
         training=training,
         tel_config=tel_config,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
-    excluded_columns = set(features.target_features(analysis_type)) | set(
-        features.excluded_features(analysis_type, max_tel_id + 1)
+    excluded_columns = set(features_module.target_features(analysis_type)) | set(
+        features_module.excluded_features(analysis_type, max_tel_id + 1)
     )
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
@@ -625,7 +714,7 @@ def load_training_data(model_configs, file_list, analysis_type):
 
     input_files = utils.read_input_file_list(file_list)
 
-    branch_list = features.features(analysis_type, training=True)
+    branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
@@ -685,7 +774,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                 df_flat = flatten_telescope_data_vectorized(
                     df_ak,
                     tel_config["max_tel_id"] + 1,
-                    features.telescope_features(analysis_type),
+                    features_module.telescope_features(analysis_type),
                     analysis_type,
                     training=True,
                     tel_config=tel_config,
@@ -748,7 +837,7 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
     if apply_log10 is None:
         apply_log10 = []
 
-    clip_intervals = features.clip_intervals()
+    clip_intervals = features_module.clip_intervals()
 
     for var_base, (vmin, vmax) in clip_intervals.items():
         if n_tel is not None:
@@ -804,6 +893,16 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
             new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
+
+    # inspect ordering and magnitudes before clipping/log10
+    size_cols = [c for c in df_flat.columns if c.startswith("size_")][: max_tel_id + 1]
+    area_cols = [c for c in df_flat.columns if c.startswith("mirror_area_")][: max_tel_id + 1]
+    disp_cols = [c for c in df_flat.columns if c.startswith("Disp_T_")][: max_tel_id + 1]
+    preview = df_flat[size_cols + area_cols + disp_cols].head(20)
+    _logger.info(
+        "Sorted telescope sizes (pre-clip/log10), first 20 events: \n"
+        f"{preview.to_string(index=False)}"
+    )
 
     apply_clip_intervals(
         df_flat, n_tel=max_tel_id + 1, apply_log10=["size", "E", "ES", "size_dist2"]
