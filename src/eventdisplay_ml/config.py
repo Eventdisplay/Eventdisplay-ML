@@ -1,4 +1,4 @@
-"""Configuration for XGBoost model training."""
+"""Configuration for XGBoost model training (classification and stereo analysis)."""
 
 import argparse
 import logging
