@@ -223,6 +223,48 @@ def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, distance_sort_i
     return columns
 
 
+def _ground_to_shower_coords(x, y, sin_azim, cos_azim, sin_elev):
+    """Transform ground coordinates to shower-plane coordinates.
+
+    Rotates around vertical axis by azimuth, then projects onto shower plane.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        X coordinate(s), shape (...,).
+    y : numpy.ndarray
+        Y coordinate(s), shape (...,).
+    sin_azim : numpy.ndarray
+        Sine of azimuth angle, shape (...,).
+    cos_azim : numpy.ndarray
+        Cosine of azimuth angle, shape (...,).
+    sin_elev : numpy.ndarray
+        Sine of elevation angle, shape (...,).
+
+    Returns
+    -------
+    shower_x : numpy.ndarray
+        Shower-plane X coordinate.
+    shower_y : numpy.ndarray
+        Shower-plane Y coordinate scaled by sin(elevation).
+
+    Notes
+    -----
+    Original formula (azimuth definition of Eventdisplay is relevant)
+
+        shower_x = -sin_azim * x + cos_azim * y
+        shower_y = sin_elev * (cos_azim * x + sin_azim * y)
+        return shower_x, shower_y
+    """
+    s_az = -sin_azim
+    c_az = -cos_azim
+
+    shower_x = c_az * x + s_az * y
+    shower_y = sin_elev * (-s_az * x + c_az * y)
+
+    return shower_x, shower_y
+
+
 def _make_relative_coord_columns(
     var,
     tel_config,
@@ -238,7 +280,7 @@ def _make_relative_coord_columns(
 ):
     """Build relative/shower coordinate columns for a single synthetic variable."""
     columns = {}
-    cos_elev = np.cos(elev_rad)
+    sin_elev = np.sin(elev_rad)
     cos_azim = np.cos(azim_rad)
     sin_azim = np.sin(azim_rad)
 
@@ -257,10 +299,9 @@ def _make_relative_coord_columns(
         results = rel_x
     elif var == "tel_rel_y":
         results = rel_y
-    elif var == "tel_shower_x":
-        results = -sin_azim * rel_x + cos_azim * rel_y
-    elif var == "tel_shower_y":
-        results = cos_azim * cos_elev * rel_x + sin_azim * cos_elev * rel_y
+    elif var in ("tel_shower_x", "tel_shower_y"):
+        shower_x, shower_y = _ground_to_shower_coords(rel_x, rel_y, sin_azim, cos_azim, sin_elev)
+        results = shower_x if var == "tel_shower_x" else shower_y
     else:
         results = np.full((max_tel_id + 1, n_evt), default_value)
 
@@ -969,10 +1010,14 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
         tx = lookup_x[tids]
         ty = lookup_y[tids]
 
-        # Apply the rotation/projection for this specific event's geometry
-        # Standard Shower-Plane (Tilted) transformation:
-        xs = -sin_azim[i] * tx + cos_azim[i] * ty
-        ys = (cos_azim[i] * tx + sin_azim[i] * ty) * sin_elev[i]
+        # Transform to shower-plane coordinates
+        xs, ys = _ground_to_shower_coords(
+            tx,
+            ty,
+            np.full_like(tx, sin_azim[i]),
+            np.full_like(tx, cos_azim[i]),
+            np.full_like(tx, sin_elev[i]),
+        )
 
         try:
             points = np.column_stack([xs, ys])
