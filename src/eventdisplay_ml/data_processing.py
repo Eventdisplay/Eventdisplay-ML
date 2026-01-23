@@ -515,8 +515,9 @@ def _to_dense_array(col):
 
 def _get_core_arrays(df):
     """Extract core position arrays from DataFrame."""
-    core_x = _to_numpy_1d(df["Xcore"], np.float32)
-    core_y = _to_numpy_1d(df["Ycore"], np.float32)
+    # Make copies to ensure arrays are writable (some sources return read-only views)
+    core_x = _to_numpy_1d(df["Xcore"], np.float32).copy()
+    core_y = _to_numpy_1d(df["Ycore"], np.float32).copy()
     # Filter out sentinel values and apply physical bounds
     # shower cores beyond +-10 km are cut
     core_x[(core_x <= -90000) | (np.abs(core_x) > 10000)] = np.nan
