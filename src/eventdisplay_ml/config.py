@@ -1,4 +1,4 @@
-"""Configuration for XGBoost model training."""
+"""Configuration for XGBoost model training (classification and stereo analysis)."""
 
 import argparse
 import logging
@@ -109,6 +109,8 @@ def configure_training(analysis_type):
         )
         model_configs["energy_bins_log10_tev"] = model_parameters.get("energy_bins_log10_tev", [])
         model_configs["zenith_bins_deg"] = model_parameters.get("zenith_bins_deg", [])
+
+    _logger.info(f"Pre-cuts: {model_configs['pre_cuts']}")
 
     return model_configs
 

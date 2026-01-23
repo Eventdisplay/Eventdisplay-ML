@@ -338,9 +338,7 @@ def process_file_chunked(analysis_type, model_configs):
         model_configs["tel_config"] = tel_config
 
         tree = root_file["data"]
-        branch_list, rename_map, missing_optional = data_processing._resolve_branch_aliases(
-            tree, branch_list
-        )
+        branch_list, rename_map = data_processing._resolve_branch_aliases(tree, branch_list)
 
     max_events = model_configs.get("max_events", None)
     chunk_size = model_configs.get("chunk_size", 500000)
@@ -376,8 +374,7 @@ def process_file_chunked(analysis_type, model_configs):
             if rename_map:
                 rename_present = {k: v for k, v in rename_map.items() if k in chunk_ak.fields}
                 if rename_present:
-                    chunk_ak = data_processing._rename_fields_ak(chunk_ak, rename_present)
-            chunk_ak = data_processing._ensure_optional_scalar_fields(chunk_ak, missing_optional)
+                    chunk_ak = data_processing._rename_fields(chunk_ak, rename_present)
             chunk_ak = data_processing._ensure_fpointing_fields(chunk_ak)
 
             if max_events is not None:
@@ -537,10 +534,7 @@ def train_regression(df, model_configs):
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        if weights_train is not None:
-            model.fit(x_train, y_train, sample_weight=weights_train)
-        else:
-            model.fit(x_train, y_train)
+        model.fit(x_train, y_train, sample_weight=weights_train)
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 
@@ -617,9 +611,7 @@ def _log_energy_bin_counts(df):
     # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
     bin_indices = pd.cut(df["MCe0"], bins=bins, include_lowest=True, labels=False)
     count_per_bin = counts.values
-    # Inverse of count (avoiding divide by zero)
     inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
-    # Normalize so mean weight is 1.0
     inverse_counts = inverse_counts / inverse_counts.mean()
 
     # Assign weight to each event based on its energy bin
@@ -636,12 +628,16 @@ def _log_energy_bin_counts(df):
     for mult, count in mult_counts.items():
         _logger.info(f"  {int(mult)} telescopes: {int(count)}")
 
-    # Create multiplicity weight mapping: {2: weight_2, 3: weight_3, 4: weight_4, ...}
-    # Inverse frequency normalized so average is 1.0
     w_multiplicity = (df["DispNImages"] ** 2).to_numpy().astype(np.float32)
     w_multiplicity /= np.mean(w_multiplicity)
 
-    _logger.info(f"Multiplicity weights (inverse-frequency, normalized): {w_multiplicity}")
+    _logger.info(
+        "Multiplicity weights (inverse-frequency, normalized): "
+        f"mean={w_multiplicity.mean():.3f}, "
+        f"std={w_multiplicity.std():.3f}, "
+        f"min={w_multiplicity.min():.3f}, "
+        f"max={w_multiplicity.max():.3f}"
+    )
 
     # Combine energy and multiplicity weights
     combined_weights = w_energy * w_multiplicity

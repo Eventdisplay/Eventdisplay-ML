@@ -13,7 +13,8 @@ import pandas as pd
 import uproot
 from scipy.spatial import ConvexHull, QhullError
 
-from eventdisplay_ml import features, utils
+from eventdisplay_ml import features as features_module
+from eventdisplay_ml import utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
 
 _logger = logging.getLogger(__name__)
@@ -37,24 +38,12 @@ def read_telescope_config(root_file):
         Dictionary with telescope configuration:
         - 'n_tel': Total number of telescopes
         - 'tel_ids': Array of telescope IDs
-        - 'mirror_areas': Array of mirror areas for each telescope
+        - 'mirror_area': Array of mirror areas for each telescope
         - 'tel_x': Array of telescope X positions
         - 'tel_y': Array of telescope Y positions
         - 'max_tel_id': Maximum telescope ID
         - 'tel_types': Dictionary mapping mirror area to list of telescope IDs
     """
-    if "telconfig" not in root_file:
-        _logger.warning("No telconfig tree found in ROOT file, using default 4 telescopes")
-        return {
-            "n_tel": 4,
-            "tel_ids": np.array([0, 1, 2, 3]),
-            "mirror_areas": np.array([1.0, 1.0, 1.0, 1.0]),
-            "tel_x": np.array([0.0, 0.0, 0.0, 0.0]),
-            "tel_y": np.array([0.0, 0.0, 0.0, 0.0]),
-            "max_tel_id": 3,
-            "tel_types": {1.0: [0, 1, 2, 3]},
-        }
-
     telconfig_tree = root_file["telconfig"]
     telconfig_data = telconfig_tree.arrays(
         ["NTel", "TelID", "MirrorArea", "TelX", "TelY"], library="np"
@@ -62,25 +51,28 @@ def read_telescope_config(root_file):
 
     n_tel = int(telconfig_data["NTel"][0])
     tel_ids = telconfig_data["TelID"]
-    mirror_areas = telconfig_data["MirrorArea"]
+    # Keep array of mirror areas; avoid shadowing this name later
+    mirror_area_arr = telconfig_data["MirrorArea"]
     tel_x = telconfig_data["TelX"]
     tel_y = telconfig_data["TelY"]
     max_tel_id = int(np.max(tel_ids))
 
     # Group telescopes by mirror area (telescope type)
     tel_types = {}
-    for tel_id, mirror_area in zip(tel_ids, mirror_areas):
-        if mirror_area not in tel_types:
-            tel_types[mirror_area] = []
-        tel_types[mirror_area].append(int(tel_id))
-
+    for tel_id, area in zip(tel_ids, mirror_area_arr):
+        key = round(area, 2)
+        if key not in tel_types:
+            tel_types[key] = []
+        tel_types[key].append(int(tel_id))
     _logger.info(f"Telescope configuration: {n_tel} telescopes, max TelID: {max_tel_id}")
     _logger.info(f"Telescope types by mirror area: {tel_types}")
 
     return {
         "n_tel": n_tel,
         "tel_ids": tel_ids,
-        "mirror_areas": mirror_areas,
+        # Provide both singular and plural keys for compatibility
+        "mirror_area": mirror_area_arr,
+        "mirror_areas": mirror_area_arr,
         "tel_x": tel_x,
         "tel_y": tel_y,
         "max_tel_id": max_tel_id,
@@ -92,12 +84,29 @@ def _resolve_branch_aliases(tree, branch_list):
     """
     Resolve branch name aliases (e.g. R_core vs R) and drop missing optional branches.
 
-    Resolves differences between CTAO and VERITAS branch naming conventions.
+    The 'data' tree in the mscw files differ slightly between CTAO and VERITAS
+    Eventdisplay versions:
+
+    - 'R_core': VERITAS-style fixed telescope ID indexing
+    - 'R': CTAO-style variable-length ImgSel_list indexing
+
+    Parameters
+    ----------
+    tree : uproot tree
+        Uproot tree containing the data branches.
+    branch_list : list of str
+        List of desired branch names.
+
+    Returns
+    -------
+    tuple
+        (resolved_branch_list, rename_map)
+        - resolved_branch_list: List of actual branch names to read.
+        - rename_map: Dict mapping old names to new names for renaming after reading.
     """
     keys = set(tree.keys())
     resolved = []
     rename = {}
-    missing = set()
 
     # R_core vs R
     for b in branch_list:
@@ -113,7 +122,7 @@ def _resolve_branch_aliases(tree, branch_list):
 
     # Drop synthesized branches
     synthesized = {
-        "mirror_areas",
+        "mirror_area",
         "tel_rel_x",
         "tel_rel_y",
         "tel_shower_x",
@@ -124,15 +133,9 @@ def _resolve_branch_aliases(tree, branch_list):
 
     # Drop missing optional branches
     optional = {"fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS"}
-    final = []
-    for b in resolved:
-        if b in optional and b not in keys:
-            missing.add(b)
-            _logger.info(f"Branch '{b}' not found; will fill with defaults")
-        else:
-            final.append(b)
+    final = [b for b in resolved if b not in optional or b in keys]
 
-    return final, rename, missing
+    return final, rename
 
 
 def _ensure_fpointing_fields(arr):
@@ -147,73 +150,95 @@ def _ensure_fpointing_fields(arr):
     return arr
 
 
-def _ensure_optional_scalar_fields(arr, missing_optional):
-    """Fill optional scalar fields like Erec/ErecS with defaults when missing."""
-    fields = set(getattr(arr, "fields", []) or [])
-    n = len(arr)
-    if "Erec" in missing_optional and "Erec" not in fields:
-        arr = ak.with_field(arr, np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32), "Erec")
-    if "ErecS" in missing_optional and "ErecS" not in fields:
-        arr = ak.with_field(arr, np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32), "ErecS")
-    return arr
-
-
-def _rename_fields_ak(arr, rename_map):
-    """Rename fields in an Awkward Array for keys present in the array.
-
-    Parameters
-    ----------
-    arr : ak.Array
-        Input Awkward Array with record fields.
-    rename_map : dict[str, str]
-        Mapping from old field names to new field names.
-
-    Returns
-    -------
-    ak.Array
-        Array with fields renamed where applicable.
-    """
-    fields = set(getattr(arr, "fields", []) or [])
+def _rename_fields(arr, rename_map):
+    """Rename record fields present in an Awkward Array."""
     for old, new in (rename_map or {}).items():
+        fields = ak.fields(arr)
         if old in fields and old != new:
-            # Add new field with the same data
-            arr = ak.with_field(arr, arr[old], where=new)
-            # Remove the old field if the function exists; otherwise leave both
-            try:
-                arr = ak.without_field(arr, old)
-            except Exception:
-                pass
-            fields = set(getattr(arr, "fields", []) or [])
+            arr = ak.with_field(arr, arr[old], new)
+            arr = ak.without_field(arr, old)
     return arr
 
 
-def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value):
-    """Build constant mirror area columns from tel_config."""
-    columns = {}
-    tel_id_to_mirror = dict(zip(tel_config["tel_ids"], tel_config["mirror_areas"]))
-    for tel_idx in range(max_tel_id + 1):
-        col_name = f"mirror_areas_{tel_idx}"
-        if tel_idx in tel_id_to_mirror:
-            mirror_val = float(tel_id_to_mirror[tel_idx])
-            if mirror_val == 0.0:
-                mirror_val = 100.0
-            columns[col_name] = np.full(n_evt, mirror_val, dtype=np.float32)
-        else:
-            columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-    return columns
+def _make_mirror_area_columns(tel_config, max_tel_id, n_evt, sort_indices=None):
+    """Build constant mirror area columns from tel_config with optional sorting."""
+    base = np.full((n_evt, max_tel_id + 1), DEFAULT_FILL_VALUE, dtype=np.float32)
+    # Accept both 'mirror_area' (singular) and 'mirror_areas' (plural) for compatibility
+    mirror_areas = tel_config.get("mirror_area")
+    if mirror_areas is None:
+        mirror_areas = tel_config.get("mirror_areas")
+    if mirror_areas is None:
+        raise KeyError("tel_config must provide 'mirror_area' or 'mirror_areas' array")
+    tel_id_to_mirror = dict(zip(tel_config["tel_ids"], mirror_areas))
+
+    for tel_idx, mirror_val in tel_id_to_mirror.items():
+        if tel_idx <= max_tel_id:
+            mirror_val = float(mirror_val) if mirror_val != 0.0 else 100.0
+            base[:, tel_idx] = mirror_val
+
+    if sort_indices is not None:
+        base = base[np.arange(n_evt)[:, np.newaxis], sort_indices]
+
+    return {f"mirror_area_{i}": base[:, i] for i in range(max_tel_id + 1)}
 
 
-def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt):
-    """Build binary telescope active columns indicating which telescopes participated in events."""
+def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, sort_indices=None):
+    """Build binary telescope active columns, optionally sorting."""
     columns = {}
     active_matrix = np.zeros((n_evt, max_tel_id + 1), dtype=np.float32)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
     valid_mask = tel_ids <= max_tel_id
     active_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = 1.0
+
+    if sort_indices is not None:
+        active_matrix = active_matrix[np.arange(n_evt)[:, np.newaxis], sort_indices]
+
     for tel_idx in range(max_tel_id + 1):
         columns[f"tel_active_{tel_idx}"] = active_matrix[:, tel_idx]
     return columns
+
+
+def _ground_to_shower_coords(x, y, sin_azim, cos_azim, sin_elev):
+    """Transform ground coordinates to shower-plane coordinates.
+
+    Rotates around vertical axis by azimuth, then projects onto shower plane.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        X coordinate(s), shape (...,).
+    y : numpy.ndarray
+        Y coordinate(s), shape (...,).
+    sin_azim : numpy.ndarray
+        Sine of azimuth angle, shape (...,).
+    cos_azim : numpy.ndarray
+        Cosine of azimuth angle, shape (...,).
+    sin_elev : numpy.ndarray
+        Sine of elevation angle, shape (...,).
+
+    Returns
+    -------
+    shower_x : numpy.ndarray
+        Shower-plane X coordinate.
+    shower_y : numpy.ndarray
+        Shower-plane Y coordinate scaled by sin(elevation).
+
+    Notes
+    -----
+    Original formula (azimuth definition of Eventdisplay is relevant)
+
+        shower_x = -sin_azim * x + cos_azim * y
+        shower_y = sin_elev * (cos_azim * x + sin_azim * y)
+        return shower_x, shower_y
+    """
+    s_az = -sin_azim
+    c_az = -cos_azim
+
+    shower_x = c_az * x + s_az * y
+    shower_y = sin_elev * (-s_az * x + c_az * y)
+
+    return shower_x, shower_y
 
 
 def _make_relative_coord_columns(
@@ -225,14 +250,10 @@ def _make_relative_coord_columns(
     core_y,
     elev_rad,
     azim_rad,
-    valid_mask,
-    default_value,
+    sort_indices=None,
 ):
     """Build relative/shower coordinate columns for a single synthetic variable."""
     columns = {}
-    cos_elev = np.cos(elev_rad)
-    cos_azim = np.cos(azim_rad)
-    sin_azim = np.sin(azim_rad)
 
     all_tel_x = np.full(max_tel_id + 1, np.nan)
     all_tel_y = np.full(max_tel_id + 1, np.nan)
@@ -249,51 +270,94 @@ def _make_relative_coord_columns(
         results = rel_x
     elif var == "tel_rel_y":
         results = rel_y
-    elif var == "tel_shower_x":
-        results = -sin_azim * rel_x + cos_azim * rel_y
-    elif var == "tel_shower_y":
-        results = cos_azim * cos_elev * rel_x + sin_azim * cos_elev * rel_y
+    elif var in ("tel_shower_x", "tel_shower_y"):
+        shower_x, shower_y = _ground_to_shower_coords(
+            rel_x,
+            rel_y,
+            sin_azim=np.sin(azim_rad),
+            cos_azim=np.cos(azim_rad),
+            sin_elev=np.sin(elev_rad),
+        )
+        results = shower_x if var == "tel_shower_x" else shower_y
     else:
-        results = np.full((max_tel_id + 1, n_evt), default_value)
+        results = np.full((max_tel_id + 1, n_evt), DEFAULT_FILL_VALUE)
+
+    # results shape: (max_tel_id + 1, n_evt) -> transpose to (n_evt, max_tel_id + 1)
+    event_matrix = results.T
+
+    # Apply validity mask and default fill
+    valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
+    event_matrix = np.where(
+        valid_mask[:, np.newaxis] & ~np.isnan(event_matrix), event_matrix, DEFAULT_FILL_VALUE
+    )
+
+    # Reorder if needed
+    if sort_indices is not None:
+        event_matrix = event_matrix[np.arange(n_evt)[:, np.newaxis], sort_indices]
 
     for tel_idx in range(max_tel_id + 1):
-        col_name = f"{var}_{tel_idx}"
-
-        # If the telescope doesn't exist in config, it remains NaN from step 2
-        res = results[tel_idx]
-
-        # Apply validity mask (e.g. handle events where reconstruction failed)
-        final_values = np.where(valid_mask & ~np.isnan(res), res, default_value).astype(np.float32)
-        columns[col_name] = final_values
+        columns[f"{var}_{tel_idx}"] = event_matrix[:, tel_idx].astype(np.float32)
 
     return columns
 
 
-def _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value):
-    """Flatten one variable into per-telescope columns."""
-    columns = {}
+def _normalize_telescope_variable_to_tel_id_space(data, index_list, max_tel_id, n_evt):
+    """Remap telescope variable from any index list to telescope-ID space.
 
-    if var.startswith("Disp"):
-        for tel_idx in range(max_tel_id + 1):
-            col_name = f"{var}_{tel_idx}"
-            if tel_idx < data.shape[1]:
-                columns[col_name] = data[:, tel_idx]
-            else:
-                columns[col_name] = np.full(n_evt, default_value, dtype=np.float32)
-        return columns
+    Takes data indexed by an arbitrary index list (DispTelList_T, ImgSel_list, or fixed positions)
+    and remaps it to telescope-ID-indexed space (column i = telescope ID i).
 
-    full_matrix = np.full((n_evt, max_tel_id + 1), default_value, dtype=np.float32)
-    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
-    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+    Modes:
 
+    - VERITAS (R_core): Fixed indexing, index_list=None
+    - CTAO (ImgSel_list): Variable indexing, index_list=ImgSel_list or DispTelList_T
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        Data array, shape (n_evt, n_active) from variable-length or (n_evt, n_tel) from fixed.
+    index_list : numpy.ndarray or None
+        Index remapping list, shape (n_evt, n_active). Each entry is a telescope ID or position.
+        If None, data is already in telescope-ID space (VERITAS R_core fixed indexing).
+    max_tel_id : int
+        Maximum telescope ID.
+    n_evt : int
+        Number of events.
+
+    Returns
+    -------
+    numpy.ndarray
+        Data remapped to telescope-ID space, shape (n_evt, max_tel_id + 1).
+    """
+    if index_list is None:
+        # Already in telescope-ID space (VERITAS R_core fixed indexing)
+        full_matrix = np.full((n_evt, max_tel_id + 1), DEFAULT_FILL_VALUE, dtype=np.float32)
+        col_cap = min(data.shape[1], max_tel_id + 1)
+        full_matrix[:, :col_cap] = data[:, :col_cap]
+        return full_matrix
+
+    # Variable-length indexed (CTAO ImgSel_list or DispTelList_T mode)
+    full_matrix = np.full((n_evt, max_tel_id + 1), DEFAULT_FILL_VALUE, dtype=np.float32)
+    row_indices, col_indices = np.where(~np.isnan(index_list))
+    tel_ids = index_list[row_indices, col_indices].astype(int)
     valid_mask = tel_ids <= max_tel_id
     full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
         row_indices[valid_mask], col_indices[valid_mask]
     ]
-    for tel_idx in range(max_tel_id + 1):
-        columns[f"{var}_{tel_idx}"] = full_matrix[:, tel_idx]
+    return full_matrix
 
-    return columns
+
+def _clip_size_array(size_array):
+    """Clip size array to specified min/max values."""
+    vmin, vmax = features_module.clip_intervals().get("size", (None, None))
+    clipped = size_array.copy()
+    mask = ~np.isnan(clipped)
+    if vmin is not None:
+        clipped[mask] = np.maximum(clipped[mask], vmin)
+        mask = ~np.isnan(clipped)
+    if vmax is not None:
+        clipped[mask] = np.minimum(clipped[mask], vmax)
+    return clipped
 
 
 def flatten_telescope_data_vectorized(
@@ -302,9 +366,8 @@ def flatten_telescope_data_vectorized(
     """
     Vectorized flattening of telescope array columns.
 
-    Converts per-telescope arrays into individual feature columns indexed by actual
-    telescope ID. Features are mapped to telescope indices directly, with NaN fill
-    values for missing telescopes.
+    Converts per-telescope arrays into individual feature columns sorted by mirror area and
+    size.
 
     Parameters
     ----------
@@ -325,34 +388,50 @@ def flatten_telescope_data_vectorized(
     -------
     pandas.DataFrame
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
-        for telescope index ``i``, plus derived features, and array features.
-        Missing telescopes are filled with NaN.
     """
     flat_features = {}
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
-    default_value = DEFAULT_FILL_VALUE
-
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    core_x = _to_numpy_1d(df["Xcore"], np.float32)
-    core_y = _to_numpy_1d(df["Ycore"], np.float32)
-    core_x[core_x <= -90000] = np.nan
-    core_y[core_y <= -90000] = np.nan
-    elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
-    azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
-    valid_mask = np.isfinite(core_x) & np.isfinite(core_y)
+    # Detect indexing mode and determine which index list to use for remapping
+    has_r_core = _has_field(df, "R_core")
+    index_list_for_remapping = None  # None = telescope-ID-indexed (VERITAS R_core mode)
+    if has_r_core:
+        _logger.info("Detected VERITAS R_core fixed telescope-ID indexing mode.")
+    else:
+        _logger.info("Detected CTAO ImgSel_list variable-length indexing mode.")
+        index_list_for_remapping = _to_dense_array(df["ImgSel_list"])
+
+    active_mask = np.zeros((n_evt, max_tel_id + 1), dtype=bool)
+    row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
+    tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
+    valid_tel_mask = tel_ids <= max_tel_id
+    active_mask[row_indices[valid_tel_mask], tel_ids[valid_tel_mask]] = True
+
+    # Pre-load and normalize size to telescope-ID space for sorting
+    size_data = _normalize_telescope_variable_to_tel_id_space(
+        _to_dense_array(df["size"]), index_list_for_remapping, max_tel_id, n_evt
+    )
+    size_data = _clip_size_array(size_data)
+
+    core_x, core_y = _get_core_arrays(df)
+
+    # Sorting by mirror area (desc; proxy for telescope type), then size (desc)
+    sort_indices = _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id)
 
     for var in features:
-        if var == "mirror_areas" and tel_config:
+        if var == "mirror_area" and tel_config:
             flat_features.update(
-                _make_mirror_area_columns(tel_config, max_tel_id, n_evt, default_value)
+                _make_mirror_area_columns(tel_config, max_tel_id, n_evt, sort_indices)
             )
             continue
 
         if var == "tel_active":
             _logger.info(f"Computing synthetic feature: {var}")
-            flat_features.update(_make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt))
+            flat_features.update(
+                _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, sort_indices)
+            )
             continue
 
         if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
@@ -365,18 +444,32 @@ def flatten_telescope_data_vectorized(
                     n_evt,
                     core_x,
                     core_y,
-                    elev_rad,
-                    azim_rad,
-                    valid_mask,
-                    default_value,
+                    np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32)),
+                    np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32)),
+                    sort_indices,
                 )
             )
             continue
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
-        flat_features.update(
-            _flatten_variable_columns(var, data, tel_list_matrix, max_tel_id, n_evt, default_value)
-        )
+
+        # Disp_* variables always use DispTelList_T, regardless of mode
+        if var.startswith("Disp") and "_T" in var:
+            data_normalized = _normalize_telescope_variable_to_tel_id_space(
+                data, tel_list_matrix, max_tel_id, n_evt
+            )
+        else:
+            # All other variables use the mode-dependent index
+            # (None for VERITAS R_core fixed, ImgSel_list for CTAO variable)
+            data_normalized = _normalize_telescope_variable_to_tel_id_space(
+                data, index_list_for_remapping, max_tel_id, n_evt
+            )
+
+        # All variables are now in telescope-ID space; apply sorting and flatten uniformly
+        data_normalized = data_normalized[np.arange(n_evt)[:, np.newaxis], sort_indices]
+
+        for tel_idx in range(max_tel_id + 1):
+            flat_features[f"{var}_{tel_idx}"] = data_normalized[:, tel_idx]
 
     index = _get_index(df, n_evt)
     df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
@@ -385,24 +478,15 @@ def flatten_telescope_data_vectorized(
     )
 
 
-def _to_padded_array(arrays):
-    """Convert list of variable-length arrays to fixed-size numpy array, padding with NaN."""
-    max_len = max(len(arr) if hasattr(arr, "__len__") else 1 for arr in arrays)
-    result = np.full((len(arrays), max_len), np.nan)
-    for i, arr in enumerate(arrays):
-        if hasattr(arr, "__len__"):
-            result[i, : len(arr)] = arr
-        else:
-            result[i, 0] = arr
-    return result
-
-
 def _to_dense_array(col):
     """
     Convert a column of variable-length telescope data to a dense 2D numpy array.
 
     Handles uproot's awkward-style variable-length arrays from ROOT files
     by converting to plain Python lists first to avoid per-element iteration overhead.
+
+    - right-pad each event to equal length with NaN
+    - return as 2D numpy array of shape (n_events, max_telescopes)
 
     Parameters
     ----------
@@ -425,8 +509,54 @@ def _to_dense_array(col):
         ak_arr = ak.from_iter(col)
         padded = ak.pad_none(ak_arr, target=ak.max(ak.num(ak_arr)), axis=1)
         return ak.to_numpy(ak.fill_none(padded, np.nan))
-    except (ValueError, TypeError):
-        return _to_padded_array(col)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Input column must be convertible to an Awkward Array.") from exc
+
+
+def _get_core_arrays(df):
+    """Extract core position arrays from DataFrame."""
+    core_x = _to_numpy_1d(df["Xcore"], np.float32)
+    core_y = _to_numpy_1d(df["Ycore"], np.float32)
+    # Filter out sentinel values and apply physical bounds
+    # shower cores beyond +-10 km are cut
+    core_x[(core_x <= -90000) | (np.abs(core_x) > 10000)] = np.nan
+    core_y[(core_y <= -90000) | (np.abs(core_y) > 10000)] = np.nan
+    return core_x, core_y
+
+
+def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id):
+    """Compute sorting indices: mirror area (desc) then size (desc).
+
+    Missing telescopes (NaN size or no mirror area) are sorted to the end.
+    """
+    n_evt = active_mask.shape[0]
+
+    # Map mirror areas to a dense lookup by telescope ID
+    mirror_lookup = np.full(max_tel_id + 1, np.nan, dtype=np.float32)
+    # Accept both legacy ('mirror_area') and plural ('mirror_areas') keys
+    mirror_areas = tel_config.get("mirror_area")
+    if mirror_areas is None:
+        mirror_areas = tel_config.get("mirror_areas")
+    if mirror_areas is None:
+        raise KeyError("tel_config must provide 'mirror_area' (array) or 'mirror_areas'")
+    for tid, area in zip(tel_config["tel_ids"], mirror_areas):
+        if tid <= max_tel_id:
+            mirror_lookup[int(tid)] = float(area)
+
+    # Build dense size matrix aligned by telescope ID
+    sizes = np.full((n_evt, max_tel_id + 1), np.nan, dtype=np.float32)
+    col_cap = min(size_data.shape[1], max_tel_id + 1)
+    sizes[:, :col_cap] = size_data[:, :col_cap]
+
+    # Mask telescopes that are not active in this event
+    sizes = np.where(active_mask, sizes, np.nan)
+
+    # Prepare sort keys: primary = mirror area (desc), secondary = size (desc)
+    area_key = np.where(np.isnan(mirror_lookup), np.inf, -mirror_lookup)
+    primary_matrix = np.broadcast_to(area_key, (n_evt, max_tel_id + 1))
+    size_key = np.where(np.isnan(sizes), np.inf, -sizes)
+
+    return np.lexsort((size_key, primary_matrix), axis=1)
 
 
 def _to_numpy_1d(x, dtype=np.float32):
@@ -482,14 +612,14 @@ def flatten_feature_data(group_df, ntel, analysis_type, training, tel_config=Non
     df_flat = flatten_telescope_data_vectorized(
         group_df,
         ntel,
-        features.telescope_features(analysis_type),
+        features_module.telescope_features(analysis_type),
         analysis_type=analysis_type,
         training=training,
         tel_config=tel_config,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
-    excluded_columns = set(features.target_features(analysis_type)) | set(
-        features.excluded_features(analysis_type, max_tel_id + 1)
+    excluded_columns = set(features_module.target_features(analysis_type)) | set(
+        features_module.excluded_features(analysis_type, max_tel_id + 1)
     )
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
@@ -499,7 +629,7 @@ def load_training_data(model_configs, file_list, analysis_type):
     Load and flatten training data from the mscw file.
 
     Processes all events regardless of telescope multiplicity. Features are created
-    for all telescopes with default value NaN for missing telescopes.
+    for all telescopes with default value DEFAULT_FILL_VALUE for missing telescopes.
     Reads telescope configuration from the ROOT file to determine the number
     and types of telescopes.
 
@@ -531,7 +661,7 @@ def load_training_data(model_configs, file_list, analysis_type):
 
     input_files = utils.read_input_file_list(file_list)
 
-    branch_list = features.features(analysis_type, training=True)
+    branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
@@ -550,65 +680,59 @@ def load_training_data(model_configs, file_list, analysis_type):
                     _logger.warning(f"File: {f} does not contain a 'data' tree.")
                     continue
 
-                # Read telescope configuration from first file
                 if tel_config is None:
                     tel_config = read_telescope_config(root_file)
                     model_configs["tel_config"] = tel_config
 
                 _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
                 tree = root_file["data"]
-                resolved_branch_list, rename_map, missing_optional = _resolve_branch_aliases(
-                    tree, branch_list
-                )
-                df_ak = tree.arrays(
+                resolved_branch_list, rename_map = _resolve_branch_aliases(tree, branch_list)
+                df = tree.arrays(
                     resolved_branch_list,
                     cut=model_configs.get("pre_cuts", None),
                     library="ak",
                     decompression_executor=executor,
                 )
                 if rename_map:
-                    rename_present = {k: v for k, v in rename_map.items() if k in df_ak.fields}
+                    rename_present = {k: v for k, v in rename_map.items() if k in df.fields}
                     if rename_present:
-                        df_ak = _rename_fields_ak(df_ak, rename_present)
-                # Ensure optional scalar fields and fpointing fields exist
-                df_ak = _ensure_optional_scalar_fields(df_ak, missing_optional)
-                df_ak = _ensure_fpointing_fields(df_ak)
-                if len(df_ak) == 0:
+                        df = _rename_fields(df, rename_present)
+                df = _ensure_fpointing_fields(df)
+                if len(df) == 0:
                     continue
 
-                if max_events_per_file and len(df_ak) > max_events_per_file:
+                if max_events_per_file and len(df) > max_events_per_file:
                     rng = np.random.default_rng(random_state)
-                    indices = rng.choice(len(df_ak), max_events_per_file, replace=False)
-                    df_ak = df_ak[indices]
+                    indices = rng.choice(len(df), max_events_per_file, replace=False)
+                    df = df[indices]
 
                 n_before = tree.num_entries
                 _logger.info(
-                    f"Number of events before / after event cut: {n_before} / {len(df_ak)}"
-                    f" (fraction retained: {len(df_ak) / n_before:.4f})"
+                    f"Number of events before / after event cut: {n_before} / {len(df)}"
+                    f" (fraction retained: {len(df) / n_before:.4f})"
                 )
 
-                # Flatten using telescope configuration (conversion to pandas happens inside)
                 df_flat = flatten_telescope_data_vectorized(
-                    df_ak,
+                    df,
                     tel_config["max_tel_id"] + 1,
-                    features.telescope_features(analysis_type),
+                    features_module.telescope_features(analysis_type),
                     analysis_type,
                     training=True,
                     tel_config=tel_config,
                 )
                 if analysis_type == "stereo_analysis":
-                    df_flat["MCxoff"] = _to_numpy_1d(df_ak["MCxoff"], np.float32)
-                    df_flat["MCyoff"] = _to_numpy_1d(df_ak["MCyoff"], np.float32)
-                    df_flat["MCe0"] = np.log10(_to_numpy_1d(df_ak["MCe0"], np.float32))
+                    df_flat["MCxoff"] = _to_numpy_1d(df["MCxoff"], np.float32)
+                    df_flat["MCyoff"] = _to_numpy_1d(df["MCyoff"], np.float32)
+                    df_flat["MCe0"] = np.log10(_to_numpy_1d(df["MCe0"], np.float32))
                 elif analysis_type == "classification":
                     df_flat["ze_bin"] = zenith_in_bins(
-                        90.0 - _to_numpy_1d(df_ak["ArrayPointing_Elevation"], np.float32),
+                        90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
                         model_configs.get("zenith_bins_deg", []),
                     )
 
                 dfs.append(df_flat)
 
-                del df_ak
+                del df
         except Exception as e:
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
@@ -654,7 +778,7 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
     if apply_log10 is None:
         apply_log10 = []
 
-    clip_intervals = features.clip_intervals()
+    clip_intervals = features_module.clip_intervals()
 
     for var_base, (vmin, vmax) in clip_intervals.items():
         if n_tel is not None:
@@ -710,6 +834,16 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
             new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
+
+    # inspect ordering and magnitudes before clipping/log10
+    size_cols = [c for c in df_flat.columns if c.startswith("size_")][: max_tel_id + 1]
+    area_cols = [c for c in df_flat.columns if c.startswith("mirror_area_")][: max_tel_id + 1]
+    disp_cols = [c for c in df_flat.columns if c.startswith("Disp_T_")][: max_tel_id + 1]
+    preview = df_flat[size_cols + area_cols + disp_cols].head(20)
+    _logger.info(
+        "Sorted telescope sizes (pre-clip/log10), first 20 events: \n"
+        f"{preview.to_string(index=False)}"
+    )
 
     apply_clip_intervals(
         df_flat, n_tel=max_tel_id + 1, apply_log10=["size", "E", "ES", "size_dist2"]
@@ -776,10 +910,14 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
         tx = lookup_x[tids]
         ty = lookup_y[tids]
 
-        # Apply the rotation/projection for this specific event's geometry
-        # Standard Shower-Plane (Tilted) transformation:
-        xs = -sin_azim[i] * tx + cos_azim[i] * ty
-        ys = (cos_azim[i] * tx + sin_azim[i] * ty) * sin_elev[i]
+        # Transform to shower-plane coordinates
+        xs, ys = _ground_to_shower_coords(
+            tx,
+            ty,
+            np.full_like(tx, sin_azim[i]),
+            np.full_like(tx, cos_azim[i]),
+            np.full_like(tx, sin_elev[i]),
+        )
 
         try:
             points = np.column_stack([xs, ys])
@@ -801,6 +939,7 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
 def extra_columns(df, analysis_type, training, index, tel_config=None):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
+        n = len(index)
         data = {
             "Xoff_weighted_bdt": _to_numpy_1d(df["Xoff"], np.float32),
             "Yoff_weighted_bdt": _to_numpy_1d(df["Yoff"], np.float32),
@@ -815,8 +954,17 @@ def extra_columns(df, analysis_type, training, index, tel_config=None):
                 - _to_numpy_1d(df["Yoff_intersect"], np.float32)
             ).astype(np.float32),
             "DispNImages": _to_numpy_1d(df["DispNImages"], np.int32),
-            "Erec": _to_numpy_1d(df["Erec"], np.float32),
-            "ErecS": _to_numpy_1d(df["ErecS"], np.float32),
+            # These may be absent in some datasets; if missing, fill with NaN
+            "Erec": (
+                _to_numpy_1d(df["Erec"], np.float32)
+                if _has_field(df, "Erec")
+                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
+            ),
+            "ErecS": (
+                _to_numpy_1d(df["ErecS"], np.float32)
+                if _has_field(df, "ErecS")
+                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
+            ),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "Geomagnetic_Angle": calculate_geomagnetic_angles(
                 _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32),
