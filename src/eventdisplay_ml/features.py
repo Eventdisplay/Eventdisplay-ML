@@ -115,6 +115,7 @@ def _regression_features(training):
         *telescope_features("stereo_analysis"),
         "DispNImages",
         "DispTelList_T",
+        "ImgSel_list",
         "Xoff",
         "Yoff",
         "Xoff_intersect",
@@ -138,6 +139,7 @@ def _classification_features():
     var_array = [
         "DispNImages",
         "DispTelList_T",
+        "ImgSel_list",
         "EChi2S",
         "EmissionHeight",
         "EmissionHeightChi2",

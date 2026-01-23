@@ -361,7 +361,7 @@ def _clip_size_array(size_array):
 
 
 def flatten_telescope_data_vectorized(
-    df, n_tel, features, analysis_type, training=True, tel_config=None
+    df, n_tel, features, analysis_type, training=True, tel_config=None, observatory="veritas"
 ):
     """
     Vectorized flattening of telescope array columns.
@@ -394,10 +394,9 @@ def flatten_telescope_data_vectorized(
     n_evt = len(df)
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    # Detect indexing mode and determine which index list to use for remapping
-    has_r_core = _has_field(df, "R_core")
+    # Index remapping mode for CTAO-style variable-length indexing
     index_list_for_remapping = None  # None = telescope-ID-indexed (VERITAS R_core mode)
-    if has_r_core:
+    if observatory.lower() == "veritas":
         _logger.info("Detected VERITAS R_core fixed telescope-ID indexing mode.")
     else:
         _logger.info("Detected CTAO ImgSel_list variable-length indexing mode.")
@@ -474,7 +473,8 @@ def flatten_telescope_data_vectorized(
     index = _get_index(df, n_evt)
     df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
     return pd.concat(
-        [df_flat, extra_columns(df, analysis_type, training, index, tel_config)], axis=1
+        [df_flat, extra_columns(df, analysis_type, training, index, tel_config, observatory)],
+        axis=1,
     )
 
 
@@ -543,20 +543,35 @@ def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_
         if tid <= max_tel_id:
             mirror_lookup[int(tid)] = float(area)
 
-    # Build dense size matrix aligned by telescope ID
-    sizes = np.full((n_evt, max_tel_id + 1), np.nan, dtype=np.float32)
-    col_cap = min(size_data.shape[1], max_tel_id + 1)
-    sizes[:, :col_cap] = size_data[:, :col_cap]
+    # size_data is already in tel_id space (shape: n_evt x (max_tel_id + 1))
+    sizes = size_data
 
-    # Mask telescopes that are not active in this event
-    sizes = np.where(active_mask, sizes, np.nan)
+    # Sort per-event: primary = mirror area (desc), secondary = size (desc)
+    # Area has highest priority ALWAYS, even if size is NaN.
+    # NaN mirror areas go to the very end; within equal area groups,
+    # valid sizes come before NaN sizes, and then by size descending.
+    sort_indices = np.zeros((n_evt, max_tel_id + 1), dtype=int)
 
-    # Prepare sort keys: primary = mirror area (desc), secondary = size (desc)
-    area_key = np.where(np.isnan(mirror_lookup), np.inf, -mirror_lookup)
-    primary_matrix = np.broadcast_to(area_key, (n_evt, max_tel_id + 1))
-    size_key = np.where(np.isnan(sizes), np.inf, -sizes)
+    for evt_idx in range(n_evt):
+        tel_entries = []
+        for tel_idx in range(max_tel_id + 1):
+            area = mirror_lookup[tel_idx]
+            size_val = sizes[evt_idx, tel_idx]
+            # Build sort key:
+            #   1) valid area first (0), NaN area last (1)
+            #   2) area descending via negative value
+            #   3) within same area: valid size first (0), NaN last (1)
+            #   4) size descending via negative value
+            area_valid = 0 if not np.isnan(area) else 1
+            size_valid = 0 if not np.isnan(size_val) else 1
+            area_key = -area if area_valid == 0 else 0.0
+            size_key = -size_val if size_valid == 0 else 0.0
+            tel_entries.append((tel_idx, area_valid, area_key, size_valid, size_key))
 
-    return np.lexsort((size_key, primary_matrix), axis=1)
+        tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4]))
+        sort_indices[evt_idx] = np.array([t[0] for t in tel_entries])
+
+    return sort_indices
 
 
 def _to_numpy_1d(x, dtype=np.float32):
@@ -590,7 +605,9 @@ def _get_index(df_like, n):
     return pd.RangeIndex(n)
 
 
-def flatten_feature_data(group_df, ntel, analysis_type, training, tel_config=None):
+def flatten_feature_data(
+    group_df, ntel, analysis_type, training, tel_config=None, observatory="veritas"
+):
     """
     Get flattened features for events.
 
@@ -616,6 +633,7 @@ def flatten_feature_data(group_df, ntel, analysis_type, training, tel_config=Non
         analysis_type=analysis_type,
         training=training,
         tel_config=tel_config,
+        observatory=observatory,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
     excluded_columns = set(features_module.target_features(analysis_type)) | set(
@@ -719,6 +737,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     analysis_type,
                     training=True,
                     tel_config=tel_config,
+                    observatory=model_configs.get("observatory", "veritas"),
                 )
                 if analysis_type == "stereo_analysis":
                     df_flat["MCxoff"] = _to_numpy_1d(df["MCxoff"], np.float32)
@@ -936,7 +955,7 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
     return footprints
 
 
-def extra_columns(df, analysis_type, training, index, tel_config=None):
+def extra_columns(df, analysis_type, training, index, tel_config=None, observatory="veritas"):
     """Add extra columns required for analysis type."""
     if analysis_type == "stereo_analysis":
         n = len(index)
@@ -969,6 +988,7 @@ def extra_columns(df, analysis_type, training, index, tel_config=None):
             "Geomagnetic_Angle": calculate_geomagnetic_angles(
                 _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32),
                 _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
+                observatory=observatory,
             ),
         }
         # Add array footprint if telescope configuration is available

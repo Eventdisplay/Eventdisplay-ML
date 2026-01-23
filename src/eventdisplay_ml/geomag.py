@@ -10,11 +10,21 @@ FIELD_COMPONENTS = {
         "BX": 25.2e-6,  # Tesla
         "BY": 0.0,  # Tesla
         "BZ": 40.88e-6,  # Tesla
-    }
+    },
+    "CTAO-NORTH": {
+        "BX": 30.909e-6,  # Tesla
+        "BY": 0.0,  # Tesla
+        "BZ": 23.409e-6,  # Tesla
+    },
+    "CTAO-SOUTH": {
+        "BX": 20.552e-6,  # Tesla
+        "BY": 0.0,  # Tesla
+        "BZ": -9.367 - 6,  # Tesla
+    },
 }
 
 
-def calculate_geomagnetic_angles(azimuth, elevation, site="VERITAS"):
+def calculate_geomagnetic_angles(azimuth, elevation, observatory="VERITAS"):
     """
     Calculate the angle between the shower direction and the geomagnetic field.
 
@@ -24,21 +34,24 @@ def calculate_geomagnetic_angles(azimuth, elevation, site="VERITAS"):
         Azimuth angles of the showers in degrees.
     elevation : array-like
         Elevation angles of the showers in degrees.
-    site : str
-        Site identifier to get geomagnetic field components.
+    observatory : str
+        Observatory identifier to get geomagnetic field components.
 
     Returns
     -------
     theta_B : array-like
         Angle between shower direction and geomagnetic field in degrees.
     """
+    observatory = observatory.upper()
     try:
-        bx = FIELD_COMPONENTS[site]["BX"]
-        by = FIELD_COMPONENTS[site]["BY"]
-        bz = FIELD_COMPONENTS[site]["BZ"]
+        bx = FIELD_COMPONENTS[observatory]["BX"]
+        by = FIELD_COMPONENTS[observatory]["BY"]
+        bz = FIELD_COMPONENTS[observatory]["BZ"]
     except KeyError as exc:
-        raise KeyError(f"Geomagnetic field components for site '{site}' are not defined.") from exc
-
+        raise KeyError(
+            f"Geomagnetic field components for observatory '{observatory}' are not defined."
+        ) from exc
+    print("AAAAA", observatory)
     # Shower direction unit vector
     sx = np.cos(np.radians(elevation)) * np.cos(np.radians(azimuth))  # North
     sy = np.cos(np.radians(elevation)) * np.sin(np.radians(azimuth))  # East
