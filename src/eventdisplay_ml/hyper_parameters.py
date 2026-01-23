@@ -89,7 +89,7 @@ def _load_hyper_parameters_from_file(config_file):
 
 def pre_cuts_regression(n_tel):
     """Get pre-cuts for regression analysis (no multiplicity filter)."""
-    event_cut = ""
+    event_cut = "DispNImages >=2"
     if PRE_CUTS_REGRESSION:
         event_cut = " & ".join(f"({c})" for c in PRE_CUTS_REGRESSION)
     _logger.info(f"Pre-cuts (regression): {event_cut if event_cut else 'None'}")

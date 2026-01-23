@@ -51,7 +51,6 @@ def calculate_geomagnetic_angles(azimuth, elevation, observatory="VERITAS"):
         raise KeyError(
             f"Geomagnetic field components for observatory '{observatory}' are not defined."
         ) from exc
-    print("AAAAA", observatory)
     # Shower direction unit vector
     sx = np.cos(np.radians(elevation)) * np.cos(np.radians(azimuth))  # North
     sy = np.cos(np.radians(elevation)) * np.sin(np.radians(azimuth))  # East
