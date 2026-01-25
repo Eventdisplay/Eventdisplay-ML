@@ -870,21 +870,16 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     return df_flat
 
 
-def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
+def _calculate_array_footprint(tel_config, tel_list_matrix):
     """
     Calculate array footprint area using convex hull of active telescope positions per event.
 
-    Telescope positions are transformed to shower-centered coordinates in the shower plane
-    before computing the footprint convex hull.
+    Calculation in ground coordinates, not in shower coordinates.
 
     Parameters
     ----------
     tel_config : dict
         Telescope configuration with 'tel_x', 'tel_y', and 'tel_ids' arrays.
-    elev_rad : numpy.ndarray
-        Elevation angles in radians, shape (n_evt,).
-    azim_rad : numpy.ndarray
-        Azimuth angles in radians, shape (n_evt,).
     tel_list_matrix : numpy.ndarray
         Matrix of telescope IDs participating in each event, shape (n_evt, max_tel).
 
@@ -893,7 +888,7 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
     numpy.ndarray
         Array of shape (n_evt,) with footprint area for each event based on active telescopes.
     """
-    n_evt = len(elev_rad)
+    n_evt = len(tel_list_matrix)
     footprints = np.zeros(n_evt, dtype=np.float32)
 
     # Pre-map all telescope positions to a dense array aligned with tel_list_matrix IDs
@@ -904,12 +899,7 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
         lookup_x[int(tid)] = tx
         lookup_y[int(tid)] = ty
 
-    # 1. Vectorized Transformation (Do this for ALL events at once)
-    sin_elev = np.sin(elev_rad)
-    cos_azim = np.cos(azim_rad)
-    sin_azim = np.sin(azim_rad)
-
-    # 2. Iterate only for the ConvexHull
+    #  Iterate only for the ConvexHull
     for i in range(n_evt):
         tids = tel_list_matrix[i]
         tids = tids[~np.isnan(tids)].astype(int)
@@ -926,18 +916,8 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
             continue
 
         # Fast indexing
-        tx = lookup_x[tids]
-        ty = lookup_y[tids]
-
-        # Transform to shower-plane coordinates
-        xs, ys = tx, ty
-        #        xs, ys = _ground_to_shower_coords(
-        #            tx,
-        #            ty,
-        #            np.full_like(tx, sin_azim[i]),
-        #            np.full_like(tx, cos_azim[i]),
-        #            np.full_like(tx, sin_elev[i]),
-        #        )
+        xs = lookup_x[tids]
+        ys = lookup_y[tids]
 
         try:
             points = np.column_stack([xs, ys])
@@ -994,12 +974,8 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
         }
         # Add array footprint if telescope configuration is available
         if tel_config is not None:
-            elev_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Elevation"], np.float32))
-            azim_rad = np.radians(_to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32))
             tel_list_matrix = _to_dense_array(df["DispTelList_T"])
-            data["array_footprint"] = _calculate_array_footprint(
-                tel_config, elev_rad, azim_rad, tel_list_matrix
-            )
+            data["array_footprint"] = _calculate_array_footprint(tel_config, tel_list_matrix)
     elif "classification" in analysis_type:
         data = {
             "MSCW": _to_numpy_1d(df["MSCW"], np.float32),
