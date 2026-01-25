@@ -130,7 +130,7 @@ def _resolve_branch_aliases(tree, branch_list):
     resolved = [b for b in resolved if b not in synthesized]
 
     # Drop missing optional branches
-    optional = {"fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS"}
+    optional = {"fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS", "nlowgain"}
     final = [b for b in resolved if b not in optional or b in keys]
 
     return final, rename
