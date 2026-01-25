@@ -65,11 +65,12 @@ def test_imgsel_sorting_and_alignment():
         analysis_type="stereo_analysis",
         training=True,
         tel_config=tel_config,
+        observatory="ctao-north",
     )
 
-    # Expected order by size desc (mirror areas equal): tel 1 then tel 3
-    expected_size_log = [np.log10(3725.51), np.log10(2640.01)]
-    # Disp_T should align with sorted order
+    # Expected order by size desc (mirror areas equal): tel 1 (3725.51) then tel 3 (2640.01)
+    expected_size_log = [np.log10(3725.51), np.log10(2640.01)]  # Descending order
+    # Disp_T aligned to sorted order (tel 1 first, then tel 3)
     expected_disp = [1.56872, 1.50883]
 
     # Assert mirror_area columns exist and equal 100 for sorted positions

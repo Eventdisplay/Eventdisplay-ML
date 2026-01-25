@@ -246,7 +246,12 @@ def apply_regression_models(df, model_configs):
     n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
 
     flatten_data = flatten_feature_data(
-        df, n_tel, analysis_type="stereo_analysis", training=False, tel_config=tel_config
+        df,
+        n_tel,
+        analysis_type="stereo_analysis",
+        training=False,
+        tel_config=tel_config,
+        observatory=model_configs.get("observatory", "veritas"),
     )
 
     models = model_configs["models"]
@@ -302,7 +307,12 @@ def apply_classification_models(df, model_configs, threshold_keys):
         _logger.info(f"Processing {len(group_df)} events with bin={e_bin}")
 
         flatten_data = flatten_feature_data(
-            group_df, n_tel, analysis_type="classification", training=False, tel_config=tel_config
+            group_df,
+            n_tel,
+            analysis_type="classification",
+            training=False,
+            tel_config=tel_config,
+            observatory=model_configs.get("observatory", "veritas"),
         )
         model = models[e_bin]["model"]
         flatten_data = flatten_data.reindex(columns=models[e_bin]["features"])

@@ -79,13 +79,21 @@ def configure_training(analysis_type):
         help="Maximum number of CPU cores to use for training.",
         default=1,
     )
+    parser.add_argument(
+        "--observatory",
+        type=str,
+        help="Observatory/site name for geomagnetic field (default: VERITAS).",
+        default="VERITAS",
+    )
 
     model_configs = vars(parser.parse_args())
 
     _logger.info(f"--- XGBoost {analysis_type} training ---")
+    _logger.info(f"Observatory: {model_configs.get('observatory')}")
     _logger.info(f"Telescope multiplicity: {model_configs.get('n_tel')}")
     _logger.info(f"Model output prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Train vs test fraction: {model_configs['train_test_fraction']}")
+    _logger.info(f"Random state: {model_configs['random_state']}")
     _logger.info(f"Max events: {model_configs['max_events']}")
     _logger.info(f"Max CPU cores: {model_configs['max_cores']}")
 
@@ -171,10 +179,17 @@ def configure_apply(analysis_type):
         help="Maximum number of CPU cores to use for processing.",
         default=1,
     )
+    parser.add_argument(
+        "--observatory",
+        type=str,
+        help="Observatory/site name for geomagnetic field (default: VERITAS).",
+        default="VERITAS",
+    )
 
     model_configs = vars(parser.parse_args())
 
     _logger.info(f"--- XGBoost {analysis_type} evaluation ---")
+    _logger.info(f"Observatory: {model_configs.get('observatory')}")
     _logger.info(f"Input file: {model_configs.get('input_file')}")
     _logger.info(f"Model prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Output file: {model_configs.get('output_file')}")
