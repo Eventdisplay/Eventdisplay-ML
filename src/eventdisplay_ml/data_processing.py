@@ -876,6 +876,8 @@ def _calculate_array_footprint(tel_config, tel_list_matrix):
 
     Calculation in ground coordinates, not in shower coordinates.
 
+    For 2-telescope events, footprint is the distance between the two telescopes.
+
     Parameters
     ----------
     tel_config : dict
@@ -889,7 +891,7 @@ def _calculate_array_footprint(tel_config, tel_list_matrix):
         Array of shape (n_evt,) with footprint area for each event based on active telescopes.
     """
     n_evt = len(tel_list_matrix)
-    footprints = np.zeros(n_evt, dtype=np.float32)
+    footprints = np.full(n_evt, -1.0, dtype=np.float32)
 
     # Pre-map all telescope positions to a dense array aligned with tel_list_matrix IDs
     max_id = int(np.nanmax(tel_list_matrix)) if np.any(~np.isnan(tel_list_matrix)) else 0
