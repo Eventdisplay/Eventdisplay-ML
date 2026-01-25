@@ -125,8 +125,6 @@ def _resolve_branch_aliases(tree, branch_list):
         "mirror_area",
         "tel_rel_x",
         "tel_rel_y",
-        "tel_shower_x",
-        "tel_shower_y",
         "tel_active",
     }
     resolved = [b for b in resolved if b not in synthesized]
@@ -270,15 +268,6 @@ def _make_relative_coord_columns(
         results = rel_x
     elif var == "tel_rel_y":
         results = rel_y
-    elif var in ("tel_shower_x", "tel_shower_y"):
-        shower_x, shower_y = _ground_to_shower_coords(
-            rel_x,
-            rel_y,
-            sin_azim=np.sin(azim_rad),
-            cos_azim=np.cos(azim_rad),
-            sin_elev=np.sin(elev_rad),
-        )
-        results = shower_x if var == "tel_shower_x" else shower_y
     else:
         results = np.full((max_tel_id + 1, n_evt), DEFAULT_FILL_VALUE)
 
@@ -433,7 +422,7 @@ def flatten_telescope_data_vectorized(
             )
             continue
 
-        if var in ("tel_rel_x", "tel_rel_y", "tel_shower_x", "tel_shower_y") and tel_config:
+        if var in ("tel_rel_x", "tel_rel_y") and tel_config:
             _logger.info(f"Computing synthetic feature: {var}")
             flat_features.update(
                 _make_relative_coord_columns(
@@ -866,7 +855,9 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
     )
 
     apply_clip_intervals(
-        df_flat, n_tel=max_tel_id + 1, apply_log10=["size", "E", "ES", "size_dist2"]
+        df_flat,
+        n_tel=max_tel_id + 1,
+        apply_log10=["size", "ntubes", "nlowgain", "E", "ES", "size_dist2"],
     )
 
     for i in range(max_tel_id + 1):  # Iterate over all possible telescope indices
@@ -923,7 +914,15 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
         tids = tel_list_matrix[i]
         tids = tids[~np.isnan(tids)].astype(int)
 
-        if len(tids) < 3:
+        if len(tids) == 2:
+            tx1 = lookup_x[tids[0]]
+            ty1 = lookup_y[tids[0]]
+            tx2 = lookup_x[tids[1]]
+            ty2 = lookup_y[tids[1]]
+            footprints[i] = np.hypot(tx2 - tx1, ty2 - ty1)
+            continue
+
+        if len(tids) < 2:
             continue
 
         # Fast indexing
@@ -931,13 +930,14 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
         ty = lookup_y[tids]
 
         # Transform to shower-plane coordinates
-        xs, ys = _ground_to_shower_coords(
-            tx,
-            ty,
-            np.full_like(tx, sin_azim[i]),
-            np.full_like(tx, cos_azim[i]),
-            np.full_like(tx, sin_elev[i]),
-        )
+        xs, ys = tx, ty
+        #        xs, ys = _ground_to_shower_coords(
+        #            tx,
+        #            ty,
+        #            np.full_like(tx, sin_azim[i]),
+        #            np.full_like(tx, cos_azim[i]),
+        #            np.full_like(tx, sin_elev[i]),
+        #        )
 
         try:
             points = np.column_stack([xs, ys])
@@ -946,12 +946,12 @@ def _calculate_array_footprint(tel_config, elev_rad, azim_rad, tel_list_matrix):
             # This happens if telescopes are collinear (all in a line)
             # or if the points are too close together for the algorithm
             _logger.debug(f"Degenerate geometry for event {i}: telescopes are collinear.")
-            footprints[i] = 0.0
+            footprints[i] = -1.0
 
         except ValueError as e:
             # This catches shape mismatches or empty arrays that slipped through
             _logger.error(f"Value error in ConvexHull for event {i}: {e}")
-            footprints[i] = 0.0
+            footprints[i] = -1.0
 
     return footprints
 
