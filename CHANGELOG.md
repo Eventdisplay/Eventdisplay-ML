@@ -7,6 +7,21 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v0.5.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.5.0) - 2026-01-25
+
+### New Features
+
+- Introduces telescope type handling for CTAO simulations by updating the stereo reconstruction pipeline to work with telescope-dependent variables across different telescope configurations. The key architectural change is moving from training separate models per telescope multiplicity (2, 3, 4 telescopes) to a single unified model that handles all multiplicities together. This is a major change applicable for both stereo and classification tasks. ([#29](https://github.com/Eventdisplay/Eventdisplay-ML/pull/29))
+- Add a telescope presence flag (tel_active) and implement combined weighting for both energy and telescope multiplicity in the training process. ([#34](https://github.com/Eventdisplay/Eventdisplay-ML/pull/34))
+- Introduced sorting of telescope-dependent variables by mirror area (as proxy to telescope type) and size. ([#38](https://github.com/Eventdisplay/Eventdisplay-ML/pull/38))
+- Add CTAO-specific support for telescope indexing/sorting and geomagnetic angle calculation by introducing an observatory configuration, new geomagnetic field presets, and updated sorting behavior (mirror area first, then size). ([#39](https://github.com/Eventdisplay/Eventdisplay-ML/pull/39))
+- Reduces reliance on elevation/azimuth-derived coordinates and expands per-telescope feature set by adding channel-count features. ([#41](https://github.com/Eventdisplay/Eventdisplay-ML/pull/41))
+
+### Maintenance
+
+- Migrate the data loading pipeline from pandas to Awkward Array for improved performance when processing the ROOT files. Enable parallel decompression through ThreadPoolExecutor (use `--max_cores` argument). ([#31](https://github.com/Eventdisplay/Eventdisplay-ML/pull/31))
+
+
 ## [v0.4.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.4.0) - 2026-01-20
 
 ### New Features
