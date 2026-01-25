@@ -88,8 +88,6 @@ def telescope_features(analysis_type):
         "mirror_area",
         "tel_rel_x",
         "tel_rel_y",
-        "tel_shower_x",
-        "tel_shower_y",
         "tel_active",
     ]
     if analysis_type == "classification":
@@ -106,6 +104,8 @@ def telescope_features(analysis_type):
         "DispXoff_T",
         "DispYoff_T",
         "DispWoff_T",
+        "ntubes",
+        "nlowgain",
     ]
 
 
@@ -183,6 +183,8 @@ def clip_intervals():
         "size": (10, None),
         "E": (energy_min, None),
         "ES": (energy_min, None),
+        "ntubes": (1, None),
+        "nlowgain": (1, None),
         # Derived variables - avoid numerical issues
         "size_dist2": (1.0, None),
         "tgrad_x": (-50.0, 50.0),
