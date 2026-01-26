@@ -838,8 +838,9 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
         if f"loss_{i}" in df_flat and f"dist_{i}" in df_flat:
             new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
             new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
+        if f"size_{i}" in df_flat and f"dist_{i}" in df_flat:
+            new_cols[f"size_dist2_{i}"] = df_flat[f"size_{i}"] / (df_flat[f"dist_{i}"] ** 2 + 1e-6)
         if f"width_{i}" in df_flat and f"length_{i}" in df_flat:
-            new_cols[f"size_dist2_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
             new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
 
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
