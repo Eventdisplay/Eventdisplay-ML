@@ -730,14 +730,19 @@ def load_training_data(model_configs, file_list, analysis_type):
                     observatory=model_configs.get("observatory", "veritas"),
                 )
                 if analysis_type == "stereo_analysis":
-                    df_flat["MCxoff"] = _to_numpy_1d(df["MCxoff"], np.float32)
-                    df_flat["MCyoff"] = _to_numpy_1d(df["MCyoff"], np.float32)
-                    df_flat["MCe0"] = np.log10(_to_numpy_1d(df["MCe0"], np.float32))
+                    new_cols = {
+                        "MCxoff": _to_numpy_1d(df["MCxoff"], np.float32),
+                        "MCyoff": _to_numpy_1d(df["MCyoff"], np.float32),
+                        "MCe0": np.log10(_to_numpy_1d(df["MCe0"], np.float32)),
+                    }
                 elif analysis_type == "classification":
-                    df_flat["ze_bin"] = zenith_in_bins(
-                        90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
-                        model_configs.get("zenith_bins_deg", []),
-                    )
+                    new_cols = {
+                        "ze_bin": zenith_in_bins(
+                            90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
+                            model_configs.get("zenith_bins_deg", []),
+                        )
+                    }
+                df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df_flat.index)], axis=1)
 
                 dfs.append(df_flat)
 
