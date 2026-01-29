@@ -74,6 +74,7 @@ def telescope_features(analysis_type):
         List of telescope-level feature names.
     """
     var = [
+        "size",
         "cosphi",
         "sinphi",
         "loss",
@@ -147,9 +148,12 @@ def _classification_features():
         "MSCL",
         "ArrayPointing_Elevation",
         "ArrayPointing_Azimuth",
+        "Xcore",
+        "Ycore",
     ]
     # energy used to bin the models, but not as feature
-    return var_tel + var_array + ["Erec"]
+    # size used for sorting events during flattening, but not as feature
+    return var_tel + var_array + ["Erec", "size"]
 
 
 def clip_intervals():

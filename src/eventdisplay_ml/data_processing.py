@@ -460,7 +460,7 @@ def flatten_telescope_data_vectorized(
             flat_features[f"{var}_{tel_idx}"] = data_normalized[:, tel_idx]
 
     index = _get_index(df, n_evt)
-    df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config)
+    df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config, analysis_type)
     return pd.concat(
         [df_flat, extra_columns(df, analysis_type, training, index, tel_config, observatory)],
         axis=1,
@@ -808,7 +808,7 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
                     df.loc[mask_to_log, var_base] = np.log10(df.loc[mask_to_log, var_base])
 
 
-def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
+def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None, analysis_type=None):
     """Generate dataframe for telescope variables flattened for all telescopes.
 
     Creates features for all telescope IDs, using NaN as default value for missing data.
@@ -823,12 +823,18 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
         DataFrame index.
     tel_config : dict, optional
         Telescope configuration with 'max_tel_id' key.
+    analysis_type : str, optional
+        Type of analysis, e.g. "classification" or "stereo_analysis".
     """
     df_flat = pd.DataFrame(flat_features, index=index)
     df_flat = df_flat.astype(np.float32)
 
     # Determine max telescope ID from config or use n_tel
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
+
+    keep_size_vars = analysis_type == "stereo_analysis"
+    if not keep_size_vars:
+        _logger.info(f"Dropping 'size'-related variables for {analysis_type} analysis.")
 
     new_cols = {}
     for i in range(max_tel_id + 1):  # Iterate over all possible telescopes
@@ -838,7 +844,7 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
         if f"loss_{i}" in df_flat and f"dist_{i}" in df_flat:
             new_cols[f"loss_loss_{i}"] = df_flat[f"loss_{i}"] ** 2
             new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
-        if f"size_{i}" in df_flat and f"dist_{i}" in df_flat:
+        if f"size_{i}" in df_flat and f"dist_{i}" in df_flat and keep_size_vars:
             new_cols[f"size_dist2_{i}"] = df_flat[f"size_{i}"] / (df_flat[f"dist_{i}"] ** 2 + 1e-6)
         if f"width_{i}" in df_flat and f"length_{i}" in df_flat:
             new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
@@ -867,6 +873,8 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None):
         if f"cen_y_{i}" in df_flat and f"fpointing_dy_{i}" in df_flat:
             df_flat[f"cen_y_{i}"] = df_flat[f"cen_y_{i}"] + df_flat[f"fpointing_dy_{i}"]
         df_flat = df_flat.drop(columns=[f"fpointing_dx_{i}", f"fpointing_dy_{i}"], errors="ignore")
+        if not keep_size_vars:
+            df_flat = df_flat.drop(columns=[f"size_{i}"], errors="ignore")
 
     return df_flat
 
