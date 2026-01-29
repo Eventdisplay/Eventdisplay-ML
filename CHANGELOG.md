@@ -7,6 +7,22 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v1.0.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v1.0.0) - 2026-01-29
+
+First fully stable release of Eventdisplay-ML for stereo (direction and energy) reconstruction.
+Tested and validated on both VERITAS and CTAO simulations plus VERITAS data.
+
+Compatible with:
+
+- Eventdisplay for CTAO simulations [v5.17.0](https://github.com/Eventdisplay/Eventdisplay/releases/tag/v5.17.0)
+- Eventdisplay for VERITAS [v4.92](https://github.com/VERITAS-Observatory/EventDisplay_v4) (not released yet)
+
+
+### Bugfixes
+
+- Fix wrong calculation of `size / dist**2` feature, which was previously computed as `width / length` instead of `size / dist**2`. ([#44](https://github.com/Eventdisplay/Eventdisplay-ML/pull/44))
+
+
 ## [v0.5.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v0.5.0) - 2026-01-25
 
 ### New Features
