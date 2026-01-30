@@ -29,7 +29,7 @@ XGB_CLASSIFICATION_HYPERPARAMETERS = {
         "model": None,
         "hyper_parameters": {
             "objective": "binary:logistic",
-            "eval_metric": "logloss",  # TODO AUC ?
+            "eval_metric": ["logloss", "auc"],
             "n_estimators": 2000,
             "early_stopping_rounds": 50,
             "max_depth": 6,
