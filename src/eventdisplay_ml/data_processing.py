@@ -742,7 +742,8 @@ def load_training_data(model_configs, file_list, analysis_type):
                             model_configs.get("zenith_bins_deg", []),
                         )
                     }
-                df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=df_flat.index)], axis=1)
+                for col_name, values in new_cols.items():
+                    df_flat[col_name] = values
 
                 dfs.append(df_flat)
 
