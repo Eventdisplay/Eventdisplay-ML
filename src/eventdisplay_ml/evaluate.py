@@ -281,7 +281,10 @@ def shap_feature_importance_by_energy(
     # Extract energy values and create bins
     mce0_values = df.loc[y_test.index, "MCe0"].values
     bins = np.linspace(log_e_min, log_e_max, n_bins + 1)
-    bin_indices = np.digitize(mce0_values, bins)
+    # Use pd.cut with include_lowest=True to match calculate_resolution binning
+    bin_categories = pd.cut(mce0_values, bins=bins, include_lowest=True, right=True)
+    # Convert categorical bins to 1-based integer indices (NaN -> code -1, becomes 0)
+    bin_indices = bin_categories.cat.codes + 1
 
     n_features = len(x_test.columns)
     n_targets = len(target_names)
