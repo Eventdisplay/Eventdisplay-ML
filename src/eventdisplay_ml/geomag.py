@@ -19,7 +19,7 @@ FIELD_COMPONENTS = {
     "CTAO-SOUTH": {
         "BX": 20.552e-6,  # Tesla
         "BY": 0.0,  # Tesla
-        "BZ": -9.367 - 6,  # Tesla
+        "BZ": -9.367e-6,  # Tesla
     },
 }
 
