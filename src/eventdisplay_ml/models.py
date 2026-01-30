@@ -360,8 +360,7 @@ def process_file_chunked(analysis_type, model_configs):
         threshold_keys = sorted(
             {
                 eff
-                for n_tel_models in model_configs["models"].values()
-                for e_bin_models in n_tel_models.values()
+                for e_bin_models in model_configs["models"].values()
                 for eff in (e_bin_models.get("thresholds") or {}).keys()
             }
         )
