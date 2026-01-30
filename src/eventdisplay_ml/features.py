@@ -96,7 +96,6 @@ def telescope_features(analysis_type):
 
     return [
         *var,
-        "size",
         "cen_x",
         "cen_y",
         "E",

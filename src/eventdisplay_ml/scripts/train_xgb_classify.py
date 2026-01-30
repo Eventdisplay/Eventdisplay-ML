@@ -4,7 +4,7 @@ Train XGBoost BDTs for gamma/hadron classification.
 Uses image and stereo parameters to train classification BDTs to separate
 gamma-ray events from hadronic background events.
 
-Trains a single BDT on all telescope multiplicity events.
+Trains a single classifier on all telescope multiplicity events.
 """
 
 import logging
