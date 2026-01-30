@@ -68,7 +68,9 @@ def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
         shap_feature_importance(model, x_test, ["label"])
 
 
-def evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name):
+def evaluate_regression_model(
+    model, x_test, y_test, df, x_cols, y_data, name, shap_per_energy=False
+):
     """Evaluate the trained model on the test set and log performance metrics."""
     score = model.score(x_test, y_test)
     _logger.info(f"XGBoost Multi-Target R^2 Score (Testing Set): {score:.4f}")
@@ -82,10 +84,8 @@ def evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name):
     feature_importance(model, x_cols, y_data.columns, name)
     if name == "xgboost":
         shap_feature_importance(model, x_test, y_data.columns)
-        # Optional for now
-        # shap_feature_importance_by_energy(
-        #    model, x_test, df, y_test, y_data.columns
-        # )
+        if shap_per_energy:
+            shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
     df_pred = pd.DataFrame(y_pred, columns=target_features("stereo_analysis"))
     calculate_resolution(
