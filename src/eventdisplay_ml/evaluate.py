@@ -308,13 +308,14 @@ def shap_feature_importance_by_energy(
         bin_upper = bins[bin_idx]
         mean_log_e = mce0_values[mask].mean()
 
-        bin_label = f"LogE={mean_log_e:.2f}"
+        # Use a stable, unique bin label based on the explicit energy range
+        bin_label = f"[{bin_lower:.2f}, {bin_upper:.2f}]"
         bin_info.append(
             {
                 "label": bin_label,
                 "mean_log_e": mean_log_e,
                 "n_events": n_events,
-                "range": f"[{bin_lower:.2f}, {bin_upper:.2f}]",
+                "range": bin_label,
             }
         )
 
