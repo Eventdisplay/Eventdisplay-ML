@@ -586,7 +586,9 @@ def train_classification(df, model_configs):
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train)
+        model.fit(
+            x_train, y_train, early_stopping_rounds=10, eval_set=[(x_test, y_test)], verbose=False
+        )
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
         cfg["model"] = model
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
@@ -632,7 +634,7 @@ def _log_energy_bin_counts(df):
 
     _logger.info(f"Energy bin weights (inverse-count, normalized): {inverse_counts}")
 
-    # Calculate multiplicity weights (inverse frequency)
+    # Calculate multiplicity weights (prioritize higher-multiplicity events)
     mult_counts = df["DispNImages"].value_counts()
     _logger.info("Training events per multiplicity:")
     for mult, count in mult_counts.items():
