@@ -30,14 +30,14 @@ XGB_CLASSIFICATION_HYPERPARAMETERS = {
         "hyper_parameters": {
             "objective": "binary:logistic",
             "eval_metric": ["logloss", "auc"],
-            "n_estimators": 2000,
+            "n_estimators": 5000,
             "early_stopping_rounds": 50,
-            "max_depth": 6,
-            "learning_rate": 0.1,
+            "max_depth": 7,
+            "learning_rate": 0.05,
             "subsample": 0.8,
             "colsample_bytree": 0.8,
             "random_state": None,
-            "n_jobs": 8,
+            "n_jobs": 48,
         },
     }
 }
