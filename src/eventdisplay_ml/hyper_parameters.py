@@ -29,14 +29,15 @@ XGB_CLASSIFICATION_HYPERPARAMETERS = {
         "model": None,
         "hyper_parameters": {
             "objective": "binary:logistic",
-            "eval_metric": "logloss",  # TODO AUC ?
-            "n_estimators": 100,  # TODO probably too low
-            "max_depth": 6,
-            "learning_rate": 0.1,
+            "eval_metric": ["logloss", "auc"],
+            "n_estimators": 5000,
+            "early_stopping_rounds": 50,
+            "max_depth": 7,
+            "learning_rate": 0.05,
             "subsample": 0.8,
             "colsample_bytree": 0.8,
             "random_state": None,
-            "n_jobs": 8,
+            "n_jobs": 48,
         },
     }
 }
