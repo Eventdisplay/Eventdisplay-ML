@@ -195,7 +195,7 @@ eventdisplay-ml-plot-classification-gamma-efficiency --help
 - **Geomagnetic angle**: Angle between pointing and Earth's magnetic field
 
 **Observatory-Specific**:
-- VERITAS: 4 telescopes in Utah, ~12m diameter mirrors
+- VERITAS: 4 telescopes in Arizona, ~12m diameter mirrors
 - CTAO: Multiple telescope types (LST, MST, SST) with different mirror sizes
 - Telescope sorting: By mirror area first (proxy for type), then by image size
 
