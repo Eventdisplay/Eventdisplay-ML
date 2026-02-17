@@ -420,7 +420,7 @@ towncrier build --version v1.2.3
 
 ### Quality
 
-1. **Test coverage**: Aim for >80% coverage (currently ~27%, needs improvement)
+1. **Test coverage**: Aim for >80% coverage (current overall coverage is 27% as most tests focus on core data processing logic; config, evaluate, models, and utils modules need more test coverage)
 2. **Documentation**: All public functions should have docstrings
 3. **Type hints**: Use where practical for better IDE support
 4. **Code review**: All changes go through PR review
