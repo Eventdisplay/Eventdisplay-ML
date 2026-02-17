@@ -691,6 +691,16 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if tel_config is None:
                     tel_config = read_telescope_config(root_file)
                     model_configs["tel_config"] = tel_config
+                else:
+                    # Check if current file has a larger max_tel_id and update if needed
+                    current_tel_config = read_telescope_config(root_file)
+                    if current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
+                        _logger.info(
+                            f"Updating max_tel_id from {tel_config['max_tel_id']} "
+                            f"to {current_tel_config['max_tel_id']} (file: {f})"
+                        )
+                        tel_config["max_tel_id"] = current_tel_config["max_tel_id"]
+                        model_configs["tel_config"] = tel_config
 
                 _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
                 tree = root_file["data"]
