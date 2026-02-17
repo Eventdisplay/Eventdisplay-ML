@@ -85,6 +85,12 @@ def configure_training(analysis_type):
         help="Observatory/site name for geomagnetic field (default: VERITAS).",
         default="VERITAS",
     )
+    parser.add_argument(
+        "--max_tel_per_type",
+        type=int,
+        help="Maximum number of telescopes to keep per mirror area type (for feature reduction).",
+        default=None,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -96,6 +102,8 @@ def configure_training(analysis_type):
     _logger.info(f"Random state: {model_configs['random_state']}")
     _logger.info(f"Max events: {model_configs['max_events']}")
     _logger.info(f"Max CPU cores: {model_configs['max_cores']}")
+    if model_configs.get("max_tel_per_type") is not None:
+        _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
