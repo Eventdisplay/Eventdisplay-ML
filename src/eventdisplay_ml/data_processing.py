@@ -329,7 +329,8 @@ def _normalize_telescope_variable_to_tel_id_space(data, index_list, max_tel_id, 
     full_matrix = np.full((n_evt, max_tel_id + 1), DEFAULT_FILL_VALUE, dtype=np.float32)
     row_indices, col_indices = np.where(~np.isnan(index_list))
     tel_ids = index_list[row_indices, col_indices].astype(int)
-    valid_mask = tel_ids <= max_tel_id
+    # Filter for valid telescope IDs and valid column indices in data array
+    valid_mask = (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
     full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
         row_indices[valid_mask], col_indices[valid_mask]
     ]
@@ -391,12 +392,6 @@ def flatten_telescope_data_vectorized(
         _logger.info("Detected CTAO ImgSel_list variable-length indexing mode.")
         index_list_for_remapping = _to_dense_array(df["ImgSel_list"])
 
-    # Determine the maximum width needed for padded arrays
-    # This ensures all arrays are padded to the same width
-    max_array_width = tel_list_matrix.shape[1]
-    if index_list_for_remapping is not None:
-        max_array_width = max(max_array_width, index_list_for_remapping.shape[1])
-
     active_mask = np.zeros((n_evt, max_tel_id + 1), dtype=bool)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
@@ -404,14 +399,8 @@ def flatten_telescope_data_vectorized(
     active_mask[row_indices[valid_tel_mask], tel_ids[valid_tel_mask]] = True
 
     # Pre-load and normalize size to telescope-ID space for sorting
-    size_raw = _to_dense_array(df["size"])
-    # Ensure size array is padded to the same width as the index lists
-    if size_raw.shape[1] < max_array_width:
-        padded_size = np.full((n_evt, max_array_width), np.nan, dtype=np.float32)
-        padded_size[:, : size_raw.shape[1]] = size_raw
-        size_raw = padded_size
     size_data = _normalize_telescope_variable_to_tel_id_space(
-        size_raw, index_list_for_remapping, max_tel_id, n_evt
+        _to_dense_array(df["size"]), index_list_for_remapping, max_tel_id, n_evt
     )
     size_data = _clip_size_array(size_data)
 
@@ -452,12 +441,6 @@ def flatten_telescope_data_vectorized(
             continue
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
-
-        # Ensure data array is padded to the same width as the index lists
-        if data.shape[1] < max_array_width:
-            padded_data = np.full((n_evt, max_array_width), np.nan, dtype=np.float32)
-            padded_data[:, : data.shape[1]] = data
-            data = padded_data
 
         # Disp_* variables always use DispTelList_T, regardless of mode
         if var.startswith("Disp") and "_T" in var:
@@ -714,10 +697,12 @@ def load_training_data(model_configs, file_list, analysis_type):
                     current_tel_config = read_telescope_config(root_file)
                     if current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
                         _logger.info(
-                            f"Updating max_tel_id from {tel_config['max_tel_id']} "
-                            f"to {current_tel_config['max_tel_id']} (file: {f})"
+                            f"Updating telescope configuration: max_tel_id from "
+                            f"{tel_config['max_tel_id']} to {current_tel_config['max_tel_id']} "
+                            f"(file: {f})"
                         )
-                        tel_config["max_tel_id"] = current_tel_config["max_tel_id"]
+                        # Replace the full telescope configuration to keep all fields consistent
+                        tel_config = current_tel_config
                         model_configs["tel_config"] = tel_config
 
                 _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
