@@ -350,8 +350,82 @@ def _clip_size_array(size_array):
     return clipped
 
 
+def _compute_telescope_indices_to_keep(tel_config, max_tel_id, max_tel_per_type):
+    """
+    Determine which telescope position indices to keep based on mirror area grouping.
+
+    After sorting by (mirror_area desc, size desc), telescopes are grouped by mirror area.
+    This function returns position indices to keep, limiting each mirror area group to
+    max_tel_per_type telescopes.
+
+    Parameters
+    ----------
+    tel_config : dict
+        Telescope configuration with 'tel_ids' and 'mirror_area'/'mirror_areas'.
+    max_tel_id : int
+        Maximum telescope ID.
+    max_tel_per_type : int or None
+        Maximum telescopes to keep per mirror area type. If None, keep all.
+
+    Returns
+    -------
+    list[int]
+        List of telescope position indices (0, 1, 2, ...) to keep after truncation.
+    """
+    if max_tel_per_type is None:
+        # Keep all telescope positions
+        return list(range(max_tel_id + 1))
+
+    # Get mirror areas from tel_config
+    mirror_areas = tel_config.get("mirror_area")
+    if mirror_areas is None:
+        mirror_areas = tel_config.get("mirror_areas")
+    if mirror_areas is None:
+        _logger.warning("No mirror_area found in tel_config; keeping all telescopes")
+        return list(range(max_tel_id + 1))
+
+    # Group telescope IDs by mirror area and sort by area (descending)
+    area_to_tids = {}
+    for tid, area in zip(tel_config["tel_ids"], mirror_areas):
+        if tid <= max_tel_id:
+            area_key = round(float(area), 2)  # Round to avoid floating point issues
+            if area_key not in area_to_tids:
+                area_to_tids[area_key] = []
+            area_to_tids[area_key].append(int(tid))
+
+    # Sort area types by size (descending)
+    sorted_area_keys = sorted(area_to_tids.keys(), reverse=True)
+
+    # Calculate positions to keep: for each area type, keep first max_tel_per_type positions
+    indices_to_keep = []
+    current_position = 0
+
+    for area_key in sorted_area_keys:
+        n_tels_this_type = len(area_to_tids[area_key])
+        n_to_keep = min(n_tels_this_type, max_tel_per_type)
+
+        # Keep positions current_position to current_position + n_to_keep - 1
+        indices_to_keep.extend(range(current_position, current_position + n_to_keep))
+        current_position += n_tels_this_type
+
+    _logger.info(
+        f"Feature reduction: {len(sorted_area_keys)} mirror area types, "
+        f"keeping {len(indices_to_keep)} out of {max_tel_id + 1} telescope positions "
+        f"(max {max_tel_per_type} per type)"
+    )
+
+    return sorted(indices_to_keep)
+
+
 def flatten_telescope_data_vectorized(
-    df, n_tel, features, analysis_type, training=True, tel_config=None, observatory="veritas"
+    df,
+    n_tel,
+    features,
+    analysis_type,
+    training=True,
+    tel_config=None,
+    observatory="veritas",
+    max_tel_per_type=None,
 ):
     """
     Vectorized flattening of telescope array columns.
@@ -373,6 +447,10 @@ def flatten_telescope_data_vectorized(
         If True, indicates training mode. Default is True.
     tel_config : dict, optional
         Telescope configuration dictionary with 'max_tel_id' and 'tel_types'.
+    observatory : str, optional
+        Observatory name for indexing mode detection. Default is "veritas".
+    max_tel_per_type : int, optional
+        Maximum number of telescopes to keep per mirror area type. If None, keep all.
 
     Returns
     -------
@@ -408,6 +486,14 @@ def flatten_telescope_data_vectorized(
 
     # Sorting by mirror area (desc; proxy for telescope type), then size (desc)
     sort_indices = _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id)
+
+    # Determine which telescope positions to keep (for feature reduction)
+    if max_tel_per_type is not None and tel_config is not None:
+        tel_indices_to_keep = _compute_telescope_indices_to_keep(
+            tel_config, max_tel_id, max_tel_per_type
+        )
+    else:
+        tel_indices_to_keep = list(range(max_tel_id + 1))
 
     for var in features:
         if var == "mirror_area" and tel_config:
@@ -457,8 +543,24 @@ def flatten_telescope_data_vectorized(
         # All variables are now in telescope-ID space; apply sorting and flatten uniformly
         data_normalized = data_normalized[np.arange(n_evt)[:, np.newaxis], sort_indices]
 
-        for tel_idx in range(max_tel_id + 1):
+        for tel_idx in tel_indices_to_keep:
             flat_features[f"{var}_{tel_idx}"] = data_normalized[:, tel_idx]
+
+    # Also filter synthetic features to only keep selected indices
+    # This applies to features like mirror_area, tel_active, etc. that were added above
+    if max_tel_per_type is not None:
+        filtered_features = {}
+        for key, value in flat_features.items():
+            # Extract the telescope index from feature names like "size_5", "mirror_area_10", etc.
+            parts = key.rsplit("_", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                tel_idx = int(parts[1])
+                if tel_idx in tel_indices_to_keep:
+                    filtered_features[key] = value
+            else:
+                # Keep features without telescope index suffix
+                filtered_features[key] = value
+        flat_features = filtered_features
 
     index = _get_index(df, n_evt)
     df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config, analysis_type)
@@ -597,7 +699,13 @@ def _get_index(df_like, n):
 
 
 def flatten_feature_data(
-    group_df, ntel, analysis_type, training, tel_config=None, observatory="veritas"
+    group_df,
+    ntel,
+    analysis_type,
+    training,
+    tel_config=None,
+    observatory="veritas",
+    max_tel_per_type=None,
 ):
     """
     Get flattened features for events.
@@ -616,6 +724,10 @@ def flatten_feature_data(
         Whether in training mode.
     tel_config : dict, optional
         Telescope configuration dictionary.
+    observatory : str, optional
+        Observatory name for indexing mode detection.
+    max_tel_per_type : int, optional
+        Maximum number of telescopes to keep per mirror area type. If None, keep all.
     """
     df_flat = flatten_telescope_data_vectorized(
         group_df,
@@ -625,6 +737,7 @@ def flatten_feature_data(
         training=training,
         tel_config=tel_config,
         observatory=observatory,
+        max_tel_per_type=max_tel_per_type,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
     excluded_columns = set(features_module.target_features(analysis_type)) | set(
@@ -741,6 +854,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     training=True,
                     tel_config=tel_config,
                     observatory=model_configs.get("observatory", "veritas"),
+                    max_tel_per_type=model_configs.get("max_tel_per_type", None),
                 )
                 if analysis_type == "stereo_analysis":
                     new_cols = {
