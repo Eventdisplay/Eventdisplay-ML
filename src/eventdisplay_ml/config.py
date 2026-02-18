@@ -91,6 +91,14 @@ def configure_training(analysis_type):
         help="Maximum number of telescopes to keep per mirror area type (for feature reduction).",
         default=None,
     )
+    parser.add_argument(
+        "--preview_rows",
+        type=int,
+        help=(
+            "Number of events to include in the sorted telescope preview log (set to 0 to disable)."
+        ),
+        default=20,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -102,6 +110,7 @@ def configure_training(analysis_type):
     _logger.info(f"Random state: {model_configs['random_state']}")
     _logger.info(f"Max events: {model_configs['max_events']}")
     _logger.info(f"Max CPU cores: {model_configs['max_cores']}")
+    _logger.info(f"Preview rows: {model_configs['preview_rows']}")
     if model_configs.get("max_tel_per_type") is not None:
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
 
@@ -193,6 +202,14 @@ def configure_apply(analysis_type):
         help="Observatory/site name for geomagnetic field (default: VERITAS).",
         default="VERITAS",
     )
+    parser.add_argument(
+        "--preview_rows",
+        type=int,
+        help=(
+            "Number of events to include in the sorted telescope preview log (set to 0 to disable)."
+        ),
+        default=20,
+    )
 
     model_configs = vars(parser.parse_args())
 
@@ -204,6 +221,7 @@ def configure_apply(analysis_type):
     _logger.info(f"Image selection: {model_configs.get('image_selection')}")
     _logger.info(f"Max events: {model_configs.get('max_events')}")
     _logger.info(f"Max cores: {model_configs.get('max_cores')}")
+    _logger.info(f"Preview rows: {model_configs['preview_rows']}")
 
     model_configs["models"], par = load_models(
         analysis_type, model_configs["model_prefix"], model_configs["model_name"]

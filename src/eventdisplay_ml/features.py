@@ -116,6 +116,7 @@ def _regression_features(training):
         "DispNImages",
         "DispTelList_T",
         "ImgSel_list",
+        "img2_ang",
         "Xoff",
         "Yoff",
         "Xoff_intersect",
@@ -182,8 +183,9 @@ def clip_intervals():
         "ErecS": (energy_min, None),
         "EChi2S": (energy_min, None),
         "EmissionHeightChi2": (1e-6, None),
+        "img2_ang": (0.0, 360.0),
         # Per-telescope energy and size variables - log10 transformation with lower bound
-        "size": (10, None),
+        "size": (1, None),
         "E": (energy_min, None),
         "ES": (energy_min, None),
         "ntubes": (1, None),

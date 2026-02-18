@@ -252,6 +252,7 @@ def apply_regression_models(df, model_configs):
         training=False,
         tel_config=tel_config,
         observatory=model_configs.get("observatory", "veritas"),
+        preview_rows=model_configs.get("preview_rows", 20),
     )
 
     models = model_configs["models"]
@@ -313,6 +314,7 @@ def apply_classification_models(df, model_configs, threshold_keys):
             training=False,
             tel_config=tel_config,
             observatory=model_configs.get("observatory", "veritas"),
+            preview_rows=model_configs.get("preview_rows", 20),
         )
         model = models[e_bin]["model"]
         flatten_data = flatten_data.reindex(columns=models[e_bin]["features"])
