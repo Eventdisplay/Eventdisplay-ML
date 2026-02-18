@@ -47,6 +47,7 @@ def test_imgsel_sorting_and_alignment():
             "Erec": [1.0],
             "ErecS": [1.0],
             "EmissionHeight": [10.0],
+            "img2_ang": [45.0],
             "cosphi": [np.array([0.0, 0.0], dtype=float)],
             "sinphi": [np.array([1.0, 1.0], dtype=float)],
             "loss": [np.array([0.0, 0.0], dtype=float)],
