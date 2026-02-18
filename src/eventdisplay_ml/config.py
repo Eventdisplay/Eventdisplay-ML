@@ -99,6 +99,13 @@ def configure_training(analysis_type):
         ),
         default=20,
     )
+    if analysis_type == "stereo_analysis":
+        parser.add_argument(
+            "--min_images",
+            type=int,
+            help="Minimum number of images (DispNImages) for quality cut (default: 2).",
+            default=2,
+        )
 
     model_configs = vars(parser.parse_args())
 
@@ -113,6 +120,8 @@ def configure_training(analysis_type):
     _logger.info(f"Preview rows: {model_configs['preview_rows']}")
     if model_configs.get("max_tel_per_type") is not None:
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
+    if analysis_type == "stereo_analysis":
+        _logger.info(f"Minimum images (DispNImages): {model_configs.get('min_images')}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
@@ -121,7 +130,9 @@ def configure_training(analysis_type):
     model_configs["targets"] = target_features(analysis_type)
 
     if analysis_type == "stereo_analysis":
-        model_configs["pre_cuts"] = pre_cuts_regression(model_configs.get("n_tel"))
+        model_configs["pre_cuts"] = pre_cuts_regression(
+            model_configs.get("n_tel"), min_images=model_configs.get("min_images", 2)
+        )
     elif analysis_type == "classification":
         _logger.info(f"Energy bin {model_configs['energy_bin_number']}")
         model_parameters = utils.load_model_parameters(
