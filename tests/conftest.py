@@ -43,6 +43,7 @@ def create_base_df(n_rows=2, n_tel=2):
             "Erec": np.arange(n_rows, dtype=float) * 10.0 + 10.0,
             "ErecS": np.arange(n_rows, dtype=float) * 5.0 + 5.0,
             "EmissionHeight": np.arange(n_rows, dtype=float) * 100.0 + 100.0,
+            "img2_ang": np.arange(n_rows, dtype=float) * 15.0 + 30.0,
         }
     )
 
@@ -94,6 +95,7 @@ def df_three_tel_missing():
             "Erec": [10.0],
             "ErecS": [5.0],
             "EmissionHeight": [100.0],
+            "img2_ang": [45.0],
         }
     )
 
@@ -146,6 +148,7 @@ def sample_df():
             "Erec": [100.0, 200.0, 300.0, 400.0],
             "ErecS": [90.0, 180.0, 270.0, 360.0],
             "EmissionHeight": [10.0, 11.0, 12.0, 13.0],
+            "img2_ang": [45.0, 50.0, 55.0, 60.0],
         }
     )
 

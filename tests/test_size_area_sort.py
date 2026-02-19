@@ -36,6 +36,7 @@ def test_mirror_area_then_size_sorting():
             "Erec": [1.0],
             "ErecS": [1.0],
             "EmissionHeight": [10.0],
+            "img2_ang": [45.0],
             # Supply base telescope arrays referenced in feature list; others will default to NaN
             "Disp_T": [np.array([0.0, 0.0, 0.0], dtype=float)],
             "cosphi": [np.array([1.0, 1.0, 1.0], dtype=float)],
@@ -59,12 +60,9 @@ def test_mirror_area_then_size_sorting():
     )
 
     # Expected telescope order: TelID 1 (area 100), TelID 2 (area 50, size 20), TelID 0 (area 50, size 10)
-    # Note: sizes are clipped to minimum 10 before sorting, so size 8→10
-    # After clipping: [10, 10, 20] at TelIDs [0, 1, 2]
-    # After sort by area (desc) then size (desc): [1, 2, 0]
-    # Result: [clipped[1]=10, clipped[2]=20, clipped[0]=10]
+    # Note: sizes are not clipped before sorting.
     expected_areas = [100.0, 50.0, 50.0]
-    expected_sizes = [np.log10(10.0), np.log10(20.0), np.log10(10.0)]  # After clipping
+    expected_sizes = [np.log10(8.0), np.log10(20.0), np.log10(10.0)]
     expected_rel_x = [1000.0, 2000.0, 0.0]
 
     np.testing.assert_allclose(

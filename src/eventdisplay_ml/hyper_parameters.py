@@ -88,11 +88,26 @@ def _load_hyper_parameters_from_file(config_file):
     return hyperparameters
 
 
-def pre_cuts_regression(n_tel):
-    """Get pre-cuts for regression analysis."""
-    event_cut = "DispNImages >=2"
+def pre_cuts_regression(n_tel, min_images=2):
+    """
+    Get pre-cuts for regression analysis.
+
+    Parameters
+    ----------
+    n_tel : int or None
+        Number of telescopes (not currently used).
+    min_images : int
+        Minimum number of images (DispNImages) for quality cut (default: 2).
+
+    Returns
+    -------
+    str or None
+        Pre-cut string for filtering events.
+    """
+    cuts = [f"DispNImages >={min_images}"]
     if PRE_CUTS_REGRESSION:
-        event_cut = " & ".join(f"({c})" for c in PRE_CUTS_REGRESSION)
+        cuts.extend(PRE_CUTS_REGRESSION)
+    event_cut = " & ".join(f"({c})" for c in cuts)
     _logger.info(f"Pre-cuts (regression): {event_cut if event_cut else 'None'}")
     return event_cut if event_cut else None
 

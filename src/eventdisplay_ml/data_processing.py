@@ -426,6 +426,7 @@ def flatten_telescope_data_vectorized(
     tel_config=None,
     observatory="veritas",
     max_tel_per_type=None,
+    preview_rows=20,
 ):
     """
     Vectorized flattening of telescope array columns.
@@ -451,6 +452,8 @@ def flatten_telescope_data_vectorized(
         Observatory name for indexing mode detection. Default is "veritas".
     max_tel_per_type : int, optional
         Maximum number of telescopes to keep per mirror area type. If None, keep all.
+    preview_rows : int, optional
+        Number of events to include in the sorting preview log. Set to 0 to disable.
 
     Returns
     -------
@@ -563,7 +566,14 @@ def flatten_telescope_data_vectorized(
         flat_features = filtered_features
 
     index = _get_index(df, n_evt)
-    df_flat = flatten_telescope_variables(n_tel, flat_features, index, tel_config, analysis_type)
+    df_flat = flatten_telescope_variables(
+        n_tel,
+        flat_features,
+        index,
+        tel_config=tel_config,
+        analysis_type=analysis_type,
+        preview_rows=preview_rows,
+    )
     return pd.concat(
         [df_flat, extra_columns(df, analysis_type, training, index, tel_config, observatory)],
         axis=1,
@@ -706,6 +716,7 @@ def flatten_feature_data(
     tel_config=None,
     observatory="veritas",
     max_tel_per_type=None,
+    preview_rows=20,
 ):
     """
     Get flattened features for events.
@@ -728,6 +739,8 @@ def flatten_feature_data(
         Observatory name for indexing mode detection.
     max_tel_per_type : int, optional
         Maximum number of telescopes to keep per mirror area type. If None, keep all.
+    preview_rows : int, optional
+        Number of events to include in the sorting preview log. Set to 0 to disable.
     """
     df_flat = flatten_telescope_data_vectorized(
         group_df,
@@ -738,6 +751,7 @@ def flatten_feature_data(
         tel_config=tel_config,
         observatory=observatory,
         max_tel_per_type=max_tel_per_type,
+        preview_rows=preview_rows,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
     excluded_columns = set(features_module.target_features(analysis_type)) | set(
@@ -855,6 +869,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     tel_config=tel_config,
                     observatory=model_configs.get("observatory", "veritas"),
                     max_tel_per_type=model_configs.get("max_tel_per_type", None),
+                    preview_rows=model_configs.get("preview_rows", 20),
                 )
                 if analysis_type == "stereo_analysis":
                     new_cols = {
@@ -941,7 +956,14 @@ def apply_clip_intervals(df, n_tel=None, apply_log10=None):
                     df.loc[mask_to_log, var_base] = np.log10(df.loc[mask_to_log, var_base])
 
 
-def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None, analysis_type=None):
+def flatten_telescope_variables(
+    n_tel,
+    flat_features,
+    index,
+    tel_config=None,
+    analysis_type=None,
+    preview_rows=20,
+):
     """Generate dataframe for telescope variables flattened for all telescopes.
 
     Creates features for all telescope IDs, using NaN as default value for missing data.
@@ -958,6 +980,8 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None, an
         Telescope configuration with 'max_tel_id' key.
     analysis_type : str, optional
         Type of analysis, e.g. "classification" or "stereo_analysis".
+    preview_rows : int, optional
+        Number of events to include in the sorting preview log. Set to 0 to disable.
     """
     df_flat = pd.DataFrame(flat_features, index=index)
     df_flat = df_flat.astype(np.float32)
@@ -988,11 +1012,13 @@ def flatten_telescope_variables(n_tel, flat_features, index, tel_config=None, an
     size_cols = [c for c in df_flat.columns if c.startswith("size_")][: max_tel_id + 1]
     area_cols = [c for c in df_flat.columns if c.startswith("mirror_area_")][: max_tel_id + 1]
     disp_cols = [c for c in df_flat.columns if c.startswith("Disp_T_")][: max_tel_id + 1]
-    preview = df_flat[size_cols + area_cols + disp_cols].head(20)
-    _logger.info(
-        "Sorted telescope sizes (pre-clip/log10), first 20 events: \n"
-        f"{preview.to_string(index=False)}"
-    )
+    if preview_rows and preview_rows > 0:
+        preview = df_flat[size_cols + area_cols + disp_cols].head(preview_rows)
+        _logger.info(
+            "Sorted telescope sizes (pre-clip/log10), first %d events: \n%s",
+            preview_rows,
+            preview.to_string(index=False),
+        )
 
     apply_clip_intervals(
         df_flat,
@@ -1098,6 +1124,7 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
                 - _to_numpy_1d(df["Yoff_intersect"], np.float32)
             ).astype(np.float32),
             "DispNImages": _to_numpy_1d(df["DispNImages"], np.int32),
+            "img2_ang": _to_numpy_1d(df["img2_ang"], np.float32),
             # These may be absent in some datasets; if missing, fill with NaN
             "Erec": (
                 _to_numpy_1d(df["Erec"], np.float32)
