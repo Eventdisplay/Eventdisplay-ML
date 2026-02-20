@@ -34,7 +34,10 @@ def configure_training(analysis_type):
     parser.add_argument(
         "--model_prefix",
         required=True,
-        help=("Path to directory for writing XGBoost models (energy bin suffix)."),
+        help=(
+            "Path prefix for writing XGBoost models (without energy bin suffix; "
+            "suffix is added automatically)."
+        ),
     )
     parser.add_argument(
         "--hyperparameter_config",
