@@ -213,8 +213,15 @@ def load_regression_models(model_prefix, model_name):
             "features": model_data.get("features", []),
         }
     }
+    par = {}
+    for key in ("target_mean", "target_std"):
+        if key in model_data:
+            par[key] = model_data[key]
+        else:
+            _logger.warning("Missing '%s' in regression model file: %s", key, model_path)
+
     _logger.info("Loaded regression model.")
-    return models, {}
+    return models, par
 
 
 def apply_regression_models(df, model_configs):
@@ -265,18 +272,26 @@ def apply_regression_models(df, model_configs):
 
     # Inverse transform predictions from standardized space back to original scale
     # Model was trained on standardized targets (mean=0, std=1)
+    target_mean_cfg = model_configs.get("target_mean")
+    target_std_cfg = model_configs.get("target_std")
+    if not target_mean_cfg or not target_std_cfg:
+        raise ValueError(
+            "Missing target standardization parameters (target_mean/target_std). "
+            "Regenerate the regression model or load a model file that includes them."
+        )
+
     target_mean = np.array(
         [
-            model_configs["target_mean"]["Xoff_residual"],
-            model_configs["target_mean"]["Yoff_residual"],
-            model_configs["target_mean"]["E_residual"],
+            target_mean_cfg["Xoff_residual"],
+            target_mean_cfg["Yoff_residual"],
+            target_mean_cfg["E_residual"],
         ]
     )
     target_std = np.array(
         [
-            model_configs["target_std"]["Xoff_residual"],
-            model_configs["target_std"]["Yoff_residual"],
-            model_configs["target_std"]["E_residual"],
+            target_std_cfg["Xoff_residual"],
+            target_std_cfg["Yoff_residual"],
+            target_std_cfg["E_residual"],
         ]
     )
 
@@ -287,7 +302,16 @@ def apply_regression_models(df, model_configs):
     # Extract DispBDT predictions from the flattened data
     disp_xoff = flatten_data["Xoff_weighted_bdt"].values
     disp_yoff = flatten_data["Yoff_weighted_bdt"].values
-    disp_erec_log = np.log10(flatten_data["ErecS"].values)
+    erec_s = flatten_data["ErecS"].values
+    valid_erec_mask = (erec_s > 0) & np.isfinite(erec_s)
+    if not np.all(valid_erec_mask):
+        n_invalid = np.count_nonzero(~valid_erec_mask)
+        _logger.warning(
+            "Found %d events with ErecS <= 0 or non-finite during apply; "
+            "keeping entries but setting log10(ErecS) to NaN.",
+            n_invalid,
+        )
+    disp_erec_log = np.where(valid_erec_mask, np.log10(erec_s), np.nan)
 
     # Add residual predictions to baseline
     pred_xoff = preds[:, 0] + disp_xoff

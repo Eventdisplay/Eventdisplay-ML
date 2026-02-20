@@ -239,5 +239,8 @@ def configure_apply(analysis_type):
     )
     model_configs["energy_bins_log10_tev"] = par.get("energy_bins_log10_tev", [])
     model_configs["zenith_bins_deg"] = par.get("zenith_bins_deg", [])
+    if analysis_type == "stereo_analysis":
+        model_configs["target_mean"] = par.get("target_mean")
+        model_configs["target_std"] = par.get("target_std")
 
     return model_configs
