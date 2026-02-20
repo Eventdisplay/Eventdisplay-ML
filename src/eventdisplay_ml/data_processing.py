@@ -872,10 +872,20 @@ def load_training_data(model_configs, file_list, analysis_type):
                     preview_rows=model_configs.get("preview_rows", 20),
                 )
                 if analysis_type == "stereo_analysis":
+                    # Compute residuals: MC truth - DispBDT prediction
+                    mc_xoff = _to_numpy_1d(df["MCxoff"], np.float32)
+                    mc_yoff = _to_numpy_1d(df["MCyoff"], np.float32)
+                    mc_e0_log = np.log10(_to_numpy_1d(df["MCe0"], np.float32))
+
+                    disp_xoff = _to_numpy_1d(df["Xoff"], np.float32)
+                    disp_yoff = _to_numpy_1d(df["Yoff"], np.float32)
+                    disp_erec_log = np.log10(_to_numpy_1d(df["ErecS"], np.float32))
+
                     new_cols = {
-                        "MCxoff": _to_numpy_1d(df["MCxoff"], np.float32),
-                        "MCyoff": _to_numpy_1d(df["MCyoff"], np.float32),
-                        "MCe0": np.log10(_to_numpy_1d(df["MCe0"], np.float32)),
+                        "Xoff_residual": mc_xoff - disp_xoff,
+                        "Yoff_residual": mc_yoff - disp_yoff,
+                        "E_residual": mc_e0_log - disp_erec_log,
+                        # Don't keep MC truth - can reconstruct from residuals + DispBDT
                     }
                 elif analysis_type == "classification":
                     new_cols = {

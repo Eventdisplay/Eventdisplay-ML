@@ -127,14 +127,33 @@ def target_variance(y_test, y_pred, targets):
 
 def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
     """Compute angular and energy resolution based on predictions."""
+    # Model predicts residuals, so reconstruct full predictions and MC truth
+    # from residuals and DispBDT baseline
+    disp_xoff = df.loc[y_test.index, "Xoff_weighted_bdt"].values
+    disp_yoff = df.loc[y_test.index, "Yoff_weighted_bdt"].values
+
+    # Handle ErecS with proper checks for valid values
+    erec_s = df.loc[y_test.index, "ErecS"].values
+    disp_erec_log = np.where(erec_s > 0, np.log10(erec_s), np.nan)
+
+    # Reconstruct MC truth from residuals in y_test (residual = MC_true - DispBDT)
+    mc_xoff_true = y_test["Xoff_residual"].values + disp_xoff
+    mc_yoff_true = y_test["Yoff_residual"].values + disp_yoff
+    mc_e0_true = y_test["E_residual"].values + disp_erec_log
+
+    # Reconstruct predictions from residual predictions
+    mc_xoff_pred = y_pred["Xoff_residual"].values + disp_xoff
+    mc_yoff_pred = y_pred["Yoff_residual"].values + disp_yoff
+    mc_e0_pred = y_pred["E_residual"].values + disp_erec_log
+
     results_df = pd.DataFrame(
         {
-            "MCxoff_true": y_test["MCxoff"].values,
-            "MCyoff_true": y_test["MCyoff"].values,
-            "MCxoff_pred": y_pred["MCxoff"].values,
-            "MCyoff_pred": y_pred["MCyoff"].values,
-            "MCe0_pred": y_pred["MCe0"].values,
-            "MCe0": df.loc[y_test.index, "MCe0"].values,
+            "MCxoff_true": mc_xoff_true,
+            "MCyoff_true": mc_yoff_true,
+            "MCxoff_pred": mc_xoff_pred,
+            "MCyoff_pred": mc_yoff_pred,
+            "MCe0_pred": mc_e0_pred,
+            "MCe0": mc_e0_true,
         }
     )
 

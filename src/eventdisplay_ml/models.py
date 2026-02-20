@@ -263,7 +263,18 @@ def apply_regression_models(df, model_configs):
     model = model_data["model"]
     preds = model.predict(flatten_data)
 
-    return preds[:, 0], preds[:, 1], preds[:, 2]
+    # Model predicts residuals, so add them to DispBDT baseline
+    # Extract DispBDT predictions from the flattened data
+    disp_xoff = flatten_data["Xoff_weighted_bdt"].values
+    disp_yoff = flatten_data["Yoff_weighted_bdt"].values
+    disp_erec_log = np.log10(flatten_data["ErecS"].values)
+
+    # Add residual predictions to baseline
+    pred_xoff = preds[:, 0] + disp_xoff
+    pred_yoff = preds[:, 1] + disp_yoff
+    pred_erec_log = preds[:, 2] + disp_erec_log
+
+    return pred_xoff, pred_yoff, pred_erec_log
 
 
 def apply_classification_models(df, model_configs, threshold_keys):
@@ -509,7 +520,11 @@ def train_regression(df, model_configs):
         _logger.warning("Skipping training due to empty data.")
         return None
 
-    x_cols = df.columns.difference(model_configs["targets"])
+    # Exclude target residuals AND MC truth columns from features
+    # MC truth columns must not be used as features (would be data leakage)
+    # Note: MC truth not in dataframe - was dropped after computing residuals
+    excluded_cols = set(model_configs["targets"])
+    x_cols = [col for col in df.columns if col not in excluded_cols]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
@@ -596,7 +611,7 @@ def train_classification(df, model_configs):
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train, eval_set=[(x_test, y_test)], verbose=True)
+        model.fit(x_train, y_train, eval_set=[(x_test, y_test)], verbose=False)
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
         cfg["model"] = model
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
@@ -615,21 +630,27 @@ def _log_energy_bin_counts(df):
         - counts_dict: dict mapping intervals to event counts
         - weights_array: np.ndarray of inverse-count weights for each event (normalized
                          for both energy and multiplicity)
-        Returns None if MCe0 not found.
+        Returns None if E_residual not found.
     """
-    if "MCe0" not in df:
-        _logger.warning("MCe0 not found; skipping energy-bin availability printout.")
+    # Reconstruct MC truth energy from residual + DispBDT baseline
+    if "E_residual" not in df or "ErecS" not in df:
+        _logger.warning("E_residual or ErecS not found; skipping energy-bin availability printout.")
         return None
 
+    # Handle ErecS with proper checks for valid values (> 0)
+    erec_s = df["ErecS"].values
+    disp_erec_log = np.where(erec_s > 0, np.log10(erec_s), np.nan)
+    mc_e0 = df["E_residual"].values + disp_erec_log
+
     bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
-    categories = pd.cut(df["MCe0"], bins=bins, include_lowest=True)
-    counts = categories.value_counts(sort=False)
+    categories = pd.cut(mc_e0, bins=bins, include_lowest=True)
+    counts = categories.value_counts()
     _logger.info("Training events per energy bin (log10 E true):")
     for interval, count in counts.items():
         _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")
 
     # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
-    bin_indices = pd.cut(df["MCe0"], bins=bins, include_lowest=True, labels=False)
+    bin_indices = pd.cut(mc_e0, bins=bins, include_lowest=True, labels=False)
     count_per_bin = counts.values
     inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
     inverse_counts = inverse_counts / inverse_counts.mean()
