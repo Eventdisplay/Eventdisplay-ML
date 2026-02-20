@@ -719,16 +719,23 @@ def _log_energy_bin_counts(df):
 
     bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
     categories = pd.cut(mc_e0, bins=bins, include_lowest=True)
-    counts = categories.value_counts()
+    counts = pd.Series(categories).value_counts(sort=False).sort_index()
     _logger.info("Training events per energy bin (log10 E true):")
     for interval, count in counts.items():
         _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")
 
     # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
+    # Bins with fewer than 10 events get zero weight (excluded from training)
     bin_indices = pd.cut(mc_e0, bins=bins, include_lowest=True, labels=False)
     count_per_bin = counts.values
-    inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
-    inverse_counts = inverse_counts / inverse_counts.mean()
+    # Only invert counts >= 10 to avoid divide-by-zero warning
+    inverse_counts = np.zeros_like(count_per_bin, dtype=np.float64)
+    mask = count_per_bin >= 10
+    inverse_counts[mask] = 1.0 / count_per_bin[mask]
+    # Normalize by mean of non-zero weights only
+    valid_weights = inverse_counts[inverse_counts > 0]
+    if len(valid_weights) > 0:
+        inverse_counts = inverse_counts / valid_weights.mean()
 
     # Assign weight to each event based on its energy bin
     w_energy = np.ones(len(df), dtype=np.float32)
