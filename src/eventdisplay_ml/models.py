@@ -34,7 +34,10 @@ _logger = logging.getLogger(__name__)
 
 
 def save_models(model_configs):
-    """Save trained models to files."""
+    """Save trained models to files.
+
+    Models already have per-target SHAP importance values cached during evaluation.
+    """
     joblib.dump(
         model_configs,
         utils.output_file_name(
@@ -213,8 +216,15 @@ def load_regression_models(model_prefix, model_name):
             "features": model_data.get("features", []),
         }
     }
+    par = {}
+    for key in ("target_mean", "target_std"):
+        if key in model_data:
+            par[key] = model_data[key]
+        else:
+            _logger.warning("Missing '%s' in regression model file: %s", key, model_path)
+
     _logger.info("Loaded regression model.")
-    return models, {}
+    return models, par
 
 
 def apply_regression_models(df, model_configs):
@@ -261,9 +271,59 @@ def apply_regression_models(df, model_configs):
     data_processing.print_variable_statistics(flatten_data)
 
     model = model_data["model"]
-    preds = model.predict(flatten_data)
+    preds_scaled = model.predict(flatten_data)
 
-    return preds[:, 0], preds[:, 1], preds[:, 2]
+    # Inverse transform predictions from standardized space back to original scale
+    # Model was trained on standardized targets (mean=0, std=1)
+    target_mean_cfg = model_configs.get("target_mean")
+    target_std_cfg = model_configs.get("target_std")
+    if not target_mean_cfg or not target_std_cfg:
+        raise ValueError(
+            "Missing target standardization parameters (target_mean/target_std). "
+            "Regenerate the regression model or load a model file that includes them."
+        )
+
+    target_mean = np.array(
+        [
+            target_mean_cfg["Xoff_residual"],
+            target_mean_cfg["Yoff_residual"],
+            target_mean_cfg["E_residual"],
+        ]
+    )
+    target_std = np.array(
+        [
+            target_std_cfg["Xoff_residual"],
+            target_std_cfg["Yoff_residual"],
+            target_std_cfg["E_residual"],
+        ]
+    )
+
+    # Inverse standardization: y = y_scaled * std + mean
+    preds = preds_scaled * target_std + target_mean
+
+    # Model predicts residuals, so add them to DispBDT baseline
+    # Extract DispBDT predictions from the flattened data
+    disp_xoff = flatten_data["Xoff_weighted_bdt"].values
+    disp_yoff = flatten_data["Yoff_weighted_bdt"].values
+    erec_s = flatten_data["ErecS"].values
+    valid_erec_mask = (erec_s > 0) & np.isfinite(erec_s)
+    if not np.all(valid_erec_mask):
+        n_invalid = np.count_nonzero(~valid_erec_mask)
+        _logger.warning(
+            "Found %d events with ErecS <= 0 or non-finite during apply; "
+            "keeping entries but setting log10(ErecS) to NaN.",
+            n_invalid,
+        )
+    # Compute log10 only for valid values to avoid RuntimeWarning
+    disp_erec_log = np.full_like(erec_s, np.nan, dtype=np.float64)
+    disp_erec_log[valid_erec_mask] = np.log10(erec_s[valid_erec_mask])
+
+    # Add residual predictions to baseline
+    pred_xoff = preds[:, 0] + disp_xoff
+    pred_yoff = preds[:, 1] + disp_yoff
+    pred_erec_log = preds[:, 2] + disp_erec_log
+
+    return pred_xoff, pred_yoff, pred_erec_log
 
 
 def apply_classification_models(df, model_configs, threshold_keys):
@@ -509,31 +569,52 @@ def train_regression(df, model_configs):
         _logger.warning("Skipping training due to empty data.")
         return None
 
-    x_cols = df.columns.difference(model_configs["targets"])
+    # Exclude target residuals AND MC truth columns from features
+    # MC truth columns must not be used as features (would be data leakage)
+    # Note: MC truth columns are not added to features (only residuals are added)
+    excluded_cols = set(model_configs["targets"])
+    x_cols = [col for col in df.columns if col not in excluded_cols]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
 
-    # Calculate energy bin weights for balancing
-    bin_result = _log_energy_bin_counts(df)
-    sample_weights = bin_result[2] if bin_result else None
+    # Split data first to avoid data leakage in weight computation
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_data,
+        y_data,
+        train_size=model_configs.get("train_test_fraction", 0.5),
+        random_state=model_configs.get("random_state", None),
+    )
 
-    if sample_weights is not None:
-        x_train, x_test, y_train, y_test, weights_train, _ = train_test_split(
-            x_data,
-            y_data,
-            sample_weights,
-            train_size=model_configs.get("train_test_fraction", 0.5),
-            random_state=model_configs.get("random_state", None),
-        )
-    else:
-        x_train, x_test, y_train, y_test = train_test_split(
-            x_data,
-            y_data,
-            train_size=model_configs.get("train_test_fraction", 0.5),
-            random_state=model_configs.get("random_state", None),
-        )
-        weights_train = None
+    # Verify indices are preserved correctly
+    _logger.info(
+        f"Train indices: min={y_train.index.min()}, max={y_train.index.max()}, len={len(y_train)}"
+    )
+    _logger.info(
+        f"Test indices: min={y_test.index.min()}, max={y_test.index.max()}, len={len(y_test)}"
+    )
+
+    # Calculate energy bin weights for balancing ONLY on training data
+    # This avoids data leakage from test set distribution
+    df_train = df.loc[y_train.index]
+    bin_result = _log_energy_bin_counts(df_train)
+    weights_train = bin_result[2] if bin_result else None
+
+    # Standardize targets to prevent energy from dominating direction in multi-target learning
+    # Compute mean and std from training data only
+    y_mean = y_train.mean()
+    y_std = y_train.std()
+
+    _logger.info("Target standardization (training set):")
+    for target in model_configs["targets"]:
+        _logger.info(f"  {target}: mean={y_mean[target]:.6f}, std={y_std[target]:.6f}")
+
+    y_train_scaled = (y_train - y_mean) / y_std
+    y_test_scaled = (y_test - y_mean) / y_std
+
+    # Store scalers for later use during inference
+    model_configs["target_mean"] = y_mean.to_dict()
+    model_configs["target_std"] = y_std.to_dict()
 
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
     if weights_train is not None:
@@ -542,12 +623,37 @@ def train_regression(df, model_configs):
             f"std={weights_train.std():.3f})"
         )
 
+    eval_set = [(x_train, y_train_scaled), (x_test, y_test_scaled)]
+
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train, sample_weight=weights_train)
-        evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
+        model.fit(
+            x_train,
+            y_train_scaled,
+            sample_weight=weights_train,
+            eval_set=eval_set,
+            verbose=True,
+        )
+        _logger.info(
+            f"Training stopped at iteration {model.best_iteration} "
+            f"(best score: {model.best_score:.4f})"
+        )
+
+        # Predict on scaled targets and inverse transform back to original scale
+        y_pred_scaled = model.predict(x_test)
+        y_pred = pd.DataFrame(
+            y_pred_scaled * y_std.values + y_mean.values,
+            columns=model_configs["targets"],
+            index=y_test.index,
+        )
+
+        shap_importance = evaluate_regression_model(
+            model, x_test, y_pred, y_test, df, x_cols, y_data, name
+        )
         cfg["model"] = model
+        cfg["features"] = x_cols  # Store feature names for later use
+        cfg["shap_importance"] = shap_importance  # Store per-target SHAP importance from evaluation
 
     return model_configs
 
@@ -584,11 +690,12 @@ def train_classification(df, model_configs):
     )
 
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    eval_set = [(x_train, y_train), (x_test, y_test)]
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train, eval_set=[(x_test, y_test)], verbose=True)
+        model.fit(x_train, y_train, eval_set=eval_set, verbose=True)
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
         cfg["model"] = model
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
@@ -607,24 +714,37 @@ def _log_energy_bin_counts(df):
         - counts_dict: dict mapping intervals to event counts
         - weights_array: np.ndarray of inverse-count weights for each event (normalized
                          for both energy and multiplicity)
-        Returns None if MCe0 not found.
+        Returns None if E_residual not found.
     """
-    if "MCe0" not in df:
-        _logger.warning("MCe0 not found; skipping energy-bin availability printout.")
+    # Reconstruct MC truth energy from residual + DispBDT baseline
+    if "E_residual" not in df or "ErecS" not in df:
+        _logger.warning("E_residual or ErecS not found; skipping energy-bin availability printout.")
         return None
 
+    # Handle ErecS with proper checks for valid values (> 0)
+    erec_s = df["ErecS"].values
+    disp_erec_log = np.where(erec_s > 0, np.log10(erec_s), np.nan)
+    mc_e0 = df["E_residual"].values + disp_erec_log
+
     bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
-    categories = pd.cut(df["MCe0"], bins=bins, include_lowest=True)
-    counts = categories.value_counts(sort=False)
+    categories = pd.cut(mc_e0, bins=bins, include_lowest=True)
+    counts = pd.Series(categories).value_counts(sort=False).sort_index()
     _logger.info("Training events per energy bin (log10 E true):")
     for interval, count in counts.items():
         _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")
 
     # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
-    bin_indices = pd.cut(df["MCe0"], bins=bins, include_lowest=True, labels=False)
+    # Bins with fewer than 10 events get zero weight (excluded from training)
+    bin_indices = pd.cut(mc_e0, bins=bins, include_lowest=True, labels=False)
     count_per_bin = counts.values
-    inverse_counts = 1.0 / np.maximum(count_per_bin, 1)
-    inverse_counts = inverse_counts / inverse_counts.mean()
+    # Only invert counts >= 10 to avoid divide-by-zero warning
+    inverse_counts = np.zeros_like(count_per_bin, dtype=np.float64)
+    mask = count_per_bin >= 10
+    inverse_counts[mask] = 1.0 / count_per_bin[mask]
+    # Normalize by mean of non-zero weights only
+    valid_weights = inverse_counts[inverse_counts > 0]
+    if len(valid_weights) > 0:
+        inverse_counts = inverse_counts / valid_weights.mean()
 
     # Assign weight to each event based on its energy bin
     w_energy = np.ones(len(df), dtype=np.float32)

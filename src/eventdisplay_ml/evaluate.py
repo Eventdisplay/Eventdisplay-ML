@@ -12,8 +12,6 @@ from sklearn.metrics import (
     mean_squared_error,
 )
 
-from eventdisplay_ml.features import target_features
-
 _logger = logging.getLogger(__name__)
 
 
@@ -69,27 +67,48 @@ def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
 
 
 def evaluate_regression_model(
-    model, x_test, y_test, df, x_cols, y_data, name, shap_per_energy=False
+    model, x_test, y_pred, y_test, df, x_cols, y_data, name, shap_per_energy=False
 ):
-    """Evaluate the trained model on the test set and log performance metrics."""
-    score = model.score(x_test, y_test)
-    _logger.info(f"XGBoost Multi-Target R^2 Score (Testing Set): {score:.4f}")
-    y_pred = model.predict(x_test)
+    """Evaluate the trained model on the test set and log performance metrics.
+
+    Parameters
+    ----------
+    model : XGBRegressor
+        Trained model.
+    x_test : pd.DataFrame
+        Test features.
+    y_pred : pd.DataFrame
+        Predicted targets (already inverse-transformed to original scale).
+    y_test : pd.DataFrame
+        True targets (in original scale).
+    df : pd.DataFrame
+        Full dataset for accessing baseline values.
+    x_cols : list
+        Feature column names.
+    y_data : pd.DataFrame
+        All target data.
+    name : str
+        Model name.
+    shap_per_energy : bool, optional
+        Whether to compute SHAP values per energy bin.
+    """
+    # Compute metrics on original-scale predictions
     mse = mean_squared_error(y_test, y_pred)
-    _logger.info(f"{name} Mean Squared Error (All targets): {mse:.4f}")
+    _logger.info(f"{name} Mean Squared Error (All targets, unscaled): {mse:.4f}")
     mae = mean_absolute_error(y_test, y_pred)
-    _logger.info(f"{name} Mean Absolute Error (All targets): {mae:.4f}")
+    _logger.info(f"{name} Mean Absolute Error (All targets, unscaled): {mae:.4f}")
 
     target_variance(y_test, y_pred, y_data.columns)
     feature_importance(model, x_cols, y_data.columns, name)
+
+    shap_importance_dict = {}
     if name == "xgboost":
-        shap_feature_importance(model, x_test, y_data.columns)
+        shap_importance_dict = shap_feature_importance(model, x_test, y_data.columns)
         if shap_per_energy:
             shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
-    df_pred = pd.DataFrame(y_pred, columns=target_features("stereo_analysis"))
     calculate_resolution(
-        df_pred,
+        y_pred,
         y_test,
         df,
         percentiles=[68, 90, 95],
@@ -99,13 +118,16 @@ def evaluate_regression_model(
         name=name,
     )
 
+    return shap_importance_dict
+
 
 def target_variance(y_test, y_pred, targets):
     """Calculate and log variance explained per target."""
     y_test_np = y_test.to_numpy() if hasattr(y_test, "to_numpy") else y_test
 
-    mse_values = np.mean((y_test_np - y_pred) ** 2, axis=0)
-    variance_values = np.var(y_test_np, axis=0)
+    # Force numpy arrays so integer indexing is positional and future-proof.
+    mse_values = np.asarray(np.mean((y_test_np - y_pred) ** 2, axis=0))
+    variance_values = np.asarray(np.var(y_test_np, axis=0))
 
     _logger.info("--- Performance Per Target ---")
     for i, name in enumerate(targets):
@@ -127,14 +149,40 @@ def target_variance(y_test, y_pred, targets):
 
 def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, n_bins, name):
     """Compute angular and energy resolution based on predictions."""
+    # Model predicts residuals, so reconstruct full predictions and MC truth
+    # from residuals and DispBDT baseline
+    _logger.debug(
+        f"Evaluation: y_test indices min={y_test.index.min()}, max={y_test.index.max()}, len={len(y_test)}"
+    )
+    _logger.debug(
+        f"Evaluation: df shape={df.shape}, index min={df.index.min()}, max={df.index.max()}"
+    )
+
+    disp_xoff = df.loc[y_test.index, "Xoff_weighted_bdt"].values
+    disp_yoff = df.loc[y_test.index, "Yoff_weighted_bdt"].values
+
+    # Handle ErecS with proper checks for valid values
+    erec_s = df.loc[y_test.index, "ErecS"].values
+    disp_erec_log = np.where(erec_s > 0, np.log10(erec_s), np.nan)
+
+    # Reconstruct MC truth from residuals in y_test (residual = MC_true - DispBDT)
+    mc_xoff_true = y_test["Xoff_residual"].values + disp_xoff
+    mc_yoff_true = y_test["Yoff_residual"].values + disp_yoff
+    mc_e0_true = y_test["E_residual"].values + disp_erec_log
+
+    # Reconstruct predictions from residual predictions
+    mc_xoff_pred = y_pred["Xoff_residual"].values + disp_xoff
+    mc_yoff_pred = y_pred["Yoff_residual"].values + disp_yoff
+    mc_e0_pred = y_pred["E_residual"].values + disp_erec_log
+
     results_df = pd.DataFrame(
         {
-            "MCxoff_true": y_test["MCxoff"].values,
-            "MCyoff_true": y_test["MCyoff"].values,
-            "MCxoff_pred": y_pred["MCxoff"].values,
-            "MCyoff_pred": y_pred["MCyoff"].values,
-            "MCe0_pred": y_pred["MCe0"].values,
-            "MCe0": df.loc[y_test.index, "MCe0"].values,
+            "MCxoff_true": mc_xoff_true,
+            "MCyoff_true": mc_yoff_true,
+            "MCxoff_pred": mc_xoff_pred,
+            "MCyoff_pred": mc_yoff_pred,
+            "MCe0_pred": mc_e0_pred,
+            "MCe0": mc_e0_true,
         }
     )
 
@@ -142,6 +190,12 @@ def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, 
     for col in ["Xoff_weighted_bdt", "Yoff_weighted_bdt", "ErecS"]:
         if col in df.columns:
             results_df[col] = df.loc[y_test.index, col].values
+
+    # Convert ErecS to log10 space for energy resolution comparison
+    # (ErecS is stored in linear space in the DataFrame, but needs log10 for rel_error calc)
+    if "ErecS" in results_df.columns:
+        erec_s_val = results_df["ErecS"].values
+        results_df["ErecS"] = np.where(erec_s_val > 0, np.log10(erec_s_val), np.nan)
 
     # Calculate angular resolution for BDT prediction
     results_df["DeltaTheta"] = np.hypot(
@@ -238,7 +292,13 @@ def _log_importance_table(target_label, values, x_cols, name):
 
 
 def shap_feature_importance(model, x_data, target_names, max_points=1000, n_top=25):
-    """Feature importance using SHAP values for native multi-target XGBoost."""
+    """Feature importance using SHAP values for native multi-target XGBoost.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping target names to importance arrays (per-target SHAP values).
+    """
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)
     n_targets = len(target_names)
@@ -247,16 +307,23 @@ def shap_feature_importance(model, x_data, target_names, max_points=1000, n_top=
     shap_vals = model.get_booster().predict(dmatrix, pred_contribs=True)
     shap_vals = shap_vals.reshape(len(x_sample), n_targets, n_features + 1)
 
+    # Store per-target importance values
+    importance_dict = {}
+
     for i, target in enumerate(target_names):
         target_shap = shap_vals[:, i, :-1]
 
         imp = np.abs(target_shap).mean(axis=0)
+        importance_dict[target] = imp  # Store the importance array
+
         idx = np.argsort(imp)[::-1]
 
         _logger.info(f"=== SHAP Importance for {target} ===")
         for j in idx[:n_top]:
             if j < n_features:
                 _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
+
+    return importance_dict
 
 
 def shap_feature_importance_by_energy(

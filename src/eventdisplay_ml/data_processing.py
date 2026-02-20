@@ -871,11 +871,36 @@ def load_training_data(model_configs, file_list, analysis_type):
                     max_tel_per_type=model_configs.get("max_tel_per_type", None),
                     preview_rows=model_configs.get("preview_rows", 20),
                 )
+
+                # Filter out events with invalid energy reconstruction for stereo training
                 if analysis_type == "stereo_analysis":
+                    n_before_erec_filter = len(df_flat)
+                    valid_erec_mask = (df_flat["ErecS"] > 0) & np.isfinite(df_flat["ErecS"])
+                    df_flat = df_flat[valid_erec_mask]
+                    n_removed_erec = n_before_erec_filter - len(df_flat)
+                    if n_removed_erec > 0:
+                        _logger.info(
+                            f"Removed {n_removed_erec} events with ErecS <= 0 or NaN "
+                            f"(fraction removed: {n_removed_erec / n_before_erec_filter:.4f})"
+                        )
+
+                if analysis_type == "stereo_analysis":
+                    mc_xoff = _to_numpy_1d(df["MCxoff"], np.float32)[valid_erec_mask]
+                    mc_yoff = _to_numpy_1d(df["MCyoff"], np.float32)[valid_erec_mask]
+                    mc_e0 = _to_numpy_1d(df["MCe0"], np.float32)[valid_erec_mask]
+
+                    disp_xoff = df_flat["Xoff_weighted_bdt"].values
+                    disp_yoff = df_flat["Yoff_weighted_bdt"].values
+                    disp_erec = df_flat["ErecS"].values
+
+                    # Compute log energies (ErecS already filtered > 0)
+                    mc_e0_log = np.where(mc_e0 > 0, np.log10(mc_e0), np.nan)
+                    disp_erec_log = np.log10(disp_erec)  # Safe since already filtered > 0
+
                     new_cols = {
-                        "MCxoff": _to_numpy_1d(df["MCxoff"], np.float32),
-                        "MCyoff": _to_numpy_1d(df["MCyoff"], np.float32),
-                        "MCe0": np.log10(_to_numpy_1d(df["MCe0"], np.float32)),
+                        "Xoff_residual": mc_xoff - disp_xoff,
+                        "Yoff_residual": mc_yoff - disp_yoff,
+                        "E_residual": mc_e0_log - disp_erec_log,
                     }
                 elif analysis_type == "classification":
                     new_cols = {
@@ -886,6 +911,22 @@ def load_training_data(model_configs, file_list, analysis_type):
                     }
                 for col_name, values in new_cols.items():
                     df_flat[col_name] = values
+
+                # Filter out events with NaN in residuals (can't train on these)
+                if analysis_type == "stereo_analysis":
+                    n_before_nan_filter = len(df_flat)
+                    valid_mask = (
+                        np.isfinite(df_flat["Xoff_residual"])
+                        & np.isfinite(df_flat["Yoff_residual"])
+                        & np.isfinite(df_flat["E_residual"])
+                    )
+                    df_flat = df_flat[valid_mask]
+                    n_removed = n_before_nan_filter - len(df_flat)
+                    if n_removed > 0:
+                        _logger.info(
+                            f"Removed {n_removed} events with NaN residuals "
+                            f"(fraction removed: {n_removed / n_before_nan_filter:.4f})"
+                        )
 
                 dfs.append(df_flat)
 
@@ -1159,14 +1200,24 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
 
     df_extra = pd.DataFrame(data, index=index)
-    apply_clip_intervals(
-        df_extra,
-        apply_log10=[
+    # For stereo_analysis, Erec/ErecS must remain in linear space for residual computation
+    # (log10 is applied explicitly when computing E_residual = log10(MC) - log10(ErecS))
+    # For classification, Erec/ErecS can be log10'd as features
+    if analysis_type == "stereo_analysis":
+        apply_log10_list = [
+            "EChi2S",
+            "EmissionHeightChi2",
+        ]
+    else:
+        apply_log10_list = [
             "EChi2S",
             "EmissionHeightChi2",
             "Erec",
             "ErecS",
-        ],
+        ]
+    apply_clip_intervals(
+        df_extra,
+        apply_log10=apply_log10_list,
     )
     return df_extra
 
