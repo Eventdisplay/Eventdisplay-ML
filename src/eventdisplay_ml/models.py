@@ -311,7 +311,9 @@ def apply_regression_models(df, model_configs):
             "keeping entries but setting log10(ErecS) to NaN.",
             n_invalid,
         )
-    disp_erec_log = np.where(valid_erec_mask, np.log10(erec_s), np.nan)
+    # Compute log10 only for valid values to avoid RuntimeWarning
+    disp_erec_log = np.full_like(erec_s, np.nan, dtype=np.float64)
+    disp_erec_log[valid_erec_mask] = np.log10(erec_s[valid_erec_mask])
 
     # Add residual predictions to baseline
     pred_xoff = preds[:, 0] + disp_xoff
