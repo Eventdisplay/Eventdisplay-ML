@@ -187,6 +187,12 @@ def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, 
         if col in df.columns:
             results_df[col] = df.loc[y_test.index, col].values
 
+    # Convert ErecS to log10 space for energy resolution comparison
+    # (ErecS is stored in linear space in the DataFrame, but needs log10 for rel_error calc)
+    if "ErecS" in results_df.columns:
+        erec_s_val = results_df["ErecS"].values
+        results_df["ErecS"] = np.where(erec_s_val > 0, np.log10(erec_s_val), np.nan)
+
     # Calculate angular resolution for BDT prediction
     results_df["DeltaTheta"] = np.hypot(
         results_df["MCxoff_true"] - results_df["MCxoff_pred"],

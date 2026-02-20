@@ -1200,14 +1200,24 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
 
     df_extra = pd.DataFrame(data, index=index)
-    apply_clip_intervals(
-        df_extra,
-        apply_log10=[
+    # For stereo_analysis, Erec/ErecS must remain in linear space for residual computation
+    # (log10 is applied explicitly when computing E_residual = log10(MC) - log10(ErecS))
+    # For classification, Erec/ErecS can be log10'd as features
+    if analysis_type == "stereo_analysis":
+        apply_log10_list = [
+            "EChi2S",
+            "EmissionHeightChi2",
+        ]
+    else:
+        apply_log10_list = [
             "EChi2S",
             "EmissionHeightChi2",
             "Erec",
             "ErecS",
-        ],
+        ]
+    apply_clip_intervals(
+        df_extra,
+        apply_log10=apply_log10_list,
     )
     return df_extra
 
