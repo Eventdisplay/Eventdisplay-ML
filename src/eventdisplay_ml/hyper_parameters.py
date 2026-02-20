@@ -88,14 +88,12 @@ def _load_hyper_parameters_from_file(config_file):
     return hyperparameters
 
 
-def pre_cuts_regression(n_tel, min_images=2):
+def pre_cuts_regression(min_images=2):
     """
     Get pre-cuts for regression analysis.
 
     Parameters
     ----------
-    n_tel : int or None
-        Number of telescopes (not currently used).
     min_images : int
         Minimum number of images (DispNImages) for quality cut (default: 2).
 
@@ -112,7 +110,7 @@ def pre_cuts_regression(n_tel, min_images=2):
     return event_cut if event_cut else None
 
 
-def pre_cuts_classification(n_tel, e_min, e_max):
+def pre_cuts_classification(e_min, e_max):
     """Get pre-cuts for classification analysis (no multiplicity filter)."""
     event_cut = f"(Erec >= {e_min}) & (Erec < {e_max})"
     event_cut += " & " + " & ".join(f"({c})" for c in PRE_CUTS_CLASSIFICATION)
