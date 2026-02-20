@@ -681,11 +681,12 @@ def train_classification(df, model_configs):
     )
 
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    eval_set = [(x_train, y_train), (x_test, y_test)]
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train)
+        model.fit(x_train, y_train, eval_set=eval_set, verbose=True)
         evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
         cfg["model"] = model
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
