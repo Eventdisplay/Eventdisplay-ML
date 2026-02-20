@@ -129,6 +129,13 @@ def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, 
     """Compute angular and energy resolution based on predictions."""
     # Model predicts residuals, so reconstruct full predictions and MC truth
     # from residuals and DispBDT baseline
+    _logger.debug(
+        f"Evaluation: y_test indices min={y_test.index.min()}, max={y_test.index.max()}, len={len(y_test)}"
+    )
+    _logger.debug(
+        f"Evaluation: df shape={df.shape}, index min={df.index.min()}, max={df.index.max()}"
+    )
+
     disp_xoff = df.loc[y_test.index, "Xoff_weighted_bdt"].values
     disp_yoff = df.loc[y_test.index, "Yoff_weighted_bdt"].values
 

@@ -529,26 +529,27 @@ def train_regression(df, model_configs):
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
 
-    # Calculate energy bin weights for balancing
-    bin_result = _log_energy_bin_counts(df)
-    sample_weights = bin_result[2] if bin_result else None
+    # Split data first to avoid data leakage in weight computation
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_data,
+        y_data,
+        train_size=model_configs.get("train_test_fraction", 0.5),
+        random_state=model_configs.get("random_state", None),
+    )
 
-    if sample_weights is not None:
-        x_train, x_test, y_train, y_test, weights_train, _ = train_test_split(
-            x_data,
-            y_data,
-            sample_weights,
-            train_size=model_configs.get("train_test_fraction", 0.5),
-            random_state=model_configs.get("random_state", None),
-        )
-    else:
-        x_train, x_test, y_train, y_test = train_test_split(
-            x_data,
-            y_data,
-            train_size=model_configs.get("train_test_fraction", 0.5),
-            random_state=model_configs.get("random_state", None),
-        )
-        weights_train = None
+    # Verify indices are preserved correctly
+    _logger.info(
+        f"Train indices: min={y_train.index.min()}, max={y_train.index.max()}, len={len(y_train)}"
+    )
+    _logger.info(
+        f"Test indices: min={y_test.index.min()}, max={y_test.index.max()}, len={len(y_test)}"
+    )
+
+    # Calculate energy bin weights for balancing ONLY on training data
+    # This avoids data leakage from test set distribution
+    df_train = df.loc[y_train.index]
+    bin_result = _log_energy_bin_counts(df_train)
+    weights_train = bin_result[2] if bin_result else None
 
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
     if weights_train is not None:
@@ -568,6 +569,10 @@ def train_regression(df, model_configs):
             sample_weight=weights_train,
             eval_set=eval_set,
             verbose=True,
+        )
+        _logger.info(
+            f"Training stopped at iteration {model.best_iteration} "
+            f"(best score: {model.best_score:.4f})"
         )
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
