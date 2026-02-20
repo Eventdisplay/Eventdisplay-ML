@@ -12,8 +12,6 @@ from sklearn.metrics import (
     mean_squared_error,
 )
 
-from eventdisplay_ml.features import target_features
-
 _logger = logging.getLogger(__name__)
 
 
@@ -69,16 +67,36 @@ def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
 
 
 def evaluate_regression_model(
-    model, x_test, y_test, df, x_cols, y_data, name, shap_per_energy=False
+    model, x_test, y_pred, y_test, df, x_cols, y_data, name, shap_per_energy=False
 ):
-    """Evaluate the trained model on the test set and log performance metrics."""
-    score = model.score(x_test, y_test)
-    _logger.info(f"XGBoost Multi-Target R^2 Score (Testing Set): {score:.4f}")
-    y_pred = model.predict(x_test)
+    """Evaluate the trained model on the test set and log performance metrics.
+
+    Parameters
+    ----------
+    model : XGBRegressor
+        Trained model.
+    x_test : pd.DataFrame
+        Test features.
+    y_pred : pd.DataFrame
+        Predicted targets (already inverse-transformed to original scale).
+    y_test : pd.DataFrame
+        True targets (in original scale).
+    df : pd.DataFrame
+        Full dataset for accessing baseline values.
+    x_cols : list
+        Feature column names.
+    y_data : pd.DataFrame
+        All target data.
+    name : str
+        Model name.
+    shap_per_energy : bool, optional
+        Whether to compute SHAP values per energy bin.
+    """
+    # Compute metrics on original-scale predictions
     mse = mean_squared_error(y_test, y_pred)
-    _logger.info(f"{name} Mean Squared Error (All targets): {mse:.4f}")
+    _logger.info(f"{name} Mean Squared Error (All targets, unscaled): {mse:.4f}")
     mae = mean_absolute_error(y_test, y_pred)
-    _logger.info(f"{name} Mean Absolute Error (All targets): {mae:.4f}")
+    _logger.info(f"{name} Mean Absolute Error (All targets, unscaled): {mae:.4f}")
 
     target_variance(y_test, y_pred, y_data.columns)
     feature_importance(model, x_cols, y_data.columns, name)
@@ -87,9 +105,8 @@ def evaluate_regression_model(
         if shap_per_energy:
             shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
-    df_pred = pd.DataFrame(y_pred, columns=target_features("stereo_analysis"))
     calculate_resolution(
-        df_pred,
+        y_pred,
         y_test,
         df,
         percentiles=[68, 90, 95],

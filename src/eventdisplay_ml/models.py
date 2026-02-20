@@ -261,7 +261,27 @@ def apply_regression_models(df, model_configs):
     data_processing.print_variable_statistics(flatten_data)
 
     model = model_data["model"]
-    preds = model.predict(flatten_data)
+    preds_scaled = model.predict(flatten_data)
+
+    # Inverse transform predictions from standardized space back to original scale
+    # Model was trained on standardized targets (mean=0, std=1)
+    target_mean = np.array(
+        [
+            model_configs["target_mean"]["Xoff_residual"],
+            model_configs["target_mean"]["Yoff_residual"],
+            model_configs["target_mean"]["E_residual"],
+        ]
+    )
+    target_std = np.array(
+        [
+            model_configs["target_std"]["Xoff_residual"],
+            model_configs["target_std"]["Yoff_residual"],
+            model_configs["target_std"]["E_residual"],
+        ]
+    )
+
+    # Inverse standardization: y = y_scaled * std + mean
+    preds = preds_scaled * target_std + target_mean
 
     # Model predicts residuals, so add them to DispBDT baseline
     # Extract DispBDT predictions from the flattened data
@@ -551,6 +571,22 @@ def train_regression(df, model_configs):
     bin_result = _log_energy_bin_counts(df_train)
     weights_train = bin_result[2] if bin_result else None
 
+    # Standardize targets to prevent energy from dominating direction in multi-target learning
+    # Compute mean and std from training data only
+    y_mean = y_train.mean()
+    y_std = y_train.std()
+
+    _logger.info("Target standardization (training set):")
+    for target in model_configs["targets"]:
+        _logger.info(f"  {target}: mean={y_mean[target]:.6f}, std={y_std[target]:.6f}")
+
+    y_train_scaled = (y_train - y_mean) / y_std
+    y_test_scaled = (y_test - y_mean) / y_std
+
+    # Store scalers for later use during inference
+    model_configs["target_mean"] = y_mean.to_dict()
+    model_configs["target_std"] = y_std.to_dict()
+
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
     if weights_train is not None:
         _logger.info(
@@ -558,14 +594,14 @@ def train_regression(df, model_configs):
             f"std={weights_train.std():.3f})"
         )
 
-    eval_set = [(x_train, y_train), (x_test, y_test)]
+    eval_set = [(x_train, y_train_scaled), (x_test, y_test_scaled)]
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
         model.fit(
             x_train,
-            y_train,
+            y_train_scaled,
             sample_weight=weights_train,
             eval_set=eval_set,
             verbose=True,
@@ -574,7 +610,16 @@ def train_regression(df, model_configs):
             f"Training stopped at iteration {model.best_iteration} "
             f"(best score: {model.best_score:.4f})"
         )
-        evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
+
+        # Predict on scaled targets and inverse transform back to original scale
+        y_pred_scaled = model.predict(x_test)
+        y_pred = pd.DataFrame(
+            y_pred_scaled * y_std.values + y_mean.values,
+            columns=model_configs["targets"],
+            index=y_test.index,
+        )
+
+        evaluate_regression_model(model, x_test, y_pred, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 
     return model_configs
