@@ -542,10 +542,18 @@ def train_regression(df, model_configs):
             f"std={weights_train.std():.3f})"
         )
 
+    eval_set = [(x_train, y_train), (x_test, y_test)]
+
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train, sample_weight=weights_train)
+        model.fit(
+            x_train,
+            y_train,
+            sample_weight=weights_train,
+            eval_set=eval_set,
+            verbose=True,
+        )
         evaluate_regression_model(model, x_test, y_test, df, x_cols, y_data, name)
         cfg["model"] = model
 
