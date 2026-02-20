@@ -34,7 +34,10 @@ def configure_training(analysis_type):
     parser.add_argument(
         "--model_prefix",
         required=True,
-        help=("Path to directory for writing XGBoost models (without n_tel / energy bin suffix)."),
+        help=(
+            "Path prefix for writing XGBoost models (without energy bin suffix; "
+            "suffix is added automatically)."
+        ),
     )
     parser.add_argument(
         "--hyperparameter_config",
@@ -42,7 +45,6 @@ def configure_training(analysis_type):
         default=None,
         type=str,
     )
-    parser.add_argument("--n_tel", type=int, help="Telescope multiplicity (2, 3, or 4).")
     parser.add_argument(
         "--train_test_fraction",
         type=float,
@@ -111,7 +113,6 @@ def configure_training(analysis_type):
 
     _logger.info(f"--- XGBoost {analysis_type} training ---")
     _logger.info(f"Observatory: {model_configs.get('observatory')}")
-    _logger.info(f"Telescope multiplicity: {model_configs.get('n_tel')}")
     _logger.info(f"Model output prefix: {model_configs.get('model_prefix')}")
     _logger.info(f"Train vs test fraction: {model_configs['train_test_fraction']}")
     _logger.info(f"Random state: {model_configs['random_state']}")
@@ -131,7 +132,7 @@ def configure_training(analysis_type):
 
     if analysis_type == "stereo_analysis":
         model_configs["pre_cuts"] = pre_cuts_regression(
-            model_configs.get("n_tel"), min_images=model_configs.get("min_images", 2)
+            min_images=model_configs.get("min_images", 2)
         )
     elif analysis_type == "classification":
         _logger.info(f"Energy bin {model_configs['energy_bin_number']}")
@@ -139,7 +140,6 @@ def configure_training(analysis_type):
             model_configs["model_parameters"], model_configs["energy_bin_number"]
         )
         model_configs["pre_cuts"] = pre_cuts_classification(
-            model_configs.get("n_tel"),
             e_min=np.power(10.0, model_parameters.get("energy_bins_log10_tev", []).get("E_min")),
             e_max=np.power(10.0, model_parameters.get("energy_bins_log10_tev", []).get("E_max")),
         )
@@ -165,7 +165,7 @@ def configure_apply(analysis_type):
         "--model_prefix",
         required=True,
         metavar="MODEL_PREFIX",
-        help=("Path to directory containing XGBoost models (without n_tel / energy bin suffix)."),
+        help=("Path to directory containing XGBoost models (without energy bin suffix)."),
     )
     parser.add_argument(
         "--model_name",
