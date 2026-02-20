@@ -36,30 +36,8 @@ _logger = logging.getLogger(__name__)
 def save_models(model_configs):
     """Save trained models to files.
 
-    Includes precomputed feature importance per target to avoid
-    recomputation during diagnostics.
+    Models already have per-target SHAP importance values cached during evaluation.
     """
-    # Precompute and store feature importance for each model
-    for name, cfg in model_configs.get("models", {}).items():
-        model = cfg.get("model")
-        if model is None:
-            continue
-
-        # Store feature importances (will be per-target for multi-target models)
-        cfg["feature_importances"] = model.feature_importances_
-
-        # Store SHAP importance (expensive, but worth caching)
-        try:
-            if hasattr(model, "get_booster"):
-                _logger.info(f"Computing SHAP values for {name}...")
-                import shap
-
-                explainer = shap.TreeExplainer(model.get_booster())
-                cfg["shap_explainer"] = explainer
-                _logger.info(f"Cached SHAP explainer for {name}")
-        except Exception as e:
-            _logger.warning(f"Could not cache SHAP explainer for {name}: {e}")
-
     joblib.dump(
         model_configs,
         utils.output_file_name(
@@ -670,9 +648,12 @@ def train_regression(df, model_configs):
             index=y_test.index,
         )
 
-        evaluate_regression_model(model, x_test, y_pred, y_test, df, x_cols, y_data, name)
+        shap_importance = evaluate_regression_model(
+            model, x_test, y_pred, y_test, df, x_cols, y_data, name
+        )
         cfg["model"] = model
         cfg["features"] = x_cols  # Store feature names for later use
+        cfg["shap_importance"] = shap_importance  # Store per-target SHAP importance from evaluation
 
     return model_configs
 

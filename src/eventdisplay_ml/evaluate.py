@@ -100,8 +100,10 @@ def evaluate_regression_model(
 
     target_variance(y_test, y_pred, y_data.columns)
     feature_importance(model, x_cols, y_data.columns, name)
+
+    shap_importance_dict = {}
     if name == "xgboost":
-        shap_feature_importance(model, x_test, y_data.columns)
+        shap_importance_dict = shap_feature_importance(model, x_test, y_data.columns)
         if shap_per_energy:
             shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
@@ -115,6 +117,8 @@ def evaluate_regression_model(
         n_bins=9,
         name=name,
     )
+
+    return shap_importance_dict
 
 
 def target_variance(y_test, y_pred, targets):
@@ -288,7 +292,13 @@ def _log_importance_table(target_label, values, x_cols, name):
 
 
 def shap_feature_importance(model, x_data, target_names, max_points=1000, n_top=25):
-    """Feature importance using SHAP values for native multi-target XGBoost."""
+    """Feature importance using SHAP values for native multi-target XGBoost.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping target names to importance arrays (per-target SHAP values).
+    """
     x_sample = x_data.sample(n=min(len(x_data), max_points), random_state=None)
     n_features = len(x_data.columns)
     n_targets = len(target_names)
@@ -297,16 +307,23 @@ def shap_feature_importance(model, x_data, target_names, max_points=1000, n_top=
     shap_vals = model.get_booster().predict(dmatrix, pred_contribs=True)
     shap_vals = shap_vals.reshape(len(x_sample), n_targets, n_features + 1)
 
+    # Store per-target importance values
+    importance_dict = {}
+
     for i, target in enumerate(target_names):
         target_shap = shap_vals[:, i, :-1]
 
         imp = np.abs(target_shap).mean(axis=0)
+        importance_dict[target] = imp  # Store the importance array
+
         idx = np.argsort(imp)[::-1]
 
         _logger.info(f"=== SHAP Importance for {target} ===")
         for j in idx[:n_top]:
             if j < n_features:
                 _logger.info(f"{x_data.columns[j]:25s}  {imp[j]:.6e}")
+
+    return importance_dict
 
 
 def shap_feature_importance_by_energy(
