@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 r"""SHAP Feature Importance: Show cached feature importances from training.
 
 Displays the top 20 features for each reconstruction target (Xoff, Yoff, Energy)
