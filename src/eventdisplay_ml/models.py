@@ -569,9 +569,7 @@ def train_regression(df, model_configs):
         _logger.warning("Skipping training due to empty data.")
         return None
 
-    # Exclude target residuals AND MC truth columns from features
-    # MC truth columns must not be used as features (would be data leakage)
-    # Note: MC truth columns are not added to features (only residuals are added)
+    # Exclude target residuals from features
     excluded_cols = set(model_configs["targets"])
     x_cols = [col for col in df.columns if col not in excluded_cols]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
