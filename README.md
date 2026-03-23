@@ -127,27 +127,67 @@ pytest tests/ --cov=src/eventdisplay_ml --cov-report=html
 
 ### Diagnostic Tools
 
-The package provides command-line tools for model inspection and debugging:
+The committed regression diagnostics in this branch are:
 
-**Cached SHAP summary plots:**
+**1) Cached SHAP feature-importance summary**
+
+Script: `src/eventdisplay_ml/scripts/diagnostic_shap_summary.py`
+
+Purpose:
+
+- Load per-target SHAP importances cached in the trained model file
+- Create one top-20 feature plot per residual target (`Xoff_residual`, `Yoff_residual`, `E_residual`)
+
+Required inputs:
+
+- `--model_file`: trained stereo model `.joblib`
+- `--output_dir`: directory for generated PNGs
+
+Run:
 
 ```bash
 python -m eventdisplay_ml.scripts.diagnostic_shap_summary \
-    --model_file models/stereo_model.joblib \
-    --output_dir diagnostics/
+  --model_file models/stereo_model.joblib \
+  --output_dir diagnostics/
 ```
 
-Generates top-20 feature importance plots per residual target from cached values.
+Outputs:
 
-**Training evaluation plots:**
+- `diagnostics/shap_importance_Xoff_residual.png`
+- `diagnostics/shap_importance_Yoff_residual.png`
+- `diagnostics/shap_importance_E_residual.png`
+
+Notes:
+
+- This tool reads cached values from the model file (no test data required).
+- It expects `shap_importance` and `features` to be present in model metadata.
+
+**2) Training-evaluation curves**
+
+Script/entry point: `src/eventdisplay_ml/scripts/plot_training_evaluation.py` via
+`eventdisplay-ml-plot-training-evaluation`
+
+Purpose:
+
+- Plot XGBoost training vs validation metric curves from `evals_result()`
+- Useful for checking convergence and overfitting behavior
+
+Required inputs:
+
+- `--model_file`: trained model `.joblib` containing an XGBoost model
+- `--output_file`: output image path (optional; if omitted, plot is shown interactively)
+
+Run:
 
 ```bash
 eventdisplay-ml-plot-training-evaluation \
-    --model_file models/stereo_model.joblib \
-    --output_file diagnostics/training_curves.png
+  --model_file models/stereo_model.joblib \
+  --output_file diagnostics/training_curves.png
 ```
 
-Shows energy resolution, bias, and residual distributions.
+Output:
+
+- Figure with one panel per tracked metric (for example `rmse`), showing training and test curves.
 
 ## Generative AI disclosure
 
