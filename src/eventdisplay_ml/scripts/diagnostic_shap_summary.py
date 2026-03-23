@@ -29,7 +29,14 @@ def load_model_config(model_file):
     """Load model configuration with cached feature importances."""
     _logger.info(f"Loading model from {model_file}")
     model_dict = joblib.load(model_file)
-    models = model_dict.get("models", {})
+
+    models = model_dict.get("models")
+    if not isinstance(models, dict) or not models:
+        raise ValueError(
+            "Invalid model file structure: expected a non-empty 'models' mapping in "
+            f"{model_file!r}. The file should contain a top-level dictionary with a "
+            "'models' key mapping target names to model configurations."
+        )
     model_cfg = next(iter(models.values()))
 
     return model_cfg, model_dict

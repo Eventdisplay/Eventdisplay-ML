@@ -168,13 +168,13 @@ class TestApplyRegressionErecSHandling:
             pd.DataFrame({"dummy": [0, 1, 2]}), model_configs
         )
 
-        # Event 0: ErecS valid, log10(100) = 2
+        # Event 0: ErecS valid, log10(100) = 2, plus residual transform => 2.4
         assert np.isfinite(pred_erec_log[0])
-        assert np.isclose(np.log10(100), 2.0)
+        assert np.isclose(pred_erec_log[0], 2.4)
 
         # Events 1 and 2: ErecS invalid, should be NaN
-        assert np.isnan(pred_erec_log[1]), "Event with negative ErecS should product NaN"
-        assert np.isnan(pred_erec_log[2]), "Event with NaN ErecS should product NaN"
+        assert np.isnan(pred_erec_log[1]), "Event with negative ErecS should produce NaN"
+        assert np.isnan(pred_erec_log[2]), "Event with NaN ErecS should produce NaN"
 
         # Xoff and Yoff should still be valid for all events
         assert len(pred_xoff) == 3
