@@ -55,14 +55,12 @@ def plot_feature_importance(features, importances, target_name, output_dir):
     output_dir : str
         Output directory for plot.
     """
-    # Create DataFrame and sort by importance
     importance_df = (
         pd.DataFrame({"Feature": features, "Importance": importances})
         .sort_values("Importance", ascending=True)
         .tail(20)
     )
 
-    # Create plot
     _, ax = plt.subplots(figsize=(10, 8))
 
     colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(importance_df)))

@@ -67,8 +67,6 @@ eventdisplay-ml-apply-xgb-stereo \
     --input_file_list apply_files.txt \
     --output_file_list output_files.txt \
     --model_prefix models/stereo_model
-```
-
 **Output:** ROOT files with `StereoAnalysis` tree containing reconstructed Xoff, Yoff, and log10(E).
 
 ## Gamma/hadron separation using XGBoost
@@ -84,6 +82,8 @@ Output is a single ROOT tree called `Classification` with the same number of eve
 The committed regression diagnostics in this branch are:
 
 ### SHAP feature-importance summary
+
+ Tests: Feature importance
 
 - Load per-target SHAP importances cached in the trained model file
 - Create one top-20 feature plot per residual target (`Xoff_residual`, `Yoff_residual`, `E_residual`)
@@ -107,6 +107,45 @@ Outputs:
 - `diagnostics/shap_importance_Yoff_residual.png`
 - `diagnostics/shap_importance_E_residual.png`
 
+### Permutation importance
+
+- Rebuild the held-out test split from the model metadata and original input files
+- Shuffle one feature at a time and measure the relative RMSE increase per residual target
+- Validate predictive dependence on features rather than cached model attribution
+
+Required inputs:
+
+- `--model_file`: trained stereo model `.joblib`
+- `--output_dir`: directory for generated plots
+- `--top_n`: number of top features to include in the plot (optional)
+- `--input_file_list`: optional override if the path stored in the model metadata is no longer valid
+
+Run:
+
+```bash
+eventdisplay-ml-diagnostic-permutation-importance \
+  --model_file models/stereo_model.joblib \
+  --output_dir diagnostics/ \
+  --top_n 20
+```
+
+Optional override:
+
+```bash
+eventdisplay-ml-diagnostic-permutation-importance \
+  --model_file models/stereo_model.joblib \
+  --input_file_list files.txt \
+  --output_dir diagnostics/
+```
+
+Output:
+
+- `diagnostics/permutation_importance.png`
+
+Notes:
+
+- This diagnostic is slower than the SHAP summary because it rebuilds the processed test split.
+- It is the better choice when you want to measure actual performance sensitivity to each feature.
 
 ### Training-evaluation curves**
 
