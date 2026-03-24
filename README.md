@@ -23,11 +23,11 @@ Output is a single ROOT tree called `StereoAnalysis` with the same number of eve
 
 The stereo regression training pipeline uses multi-target XGBoost to predict residuals (deviations from baseline reconstructions):
 
-**Targets:** `[Xoff_residual, Yoff_residual, E_residual]` (direction and energy improvements)
+**Targets:** `[Xoff_residual, Yoff_residual, E_residual]` (residulas on direction and energy as reconstruction by the BDT stereo reconstruction method)
 
 **Key techniques:**
 
-- **Target standardization:** Targets are mean-centered and scaled to unit variance during training, allowing multi-output learning with balanced feature importance across direction and energy
+- **Target standardization:** Targets are mean-centered and scaled to unit variance during training
 - **Energy-bin weighting:** Events are weighted inversely by energy bin density; bins with fewer than 10 events are excluded from training to prevent overfitting on low-statistics regions
 - **Multiplicity weighting:** Higher-multiplicity events (more telescopes) receive higher sample weights to prioritize high-confidence reconstructions
 - **Per-target SHAP importance:** Feature importance values computed during training for each target and cached for later analysis
@@ -45,27 +45,19 @@ eventdisplay-ml-train-xgb-stereo \
 
 **Output:** Joblib model file containing:
 
-- XGBoost booster
+- XGBoost trained model object
 - Target standardization scalers (mean/std)
 - Feature list and SHAP importance rankings
 - Training metadata (random state, hyperparameters)
 
 ### Applying Stereo Reconstruction Models
 
-The apply pipeline loads trained models and makes predictions on new events:
-
-**Process:**
-
-1. Load training features from input ROOT files
-2. Make predictions in (mean=0, std=1) standardized space
-3. Inverse-standardize predictions using stored target_mean and target_std
-4. Combine with baseline reconstructions: `final = baseline + residual`
-5. Validate energy values and convert to log10 space
+The apply pipeline loads trained models and makes predictions:
 
 **Key safeguards:**
 
 - Invalid energy values (≤0 or NaN) produce NaN outputs but preserve all input event rows
-- Missing standardization parameters raise clear ValueError (prevents silent data corruption)
+- Missing standardization parameters raise ValueError (prevents silent data corruption)
 - Output row count always equals input row count
 
 **Apply command:**
@@ -87,53 +79,11 @@ The zenith angle dependence is accounted for by including the zenith angle as a 
 
 Output is a single ROOT tree called `Classification` with the same number of events as the input tree. It contains the classification prediction (`Gamma_Prediction`) and boolean flags (e.g. `Is_Gamma_75` for 75% signal efficiency cut).
 
-## Testing
-
-### Test Coverage
-
-The package includes comprehensive unit tests focused on the stereo regression pipeline:
-
-**Core test modules:**
-
-- `tests/test_train_regression_standardization.py`: Training pipeline tests (11 tests)
-  - Target standardization computation from training set only
-  - Energy-bin weighting logic including low-count bin exclusion
-  - Train/test split isolation to prevent data leakage
-  - Integration tests for complete training workflows
-
-- `tests/test_regression_apply.py`: Apply pipeline tests (9 tests)
-  - Standardization inversion (loading and applying target scalers)
-  - Safe energy validation and log10 computation
-  - Residual reconstruction and final prediction assembly
-  - Output row count preservation with invalid energy handling
-  - Error handling for missing standardization parameters
-
-### Running Tests
-
-```bash
-# Run all tests
-pytest tests/ -v
-
-# Run specific test module
-pytest tests/test_train_regression_standardization.py -v
-
-# Run with coverage report
-pytest tests/ --cov=src/eventdisplay_ml --cov-report=html
-```
-
-**Test results:** 34 tests passing, 2 skipped (require external data files)
-
-**Coverage:** ~42% overall (models: 43%, data_processing: 53%, evaluate: 51%)
-
-### Diagnostic Tools
+## Diagnostic Tools
 
 The committed regression diagnostics in this branch are:
 
-**1) Cached SHAP feature-importance summary**
-
-Script: `src/eventdisplay_ml/scripts/diagnostic_shap_summary.py`
-
-Purpose:
+### SHAP feature-importance summary
 
 - Load per-target SHAP importances cached in the trained model file
 - Create one top-20 feature plot per residual target (`Xoff_residual`, `Yoff_residual`, `E_residual`)
@@ -146,7 +96,7 @@ Required inputs:
 Run:
 
 ```bash
-python -m eventdisplay_ml.scripts.diagnostic_shap_summary \
+  eventdisplay-ml-diagnostic-shap-summary \
   --model_file models/stereo_model.joblib \
   --output_dir diagnostics/
 ```
@@ -157,19 +107,10 @@ Outputs:
 - `diagnostics/shap_importance_Yoff_residual.png`
 - `diagnostics/shap_importance_E_residual.png`
 
-Notes:
 
-- This tool reads cached values from the model file (no test data required).
-- It expects `shap_importance` and `features` to be present in model metadata.
+### Training-evaluation curves**
 
-**2) Training-evaluation curves**
-
-Script/entry point: `src/eventdisplay_ml/scripts/plot_training_evaluation.py` via
-`eventdisplay-ml-plot-training-evaluation`
-
-Purpose:
-
-- Plot XGBoost training vs validation metric curves from `evals_result()`
+- Plot XGBoost training vs validation metric curves
 - Useful for checking convergence and overfitting behavior
 
 Required inputs:

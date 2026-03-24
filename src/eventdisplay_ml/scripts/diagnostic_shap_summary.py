@@ -96,8 +96,9 @@ def main():
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    # Load model configuration with cached data
-    model_cfg, _model_dict = load_model_config(args.model_file)
+    _logger.info("=== SHAP Feature Importance Summary ===")
+
+    model_cfg, _ = load_model_config(args.model_file)
 
     shap_importance = model_cfg.get("shap_importance")
     features = model_cfg.get("features")
@@ -119,7 +120,7 @@ def main():
         _logger.info(f"\nProcessing {target_name}...")
         plot_feature_importance(features, importances, target_name, args.output_dir)
 
-    _logger.info(f"\n✓ All plots saved to {args.output_dir}")
+    _logger.info(f"\nPlots saved to {args.output_dir}")
 
 
 if __name__ == "__main__":

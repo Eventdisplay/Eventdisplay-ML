@@ -631,7 +631,7 @@ def train_regression(df, model_configs):
             y_train_scaled,
             sample_weight=weights_train,
             eval_set=eval_set,
-            verbose=True,
+            verbose=False,
         )
         _logger.info(
             f"Training stopped at iteration {model.best_iteration} "
