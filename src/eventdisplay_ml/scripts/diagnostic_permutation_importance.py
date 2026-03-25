@@ -28,12 +28,12 @@ _logger = logging.getLogger(__name__)
 
 
 def load_data_and_model(model_file, input_file_list=None):
-    """Load trained model and rebuild the held-out test split.
+    """Load trained model and rebuild test split.
 
     Parameters
     ----------
     model_file : str
-        Path to trained model joblib file.
+        Path to trained model file.
     input_file_list : str or None, optional
         Optional override for the input file list stored in the model metadata.
 
@@ -41,7 +41,7 @@ def load_data_and_model(model_file, input_file_list=None):
     -------
     tuple
         Trained model, reconstructed x_test, y_test, feature names, target names,
-        and full model metadata.
+        and model metadata.
     """
     _logger.info(f"Loading model from {model_file}")
     model_dict = joblib.load(model_file)
@@ -219,7 +219,7 @@ def main():
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    model, x_test, y_test, _features, target_names, model_dict = load_data_and_model(
+    model, x_test, y_test, _, target_names, model_dict = load_data_and_model(
         args.model_file,
         args.input_file_list,
     )
