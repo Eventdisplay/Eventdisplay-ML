@@ -147,7 +147,46 @@ Notes:
 - This diagnostic is slower than the SHAP summary because it rebuilds the processed test split.
 - It is the better choice when you want to measure actual performance sensitivity to each feature.
 
-### Training-evaluation curves**
+### Generalization gap
+
+- Read the cached train/test RMSE summary written during training
+- Compare final train and test RMSE for each residual target
+- Quantify the overfitting gap after training is complete
+
+Required inputs:
+
+- `--model_file`: trained stereo model `.joblib`
+- `--output_dir`: directory for generated plots
+- `--input_file_list`: optional override if the path stored in the model metadata is no longer valid
+
+Run:
+
+```bash
+python -m eventdisplay_ml.scripts.diagnostic_generalization_gap \
+  --model_file models/stereo_model.joblib \
+  --output_dir diagnostics/
+```
+
+Optional override:
+
+```bash
+python -m eventdisplay_ml.scripts.diagnostic_generalization_gap \
+  --model_file models/stereo_model.joblib \
+  --input_file_list files.txt \
+  --output_dir diagnostics/
+```
+
+Output:
+
+- `diagnostics/generalization_gap.png`
+
+Notes:
+
+- This diagnostic measures final overfitting by comparing train and test residual RMSE.
+- Older model files without cached metrics fall back to rebuilding the original train/test split.
+- Unlike `plot_training_evaluation.py`, it summarizes final RMSE, not the per-iteration XGBoost training history.
+
+### Training-evaluation curves
 
 - Plot XGBoost training vs validation metric curves
 - Useful for checking convergence and overfitting behavior

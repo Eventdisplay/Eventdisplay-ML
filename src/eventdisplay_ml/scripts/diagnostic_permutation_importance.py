@@ -15,97 +15,19 @@ import argparse
 import logging
 from pathlib import Path
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import train_test_split
 
-from eventdisplay_ml.data_processing import load_training_data
+from eventdisplay_ml import diagnostic_utils
 
 _logger = logging.getLogger(__name__)
 
 
-def load_data_and_model(model_file, input_file_list=None):
-    """Load trained model and rebuild test split.
-
-    Parameters
-    ----------
-    model_file : str
-        Path to trained model file.
-    input_file_list : str or None, optional
-        Optional override for the input file list stored in the model metadata.
-
-    Returns
-    -------
-    tuple
-        Trained model, reconstructed x_test, y_test, feature names, target names,
-        and model metadata.
-    """
-    _logger.info(f"Loading model from {model_file}")
-    model_dict = joblib.load(model_file)
-    models = model_dict.get("models", {})
-    if not models:
-        raise ValueError(f"No models found in model file: {model_file}")
-
-    model_cfg = next(iter(models.values()))
-    model = model_cfg.get("model")
-    if model is None:
-        raise ValueError(f"No trained model object found in model file: {model_file}")
-
-    file_list = input_file_list or model_dict.get("input_file_list")
-    if not file_list:
-        raise ValueError(
-            "No input file list available. Provide --input_file_list or retrain with "
-            "input_file_list stored in the model metadata."
-        )
-
-    _logger.info(f"Rebuilding training data from input file list: {file_list}")
-    df = load_training_data(model_dict, file_list, "stereo_analysis")
-
-    features = model_cfg.get("features") or model_dict.get("features", [])
-    targets = model_dict.get("targets", ["Xoff_residual", "Yoff_residual", "E_residual"])
-    if not features:
-        raise ValueError(f"No feature list found in model file: {model_file}")
-
-    x_data = df[features]
-    y_data = df[targets]
-
-    _logger.info("Reconstructing train/test split from model metadata")
-    _, x_test, _, y_test = train_test_split(
-        x_data,
-        y_data,
-        train_size=model_dict.get("train_test_fraction", 0.5),
-        random_state=model_dict.get("random_state", None),
-    )
-
-    _logger.info(f"Reconstructed test set with {len(x_test)} events")
-    return model, x_test, y_test, features, targets, model_dict
-
-
-def predict_unscaled_residuals(model, x_test, model_dict, target_names):
-    """Predict residual targets and inverse-standardize them to original scale."""
-    preds_scaled = model.predict(x_test)
-
-    target_mean_cfg = model_dict.get("target_mean")
-    target_std_cfg = model_dict.get("target_std")
-    if not target_mean_cfg or not target_std_cfg:
-        raise ValueError(
-            "Missing target standardization parameters (target_mean/target_std) in model "
-            "file. This diagnostic requires a residual-trained stereo model."
-        )
-
-    target_mean = np.array([target_mean_cfg[target] for target in target_names], dtype=np.float64)
-    target_std = np.array([target_std_cfg[target] for target in target_names], dtype=np.float64)
-
-    preds = preds_scaled * target_std + target_mean
-    return pd.DataFrame(preds, columns=target_names, index=x_test.index)
-
-
 def compute_baseline_rmse(model, x_test, y_test, model_dict, target_names):
     """Compute baseline RMSE on unshuffled test set."""
-    y_pred = predict_unscaled_residuals(model, x_test, model_dict, target_names)
+    y_pred = diagnostic_utils.predict_unscaled_residuals(model, x_test, model_dict, target_names)
 
     baseline_rmse = {}
     for target in target_names:
@@ -121,13 +43,24 @@ def permutation_importance(model, x_test, y_test, baseline_rmse, target_names, m
     _logger.info("Computing permutation importance...")
 
     importance = {target: {} for target in target_names}
-    rng = np.random.default_rng(model_dict.get("random_state", None))
 
     for feat_idx, feat_name in enumerate(x_test.columns):
         x_shuffled = x_test.copy()
-        x_shuffled.iloc[:, feat_idx] = rng.permutation(x_shuffled.iloc[:, feat_idx].to_numpy())
+        x_shuffled.iloc[:, feat_idx] = (
+            x_shuffled.iloc[:, feat_idx]
+            .sample(
+                frac=1,
+                random_state=model_dict.get("random_state", None),
+            )
+            .to_numpy()
+        )
 
-        y_pred_shuffled = predict_unscaled_residuals(model, x_shuffled, model_dict, target_names)
+        y_pred_shuffled = diagnostic_utils.predict_unscaled_residuals(
+            model,
+            x_shuffled,
+            model_dict,
+            target_names,
+        )
 
         for target_name in target_names:
             mse_shuffled = mean_squared_error(y_test[target_name], y_pred_shuffled[target_name])
@@ -219,9 +152,11 @@ def main():
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    model, x_test, y_test, _, target_names, model_dict = load_data_and_model(
-        args.model_file,
-        args.input_file_list,
+    model, _, _, x_test, y_test, _, target_names, model_dict = (
+        diagnostic_utils.load_stereo_regression_split(
+            args.model_file,
+            args.input_file_list,
+        )
     )
 
     _logger.info("Computing baseline RMSE...")
