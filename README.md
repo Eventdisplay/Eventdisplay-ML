@@ -186,6 +186,92 @@ Notes:
 - Older model files without cached metrics fall back to rebuilding the original train/test split.
 - Unlike `plot_training_evaluation.py`, it summarizes final RMSE, not the per-iteration XGBoost training history.
 
+### Partial Dependence Plots
+
+- Visualize how each feature influences model predictions
+- Prove the model captures physics by checking that multiplicity reduces corrections and baselines show smooth relationships
+
+Required inputs:
+
+- `--model_file`: trained stereo model `.joblib`
+- `--output_dir`: directory for generated plots (optional; default: `diagnostics`)
+- `--features`: space-separated list of features to plot (optional; default: `DispNImages Xoff_weighted_bdt Yoff_weighted_bdt ErecS`)
+- `--input_file_list`: optional override if the path stored in the model metadata is no longer valid
+
+Run:
+
+```bash
+eventdisplay-ml-diagnostic-partial-dependence \
+  --model_file models/stereo_model.joblib \
+  --output_dir diagnostics/ \
+  --features DispNImages Xoff_weighted_bdt ErecS
+```
+
+Optional override:
+
+```bash
+eventdisplay-ml-diagnostic-partial-dependence \
+  --model_file models/stereo_model.joblib \
+  --input_file_list files.txt \
+  --features Xoff_weighted_bdt Yoff_weighted_bdt
+```
+
+Output:
+
+- `diagnostics/partial_dependence.png` (grid of feature × target subplots)
+
+Notes:
+
+- PDP displays predicted residual output as a function of a single feature while holding others constant
+- Multiplicity effect: high-multiplicity events should show smaller corrections (negative slope)
+- Baseline stability: baseline features (e.g., `weighted_bdt`) should show smooth, linear relationships
+- This diagnostic rebuilds the held-out test split and is slower than SHAP summary
+
+### Residual Normality Diagnostics
+
+- Validate that model residuals follow a normal distribution
+- Detect outlier events and check for systematic biases in reconstruction errors
+
+Required inputs:
+
+- `--model_file`: trained stereo model `.joblib`
+- `--output_dir`: directory for generated plots (optional; default: `diagnostics`)
+- `--input_file_list`: optional override if the path stored in the model metadata is no longer valid
+
+Run:
+
+```bash
+eventdisplay-ml-diagnostic-residual-normality \
+  --model_file models/stereo_model.joblib \
+  --output_dir diagnostics/
+```
+
+Optional override:
+
+```bash
+eventdisplay-ml-diagnostic-residual-normality \
+  --model_file models/stereo_model.joblib \
+  --input_file_list files.txt
+```
+
+Output:
+
+- Residual normality statistics printed to console:
+  - Mean and standard deviation per target
+  - Kolmogorov-Smirnov test p-value (normality test)
+  - Anderson-Darling test statistic and critical value
+  - Skewness and kurtosis
+  - Q-Q plot R² value
+  - Number of outliers (>3σ) per target
+- `diagnostics/residual_diagnostics_Xoff.png`, `diagnostics/residual_diagnostics_Yoff.png`, `diagnostics/residual_diagnostics_E.png` (if cache miss forces reconstruction)
+
+Notes:
+
+- Residual normality stats are cached during training and loaded from the model file for fast retrieval
+- Diagnostic plots (histograms, Q-Q plots) are only generated when the split must be reconstructed
+- Invalid KS test or Anderson-Darling results (NaN/inf) are reported as special values
+- Outlier counts help identify events with unusually large reconstruction errors
+
 ### Training-evaluation curves
 
 - Plot XGBoost training vs validation metric curves
