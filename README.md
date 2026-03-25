@@ -23,7 +23,7 @@ Output is a single ROOT tree called `StereoAnalysis` with the same number of eve
 
 The stereo regression training pipeline uses multi-target XGBoost to predict residuals (deviations from baseline reconstructions):
 
-**Targets:** `[Xoff_residual, Yoff_residual, E_residual]` (residulas on direction and energy as reconstruction by the BDT stereo reconstruction method)
+**Targets:** `[Xoff_residual, Yoff_residual, E_residual]` (residuals on direction and energy as reconstruction by the BDT stereo reconstruction method)
 
 **Key techniques:**
 
@@ -67,6 +67,9 @@ eventdisplay-ml-apply-xgb-stereo \
     --input_file_list apply_files.txt \
     --output_file_list output_files.txt \
     --model_prefix models/stereo_model
+```
+
+
 **Output:** ROOT files with `StereoAnalysis` tree containing reconstructed Xoff, Yoff, and log10(E).
 
 ## Gamma/hadron separation using XGBoost
@@ -263,7 +266,7 @@ Output:
   - Skewness and kurtosis
   - Q-Q plot R² value
   - Number of outliers (>3σ) per target
-- `diagnostics/residual_diagnostics_Xoff.png`, `diagnostics/residual_diagnostics_Yoff.png`, `diagnostics/residual_diagnostics_E.png` (if cache miss forces reconstruction)
+- `diagnostics/residual_diagnostics.png` (single 2xN grid; generated on cache miss when reconstruction is required)
 
 Notes:
 

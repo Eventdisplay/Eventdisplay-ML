@@ -119,12 +119,11 @@ def compute_generalization_metrics(y_train, y_train_pred, y_test, y_test_pred, t
         else:
             gap_pct = (rmse_test - rmse_train) / rmse_train * 100
 
-        if np.isfinite(gap_pct) and gap_pct > 0:
-            gen_ratio = rmse_train / gap_pct
-        elif gap_pct <= 0:
-            gen_ratio = 999.0
+        # Unitless generalization ratio: >1 means worse on test than train.
+        if rmse_train == 0:
+            gen_ratio = 1.0 if rmse_test == 0 else np.inf
         else:
-            gen_ratio = 0.0
+            gen_ratio = rmse_test / rmse_train
 
         metrics[target_name] = {
             "rmse_train": float(rmse_train),
