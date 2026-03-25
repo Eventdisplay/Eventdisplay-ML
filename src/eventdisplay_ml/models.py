@@ -661,12 +661,19 @@ def train_regression(df, model_configs):
             model_configs["targets"],
         )
 
+        residual_normality_stats = diagnostic_utils.compute_residual_normality_stats(
+            y_test,
+            y_pred,
+            model_configs["targets"],
+        )
+
         shap_importance = evaluate_regression_model(
             model, x_test, y_pred, y_test, df, x_cols, y_data, name
         )
         cfg["model"] = model
         cfg["features"] = x_cols  # Store feature names for later use
         cfg["generalization_metrics"] = generalization_metrics
+        cfg["residual_normality_stats"] = residual_normality_stats
         cfg["shap_importance"] = shap_importance  # Store per-target SHAP importance from evaluation
 
     return model_configs

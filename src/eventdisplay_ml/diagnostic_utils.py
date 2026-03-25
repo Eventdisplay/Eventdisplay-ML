@@ -10,6 +10,7 @@ import logging
 import joblib
 import numpy as np
 import pandas as pd
+from scipy import stats
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 
@@ -151,6 +152,75 @@ def load_cached_generalization_metrics(model_file):
 
     _logger.info("Loaded cached generalization metrics for %d targets", len(metrics))
     return model_dict, metrics
+
+
+def compute_residual_normality_stats(y_test, y_test_pred, target_names):
+    """Compute Gaussian fit parameters and normality tests for residuals."""
+    stats_dict = {}
+
+    for target_name in target_names:
+        residuals = y_test[target_name].values - y_test_pred[target_name].values
+        residuals_clean = residuals[~np.isnan(residuals)]
+
+        if len(residuals_clean) == 0:
+            _logger.warning(f"Skipping {target_name}: no finite residuals")
+            continue
+
+        # Gaussian parameters
+        mean = float(np.mean(residuals_clean))
+        std = float(np.std(residuals_clean))
+
+        # Normality tests
+        _, p_ks = stats.kstest(residuals_clean, "norm", args=(mean, std))
+        ad_result = stats.anderson(residuals_clean, dist="norm")
+        ad_stat = float(ad_result.statistic)
+        ad_crit_5 = float(
+            ad_result.critical_values[2] if len(ad_result.critical_values) > 2 else np.nan
+        )
+
+        # Skewness and kurtosis
+        skewness = float(stats.skew(residuals_clean))
+        kurtosis = float(stats.kurtosis(residuals_clean))
+
+        # Quantile-Quantile test (visual)
+        _, (_, _, qq_r) = stats.probplot(residuals_clean, dist="norm")
+        qq_r2 = float(qq_r**2)
+
+        # Outlier count
+        n_outliers = int(np.sum(np.abs(residuals_clean) > 3 * std))
+
+        stats_dict[target_name] = {
+            "mean": mean,
+            "std": std,
+            "p_ks": float(p_ks),
+            "ad_stat": ad_stat,
+            "ad_crit_5": ad_crit_5,
+            "skewness": skewness,
+            "kurtosis": kurtosis,
+            "qq_r2": qq_r2,
+            "n_outliers": n_outliers,
+            "n_samples": len(residuals_clean),
+        }
+
+    return stats_dict
+
+
+def load_cached_residual_normality_stats(model_file):
+    """Load cached residual normality statistics from a model file if available."""
+    _logger.info(f"Loading cached residual normality stats from {model_file}")
+    model_dict, model_cfg = _load_model_cfg(model_file)
+
+    if model_cfg is None:
+        _logger.warning("No models found in model file")
+        return model_dict, None
+
+    normality_stats = model_cfg.get("residual_normality_stats")
+    if not isinstance(normality_stats, dict) or not normality_stats:
+        _logger.warning("No cached residual normality statistics found in model file")
+        return model_dict, None
+
+    _logger.info("Loaded cached residual normality stats for %d targets", len(normality_stats))
+    return model_dict, normality_stats
 
 
 def load_model_and_importance(model_file, target_name=None):
@@ -307,6 +377,7 @@ def validate_cached_data(model_file):
         "has_features": "features" in model_cfg,
         "has_shap_importance": has_shap_importance,
         "has_generalization_metrics": "generalization_metrics" in model_cfg,
+        "has_residual_normality_stats": "residual_normality_stats" in model_cfg,
         "has_feature_importances": "feature_importances" in model_cfg,  # legacy key
         "has_shap_explainer": "shap_explainer" in model_cfg,
         "has_target_mean": "target_mean" in model_dict,
@@ -315,6 +386,7 @@ def validate_cached_data(model_file):
         "n_targets_with_shap": len(shap_targets),
         "shap_targets": shap_targets,
         "generalization_targets": list(model_cfg.get("generalization_metrics", {}).keys()),
+        "residual_normality_targets": list(model_cfg.get("residual_normality_stats", {}).keys()),
         "n_importances": len(model_cfg.get("feature_importances", []))
         if "feature_importances" in model_cfg
         else 0,
