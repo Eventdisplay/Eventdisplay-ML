@@ -162,7 +162,7 @@ Required inputs:
 Run:
 
 ```bash
-python -m eventdisplay_ml.scripts.diagnostic_generalization_gap \
+eventdisplay-ml-diagnostic-generalization-gap \
   --model_file models/stereo_model.joblib \
   --output_dir diagnostics/
 ```
@@ -170,7 +170,7 @@ python -m eventdisplay_ml.scripts.diagnostic_generalization_gap \
 Optional override:
 
 ```bash
-python -m eventdisplay_ml.scripts.diagnostic_generalization_gap \
+eventdisplay-ml-diagnostic-generalization-gap \
   --model_file models/stereo_model.joblib \
   --input_file_list files.txt \
   --output_dir diagnostics/
