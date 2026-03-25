@@ -63,9 +63,10 @@ def compute_normality_stats(residuals):
 
         # Normality tests
         _, p_ks = stats.kstest(resid_clean, "norm", args=(mean, std))
-        ad_result = stats.anderson(resid_clean, dist="norm")
+        ad_result = stats.anderson(resid_clean, dist="norm", method="interpolate")
         ad_stat = ad_result.statistic
-        ad_crit_5 = ad_result.critical_values[2] if len(ad_result.critical_values) > 2 else np.nan
+        # With method='interpolate', ad_result has pvalue attribute
+        ad_pvalue = ad_result.pvalue if hasattr(ad_result, "pvalue") else np.nan
 
         # Skewness and kurtosis
         skewness = stats.skew(resid_clean)
@@ -80,7 +81,7 @@ def compute_normality_stats(residuals):
             "std": std,
             "p_ks": p_ks,
             "ad_stat": ad_stat,
-            "ad_crit_5": ad_crit_5,
+            "ad_pvalue": ad_pvalue,
             "skewness": skewness,
             "kurtosis": kurtosis,
             "qq_r2": qq_r2,
@@ -151,59 +152,59 @@ def diagnose_residual_quality(residuals, stats_dict):
         _logger.info(f"  Std:   {stat['std']:.6f}")
 
         if np.abs(stat["mean"]) < stat["std"] * 0.1:
-            _logger.info("  ✓ GOOD - Residuals centered at zero")
+            _logger.info("  GOOD - Residuals centered at zero")
         elif np.abs(stat["mean"]) < stat["std"] * 0.2:
-            _logger.info("  ~ OK - Small systematic offset")
+            _logger.info("  OK - Small systematic offset")
         else:
-            _logger.info("  ✗ WARNING - Significant bias detected")
+            _logger.info("  WARNING - Significant bias detected")
 
         _logger.info(f"\n  Skewness: {stat['skewness']:.4f}")
         if np.abs(stat["skewness"]) < 0.2:
-            _logger.info("    ✓ GOOD - Symmetric distribution")
+            _logger.info("    GOOD - Symmetric distribution")
         elif np.abs(stat["skewness"]) < 0.5:
-            _logger.info("    ~ OK - Mild asymmetry")
+            _logger.info("    OK - Mild asymmetry")
         else:
-            _logger.info("    ✗ WARNING - Strong skew (model failing on certain events)")
+            _logger.info("    WARNING - Strong skew (model failing on certain events)")
 
         _logger.info(f"\n  Kurtosis: {stat['kurtosis']:.4f}")
         if np.abs(stat["kurtosis"]) < 0.5:
-            _logger.info("    ✓ GOOD - Gaussian-like tails")
+            _logger.info("    GOOD - Gaussian-like tails")
         elif np.abs(stat["kurtosis"]) < 1.0:
-            _logger.info("    ~ OK - Slightly heavy/light tails")
+            _logger.info("    OK - Slightly heavy/light tails")
         else:
-            _logger.info("    ✗ WARNING - Heavy tails (outliers present)")
+            _logger.info("    WARNING - Heavy tails (outliers present)")
 
         _logger.info(f"\n  Outliers (>3sigma): {stat['n_outliers']} events")
         outlier_pct = stat["n_outliers"] / stat["n_samples"] * 100
         if outlier_pct < 0.3:
-            _logger.info("    ✓ GOOD - Minimal outliers")
+            _logger.info("    GOOD - Minimal outliers")
         elif outlier_pct < 1.0:
-            _logger.info("    ~ OK - Few outliers")
+            _logger.info("    OK - Few outliers")
         else:
-            _logger.info("    ✗ WARNING - Excessive outliers")
+            _logger.info("    WARNING - Excessive outliers")
 
         _logger.info(f"\n  Kolmogorov-Smirnov test: p={stat['p_ks']:.4f}")
         if stat["p_ks"] > 0.05:
-            _logger.info("    ✓ Gaussian hypothesis NOT rejected (p > 0.05)")
+            _logger.info("    Gaussian hypothesis NOT rejected (p > 0.05)")
         else:
-            _logger.info("    ✗ Distribution deviates from Gaussian (p < 0.05)")
+            _logger.info("    Distribution deviates from Gaussian (p < 0.05)")
 
         _logger.info(
             f"\n  Anderson-Darling normality: stat={stat['ad_stat']:.4f}, "
-            f"5% crit={stat['ad_crit_5']:.4f}"
+            f"p-value={stat['ad_pvalue']:.4f}"
         )
-        if stat["ad_stat"] < stat["ad_crit_5"]:
-            _logger.info("    ✓ Anderson-Darling does not reject normality at 5%")
+        if stat["ad_pvalue"] > 0.05:
+            _logger.info("    Anderson-Darling does not reject normality (p > 0.05)")
         else:
-            _logger.info("    ✗ Anderson-Darling rejects normality at 5%")
+            _logger.info("    Anderson-Darling rejects normality (p < 0.05)")
 
         _logger.info(f"\n  Q-Q R²: {stat['qq_r2']:.4f}")
         if stat["qq_r2"] > 0.98:
-            _logger.info("    ✓ Excellent Gaussian fit")
+            _logger.info("    Excellent Gaussian fit")
         elif stat["qq_r2"] > 0.95:
-            _logger.info("    ✓ Good Gaussian fit")
+            _logger.info("    Good Gaussian fit")
         else:
-            _logger.info("    ~ Fair fit, consider investigating tails")
+            _logger.info("    Fair fit, consider investigating tails")
 
 
 def main():

@@ -172,11 +172,11 @@ def compute_residual_normality_stats(y_test, y_test_pred, target_names):
 
         # Normality tests
         _, p_ks = stats.kstest(residuals_clean, "norm", args=(mean, std))
-        ad_result = stats.anderson(residuals_clean, dist="norm")
+        ad_result = stats.anderson(residuals_clean, dist="norm", method="interpolate")
         ad_stat = float(ad_result.statistic)
-        ad_crit_5 = float(
-            ad_result.critical_values[2] if len(ad_result.critical_values) > 2 else np.nan
-        )
+        # With method='interpolate', ad_result is SignificanceResult with pvalue
+        # (not AndersonResult, which has critical_values)
+        ad_crit_5 = float(ad_result.pvalue if hasattr(ad_result, "pvalue") else np.nan)
 
         # Skewness and kurtosis
         skewness = float(stats.skew(residuals_clean))
@@ -194,7 +194,7 @@ def compute_residual_normality_stats(y_test, y_test_pred, target_names):
             "std": std,
             "p_ks": float(p_ks),
             "ad_stat": ad_stat,
-            "ad_crit_5": ad_crit_5,
+            "ad_pvalue": ad_crit_5,
             "skewness": skewness,
             "kurtosis": kurtosis,
             "qq_r2": qq_r2,
