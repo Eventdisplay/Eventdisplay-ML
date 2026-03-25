@@ -36,12 +36,12 @@ def load_predictions_and_targets(model_file, input_file_list=None):
 
 
 def compute_residuals(y_pred, y_true, target_names):
-    """Compute residuals (predicted - true)."""
+    """Compute residuals (true - predicted). Standard ML residual convention."""
     residuals = {}
 
     for target_name in target_names:
         if target_name in y_true.columns and target_name in y_pred.columns:
-            residuals[target_name] = y_pred[target_name].values - y_true[target_name].values
+            residuals[target_name] = y_true[target_name].values - y_pred[target_name].values
 
     return residuals
 
