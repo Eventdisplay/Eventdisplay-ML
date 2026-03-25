@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eventdisplay_ml import models
+from eventdisplay_ml import diagnostic_utils, models
 
 
 @pytest.fixture
@@ -247,7 +247,76 @@ class TestTrainRegressionIntegration:
         assert "models" in result
         assert "xgboost" in result["models"]
         assert "model" in result["models"]["xgboost"]
+        assert "generalization_metrics" in result["models"]["xgboost"]
         assert "shap_importance" in result["models"]["xgboost"]
+
+    def test_generalization_metrics_cached_per_target(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify train/test RMSE summary is cached in the model config."""
+        result = models.train_regression(regression_training_df, regression_model_config)
+
+        metrics = result["models"]["xgboost"]["generalization_metrics"]
+        assert set(metrics) == set(regression_model_config["targets"])
+
+        for target in regression_model_config["targets"]:
+            assert set(metrics[target]) == {"rmse_train", "rmse_test", "gap_pct", "gen_ratio"}
+            assert np.isfinite(metrics[target]["rmse_train"])
+            assert np.isfinite(metrics[target]["rmse_test"])
+
+    def test_generalization_metrics_match_training_predictions(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify cached generalization metrics match the model predictions used in training."""
+        df = regression_training_df
+        cfg = regression_model_config
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+
+            def _predict(x_values):
+                return np.zeros((len(x_values), len(cfg["targets"])))
+
+            mock_model.predict.side_effect = _predict
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model") as mock_eval:
+                mock_eval.return_value = {}
+                result = models.train_regression(df, cfg)
+
+        from sklearn.model_selection import train_test_split
+
+        x_cols = [col for col in df.columns if col not in cfg["targets"]]
+        _, _, y_train, y_test = train_test_split(
+            df[x_cols],
+            df[cfg["targets"]],
+            train_size=cfg["train_test_fraction"],
+            random_state=cfg["random_state"],
+        )
+
+        target_mean = np.array([result["target_mean"][target] for target in cfg["targets"]])
+        y_train_pred = pd.DataFrame(
+            np.tile(target_mean, (len(y_train), 1)),
+            columns=cfg["targets"],
+            index=y_train.index,
+        )
+        y_test_pred = pd.DataFrame(
+            np.tile(target_mean, (len(y_test), 1)),
+            columns=cfg["targets"],
+            index=y_test.index,
+        )
+
+        expected_metrics = diagnostic_utils.compute_generalization_metrics(
+            y_train,
+            y_train_pred,
+            y_test,
+            y_test_pred,
+            cfg["targets"],
+        )
+
+        assert result["models"]["xgboost"]["generalization_metrics"] == expected_metrics
 
     def test_scaled_predictions_unscaled_correctly(
         self, regression_training_df, regression_model_config

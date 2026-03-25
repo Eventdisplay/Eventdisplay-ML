@@ -13,7 +13,7 @@ import uproot
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
 
-from eventdisplay_ml import data_processing, features, utils
+from eventdisplay_ml import data_processing, diagnostic_utils, features, utils
 from eventdisplay_ml.data_processing import (
     energy_in_bins,
     flatten_feature_data,
@@ -631,11 +631,18 @@ def train_regression(df, model_configs):
             y_train_scaled,
             sample_weight=weights_train,
             eval_set=eval_set,
-            verbose=True,
+            verbose=False,
         )
         _logger.info(
             f"Training stopped at iteration {model.best_iteration} "
             f"(best score: {model.best_score:.4f})"
+        )
+
+        y_train_pred_scaled = model.predict(x_train)
+        y_train_pred = pd.DataFrame(
+            y_train_pred_scaled * y_std.values + y_mean.values,
+            columns=model_configs["targets"],
+            index=y_train.index,
         )
 
         # Predict on scaled targets and inverse transform back to original scale
@@ -646,11 +653,27 @@ def train_regression(df, model_configs):
             index=y_test.index,
         )
 
+        generalization_metrics = diagnostic_utils.compute_generalization_metrics(
+            y_train,
+            y_train_pred,
+            y_test,
+            y_pred,
+            model_configs["targets"],
+        )
+
+        residual_normality_stats = diagnostic_utils.compute_residual_normality_stats(
+            y_test,
+            y_pred,
+            model_configs["targets"],
+        )
+
         shap_importance = evaluate_regression_model(
             model, x_test, y_pred, y_test, df, x_cols, y_data, name
         )
         cfg["model"] = model
         cfg["features"] = x_cols  # Store feature names for later use
+        cfg["generalization_metrics"] = generalization_metrics
+        cfg["residual_normality_stats"] = residual_normality_stats
         cfg["shap_importance"] = shap_importance  # Store per-target SHAP importance from evaluation
 
     return model_configs

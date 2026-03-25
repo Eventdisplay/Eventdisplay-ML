@@ -55,14 +55,12 @@ def plot_feature_importance(features, importances, target_name, output_dir):
     output_dir : str
         Output directory for plot.
     """
-    # Create DataFrame and sort by importance
     importance_df = (
         pd.DataFrame({"Feature": features, "Importance": importances})
         .sort_values("Importance", ascending=True)
         .tail(20)
     )
 
-    # Create plot
     _, ax = plt.subplots(figsize=(10, 8))
 
     colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(importance_df)))
@@ -96,8 +94,9 @@ def main():
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    # Load model configuration with cached data
-    model_cfg, _model_dict = load_model_config(args.model_file)
+    _logger.info("=== SHAP Feature Importance Summary ===")
+
+    model_cfg, _ = load_model_config(args.model_file)
 
     shap_importance = model_cfg.get("shap_importance")
     features = model_cfg.get("features")
@@ -119,7 +118,7 @@ def main():
         _logger.info(f"\nProcessing {target_name}...")
         plot_feature_importance(features, importances, target_name, args.output_dir)
 
-    _logger.info(f"\n✓ All plots saved to {args.output_dir}")
+    _logger.info(f"\nPlots saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
