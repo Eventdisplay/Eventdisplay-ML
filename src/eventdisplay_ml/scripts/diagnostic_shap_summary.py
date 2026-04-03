@@ -34,7 +34,8 @@ def load_model_config(model_file):
         raise ValueError(
             "Invalid model file structure: expected a non-empty 'models' mapping in "
             f"{model_file!r}. The file should contain a top-level dictionary with a "
-            "'models' key mapping target names to model configurations."
+            "'models' key mapping model names (for example 'xgboost') to model "
+            "configurations."
         )
     model_cfg = next(iter(models.values()))
 
