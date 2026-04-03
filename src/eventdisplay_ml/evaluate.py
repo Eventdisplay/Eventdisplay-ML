@@ -125,7 +125,6 @@ def target_variance(y_test, y_pred, targets):
     """Calculate and log variance explained per target."""
     y_test_np = y_test.to_numpy() if hasattr(y_test, "to_numpy") else y_test
 
-    # Force numpy arrays so integer indexing is positional and future-proof.
     mse_values = np.asarray(np.mean((y_test_np - y_pred) ** 2, axis=0))
     variance_values = np.asarray(np.var(y_test_np, axis=0))
 
