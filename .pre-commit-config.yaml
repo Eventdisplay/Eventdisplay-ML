@@ -2,14 +2,14 @@
 repos:
 # Ruff
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.14.10
+  rev: v0.15.9
   hooks:
   - id: ruff
     args: ["--fix"]
   - id: ruff-format
 # https://pycqa.github.io/isort/docs/configuration/black_compatibility.html#integration-with-pre-commit
 - repo: https://github.com/pycqa/isort
-  rev: 7.0.0
+  rev: 8.0.1
   hooks:
   - id: isort
     args: ["--profile", "black", "--filter-files"]
@@ -34,7 +34,7 @@ repos:
     #  - id: actionlint
 # codespell
 - repo: https://github.com/codespell-project/codespell
-  rev: v2.4.1
+  rev: v2.4.2
   hooks:
   - id: codespell
     args: [

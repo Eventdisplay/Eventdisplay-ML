@@ -1,10 +1,14 @@
 """
 Train XGBoost BDTs for stereo reconstruction (direction, energy).
 
-Uses x,y offsets calculated from intersection and dispBDT methods plus
-image parameters to train multi-target regression BDTs to predict x,y offsets.
+Uses residuals relative to DispBDT predictions as training targets. The model learns
+to correct the DispBDT baseline by predicting residuals:
+  - Xoff_residual = MCxoff - Xoff_DispBDT
+  - Yoff_residual = MCyoff - Yoff_DispBDT
+  - E_residual = log10(MCe0) - log10(ErecS_DispBDT)
 
-Uses energy related values to estimate event energy.
+During inference, the predicted residuals are added back to the DispBDT baseline
+to produce the final direction and energy estimates.
 
 Trains a single BDT on all telescope multiplicity events.
 """

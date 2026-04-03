@@ -16,7 +16,7 @@ def target_features(analysis_type):
         List of target feature names.
     """
     if analysis_type == "stereo_analysis":
-        return ["MCxoff", "MCyoff", "MCe0"]  # sequence matters
+        return ["Xoff_residual", "Yoff_residual", "E_residual"]  # sequence matters
     if "classification" in analysis_type:
         return []
     raise ValueError(f"Unknown analysis type: {analysis_type}")
@@ -40,6 +40,7 @@ def excluded_features(analysis_type, ntel):
     """
     if analysis_type == "stereo_analysis":
         return {
+            # Pointing corrections applied during preprocessing
             *[f"fpointing_dx_{i}" for i in range(ntel)],
             *[f"fpointing_dy_{i}" for i in range(ntel)],
         }
@@ -130,7 +131,8 @@ def _regression_features(training):
         "Ycore",
     ]
     if training:
-        return [*target_features("stereo_analysis"), *var]
+        # Load MC truth values (residuals will be computed from these)
+        return ["MCxoff", "MCyoff", "MCe0", *var]
     return var
 
 

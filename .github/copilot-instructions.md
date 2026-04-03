@@ -203,9 +203,11 @@ eventdisplay-ml-plot-classification-gamma-efficiency --help
 
 **Model Architecture**:
 - **Stereo reconstruction**: Multi-output regression (XGBoost)
-  - Targets: `[MCxoff, MCyoff, MCe0]` (x offset, y offset, log energy)
+  - Targets: `[Xoff_residual, Yoff_residual, E_residual]` (residuals relative to DispBDT)
+  - Residuals computed as: MC truth - DispBDT prediction
+  - During inference: final prediction = DispBDT baseline + predicted residual
   - Single model handles all telescope multiplicities (2-4+ telescopes)
-  - Features: Telescope-level arrays + event-level parameters
+  - Features: Telescope-level arrays + event-level parameters (including DispBDT results)
 
 - **Classification**: Binary classification (XGBoost)
   - Target: Gamma vs hadron (implicit in training data split)
