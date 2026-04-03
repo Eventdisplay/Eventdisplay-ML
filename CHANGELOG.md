@@ -7,6 +7,49 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v2.0.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v2.0.0) - 2026-04-03
+
+### New Features
+
+- Add `--max_tel_per_type 10` argument to restrict the number of telescope parameters per telescope type.
+  Fix bug in indexing arrays with non-continuous telescope identifiers. ([#49](https://github.com/Eventdisplay/Eventdisplay-ML/pull/49))
+- Improve stereo reconstruction by adding the geometrical feature img2_ang.
+  Change clipping min for size to '1' (applicable for small images in SSTs).
+  Add preview_rows as command line parameter to allow flexible printout for debugging. ([#51](https://github.com/Eventdisplay/Eventdisplay-ML/pull/51))
+- **Algorithm improvements**
+
+    * Switch to residual learning (predict corrections to baseline reconstructions)
+    * Add target standardization for balanced multi-target training
+    * Introduce energy-bin weighting with low-statistics suppression
+    * Refine XGBoost training (regularization, early stopping, updated hyperparameters)
+
+- **New features**
+
+    * Training diagnostics with cached metrics (generalization gap, residual normality)
+    * SHAP feature importance caching per target
+    * Diagnostic scripts and CLI tools for evaluation and interpretability
+    * Reproducible diagnostics via model metadata reconstruction
+    * Expanded test suite and improved error handling
+
+
+  ([#53](https://github.com/Eventdisplay/Eventdisplay-ML/pull/53))
+
+### Maintenance
+
+- Update g/h separation to new sorting scheme of telescope-dependent variables. ([#45](https://github.com/Eventdisplay/Eventdisplay-ML/pull/45))
+- Add early stopping to classification. Increase number of estimators. ([#48](https://github.com/Eventdisplay/Eventdisplay-ML/pull/48))
+- Add detailed copilot instructions. ([#50](https://github.com/Eventdisplay/Eventdisplay-ML/pull/50))
+
+### Bugfixes
+
+* Correct log10 handling for energy residuals
+* Fix scaler loading/inversion in apply pipeline
+* Fix energy-bin weighting logic
+* Ensure safe energy validation (ErecS) without dropping rows
+* Align evaluation metrics with residual formulation
+* Resolve pandas/sklearn warnings and compatibility issues
+
+
 ## [v1.0.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v1.0.0) - 2026-01-29
 
 First fully stable release of Eventdisplay-ML for stereo (direction and energy) reconstruction.
