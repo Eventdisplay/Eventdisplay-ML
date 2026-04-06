@@ -6,6 +6,7 @@ dependencies:
   - python=3.13
   - awkward
   - awkward-pandas
+  - astropy
   - joblib
   - matplotlib
   - numpy
@@ -27,4 +28,4 @@ dependencies:
 # create: conda env create -f environment.yml
 # activate: conda activate eventdisplay_ml
 # update (conda/mamba): conda env update -f environment.yml --prune
-# update (micromamba): micromamba update -f environment.yml
+# update (micromamba): micromamba env update -f environment.yml -n eventdisplay_ml
