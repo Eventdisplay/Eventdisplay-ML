@@ -691,8 +691,10 @@ def train_classification(df, model_configs):
         Dictionary of model configurations.
     """
     if df[0].empty or df[1].empty:
-        _logger.warning("Skipping training due to empty data.")
-        return None
+        raise ValueError(
+            "Classification training requires non-empty signal and background data. "
+            f"signal_events={len(df[0])}, background_events={len(df[1])}."
+        )
 
     df[0]["label"] = 1
     df[1]["label"] = 0
