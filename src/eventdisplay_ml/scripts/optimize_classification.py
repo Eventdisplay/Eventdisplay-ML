@@ -9,6 +9,12 @@ Input ROOT file must contain:
 - TGraph2DErrors gONRate : signal + background rate (1/s)
 - TGraph2DErrors gBGRate : background rate (1/s)
 
+Usage:
+
+ python src/eventdisplay_ml/scripts/optimize_classification.py \
+    tmp_vts/rates_V6_2016_2017_ATM61.root \
+    tmp_vts/gammahadron_bdt_ebin*.joblib 1.
+
 """
 
 import argparse
@@ -19,8 +25,7 @@ import joblib
 import numpy as np
 import uproot
 from astropy.table import Table
-from scipy.interpolate import LinearNDInterpolator, RegularGridInterpolator, griddata
-from scipy.ndimage import gaussian_filter
+from scipy.interpolate import LinearNDInterpolator, RegularGridInterpolator
 
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
@@ -35,16 +40,21 @@ def _load_multi_bin_roc(joblib_paths):
     Returns
     -------
     bg_interp : LinearNDInterpolator
-        Interpolator for background efficiency as a function of (log10_energy, signal_efficiency).
+        Interpolator for background efficiency as a function of
+        (log10_energy, signal_efficiency).
     thresh_interp : LinearNDInterpolator
-        Interpolator for BDT threshold as a function of (log10_energy, signal_efficiency).
+        Interpolator for BDT threshold as a function of
+        (log10_energy, signal_efficiency).
     energy_bins_map : dict
         Mapping from energy bin center to (E_min, E_max) for each energy bin.
+    zenith_bins_deg : list[dict]
+        Zenith bin definitions from the classification models.
     """
     all_coords = []
     all_bg = []
     all_thresh = []
     energy_bins_map = {}
+    zenith_bins_deg = None
 
     _logger.info(f"Loading {len(joblib_paths)} energy-dependent ROC files...")
 
@@ -56,6 +66,12 @@ def _load_multi_bin_roc(joblib_paths):
             e_max = ebins["E_max"]
             e_center = (e_min + e_max) / 2.0
             energy_bins_map[e_center] = (e_min, e_max)
+
+            model_zenith_bins = data.get("zenith_bins_deg", [])
+            if zenith_bins_deg is None:
+                zenith_bins_deg = model_zenith_bins
+            elif zenith_bins_deg != model_zenith_bins:
+                raise ValueError("Inconsistent zenith binning across ROC files.")
 
             df = data["models"]["xgboost"]["efficiency"]
 
@@ -70,7 +86,7 @@ def _load_multi_bin_roc(joblib_paths):
     bg_interp = LinearNDInterpolator(coords, np.array(all_bg))
     thresh_interp = LinearNDInterpolator(coords, np.array(all_thresh))
 
-    return bg_interp, thresh_interp, energy_bins_map
+    return bg_interp, thresh_interp, energy_bins_map, zenith_bins_deg or []
 
 
 def _extract_tgraph2d(graph):
@@ -97,6 +113,139 @@ def _load_rates(root_path):
         raise ValueError("gONRate and gBGRate do not share the same (x,y) points.")
 
     return x_on, y_on, r_on, r_bg
+
+
+def _zenith_to_inverse_cosine(zenith_deg):
+    """Convert zenith angles in degrees to 1 / cos(ze)."""
+    return 1.0 / np.cos(np.deg2rad(zenith_deg))
+
+
+def _inverse_cosine_to_zenith(inverse_cosine_zenith):
+    """Convert 1 / cos(ze) values back to zenith angles in degrees."""
+    cosine_zenith = np.clip(1.0 / np.asarray(inverse_cosine_zenith, dtype=float), -1.0, 1.0)
+    return np.rad2deg(np.arccos(cosine_zenith))
+
+
+def _build_uniform_axis(min_value, max_value, step):
+    """Build an inclusive axis with a requested spacing."""
+    if step <= 0:
+        raise ValueError(f"Grid spacing must be positive, got {step}.")
+
+    axis = np.arange(min_value, max_value + 0.5 * step, step, dtype=float)
+    if axis.size == 0:
+        return np.array([min_value, max_value], dtype=float)
+    if axis[-1] < max_value and not np.isclose(axis[-1], max_value):
+        axis = np.append(axis, max_value)
+    else:
+        axis[-1] = max_value
+    axis[0] = min_value
+    return np.unique(axis)
+
+
+def _build_bin_edges_from_centers(centers):
+    """Construct bin edges from monotonically increasing bin centers."""
+    centers = np.asarray(centers, dtype=float)
+    if centers.ndim != 1 or centers.size == 0:
+        raise ValueError("At least one bin center is required.")
+
+    if centers.size == 1:
+        half_width = 0.5
+        return np.array([centers[0] - half_width, centers[0] + half_width], dtype=float)
+
+    midpoints = 0.5 * (centers[:-1] + centers[1:])
+    first_edge = centers[0] - 0.5 * (centers[1] - centers[0])
+    last_edge = centers[-1] + 0.5 * (centers[-1] - centers[-2])
+    return np.concatenate(([first_edge], midpoints, [last_edge]))
+
+
+def _reshape_surface(log10_energy, zenith_deg, values):
+    """Reshape scattered regular-grid points into a 2D surface."""
+    energy_axis = np.sort(np.unique(np.asarray(log10_energy, dtype=float)))
+    zenith_axis = np.sort(np.unique(np.asarray(zenith_deg, dtype=float)))
+
+    if energy_axis.size * zenith_axis.size != len(values):
+        raise ValueError("Rate surface does not form a complete rectangular grid.")
+
+    surface = np.full((len(zenith_axis), len(energy_axis)), np.nan, dtype=float)
+    energy_index = {float(value): idx for idx, value in enumerate(energy_axis)}
+    zenith_index = {float(value): idx for idx, value in enumerate(zenith_axis)}
+
+    for energy_value, zenith_value, rate_value in zip(
+        log10_energy, zenith_deg, values, strict=True
+    ):
+        surface[zenith_index[float(zenith_value)], energy_index[float(energy_value)]] = rate_value
+
+    if np.any(~np.isfinite(surface)):
+        raise ValueError("Rate surface contains missing grid points.")
+
+    return energy_axis, zenith_axis, surface
+
+
+def _build_rate_interpolator(log10_energy, zenith_deg, values):
+    """Build a regular-grid interpolator for a rate surface."""
+    energy_axis, zenith_axis, surface = _reshape_surface(log10_energy, zenith_deg, values)
+    inverse_cosine_zenith_axis = _zenith_to_inverse_cosine(zenith_axis)
+    interpolator = RegularGridInterpolator(
+        (inverse_cosine_zenith_axis, energy_axis),
+        surface,
+        bounds_error=False,
+        fill_value=None,
+    )
+    return interpolator, energy_axis, zenith_axis
+
+
+def _mesh_energy_zenith(log10_energy_axis, zenith_deg_axis):
+    """Create flattened energy and zenith arrays from 1D axes."""
+    energy_mesh, zenith_mesh = np.meshgrid(log10_energy_axis, zenith_deg_axis, indexing="xy")
+    return energy_mesh.ravel(), zenith_mesh.ravel()
+
+
+def _sample_rate_interpolator(interpolator, log10_energy, zenith_deg):
+    """Evaluate a rate interpolator on arrays of energy and zenith values."""
+    sample_points = np.column_stack([_zenith_to_inverse_cosine(zenith_deg), log10_energy])
+    return np.asarray(interpolator(sample_points), dtype=float)
+
+
+def _build_fine_rate_grid(
+    log10_energy,
+    zenith_deg,
+    on_rate,
+    background_rate,
+    energy_bin_width,
+    inverse_cosine_zenith_bin_width,
+):
+    """Interpolate ON and background rates onto a finer regular grid."""
+    on_interpolator, energy_axis, zenith_axis = _build_rate_interpolator(
+        log10_energy, zenith_deg, on_rate
+    )
+    background_interpolator, _, _ = _build_rate_interpolator(
+        log10_energy, zenith_deg, background_rate
+    )
+
+    fine_energy_axis = _build_uniform_axis(energy_axis.min(), energy_axis.max(), energy_bin_width)
+    fine_inverse_cosine_zenith_axis = _build_uniform_axis(
+        _zenith_to_inverse_cosine(zenith_axis).min(),
+        _zenith_to_inverse_cosine(zenith_axis).max(),
+        inverse_cosine_zenith_bin_width,
+    )
+    fine_zenith_axis = _inverse_cosine_to_zenith(fine_inverse_cosine_zenith_axis)
+    fine_log10_energy, fine_zenith_deg = _mesh_energy_zenith(fine_energy_axis, fine_zenith_axis)
+
+    fine_on_rate = _sample_rate_interpolator(on_interpolator, fine_log10_energy, fine_zenith_deg)
+    fine_background_rate = _sample_rate_interpolator(
+        background_interpolator, fine_log10_energy, fine_zenith_deg
+    )
+
+    return {
+        "log10_energy_tev": fine_log10_energy,
+        "zenith_deg": fine_zenith_deg,
+        "on_rate": fine_on_rate,
+        "background_rate": fine_background_rate,
+        "energy_axis": fine_energy_axis,
+        "zenith_axis": fine_zenith_axis,
+        "on_interpolator": on_interpolator,
+        "background_interpolator": background_interpolator,
+    }
 
 
 def _li_ma_significance(n_on, n_off, alpha):
@@ -128,6 +277,15 @@ def _optimize_cut_2d(log10_e, signal_rate, bg_rate, alpha, livetime_s, gamma_eff
     return np.array(best_effs)
 
 
+def _evaluate_efficiency_interpolator(interpolator, log10_energy, gamma_efficiency, energy_limits):
+    """Evaluate the ROC interpolator while clipping to the supported energy range."""
+    clipped_energy = np.clip(
+        np.asarray(log10_energy, dtype=float), energy_limits[0], energy_limits[1]
+    )
+    eval_points = np.column_stack([clipped_energy, np.asarray(gamma_efficiency, dtype=float)])
+    return np.asarray(interpolator(eval_points), dtype=float)
+
+
 def _map_energy_to_bins(energy_values, energy_bins_map):
     """
     Map energy values to their bin min/max.
@@ -149,25 +307,47 @@ def _map_energy_to_bins(energy_values, energy_bins_map):
     return np.array(e_min_list), np.array(e_max_list)
 
 
-def _smooth_field(x, y, values, grid_size, sigma):
-    """Interpolate to a grid and apply Gaussian smoothing."""
-    x_min, x_max, y_min, y_max = np.min(x), np.max(x), np.min(y), np.max(y)
-    x_grid = np.linspace(x_min, x_max, grid_size[0])
-    y_grid = np.linspace(y_min, y_max, grid_size[1])
-    xx, yy = np.meshgrid(x_grid, y_grid, indexing="xy")
-    grid = griddata((x, y), values, (xx, yy), method="linear")
-    if np.any(~np.isfinite(grid)):
-        grid = np.where(
-            np.isfinite(grid), grid, griddata((x, y), values, (xx, yy), method="nearest")
-        )
-    grid = gaussian_filter(grid, sigma=sigma, mode="nearest")
-    return x_grid, y_grid, grid
+def _model_zenith_bin_centers(zenith_bins_deg):
+    """Return model zenith bin centers in degrees."""
+    if not zenith_bins_deg:
+        raise ValueError("No zenith binning found in ROC files.")
+    return np.array(
+        [(zenith_bin["Ze_min"] + zenith_bin["Ze_max"]) / 2.0 for zenith_bin in zenith_bins_deg],
+        dtype=float,
+    )
 
 
-def _evaluate_on_points(x, y, x_grid, y_grid, grid):
-    """Evaluate gridded surface back on points."""
-    interpolator = RegularGridInterpolator((y_grid, x_grid), grid, bounds_error=False)
-    return interpolator(np.column_stack([y, x]))
+def _interpolate_efficiency_surface(
+    model_energy_axis,
+    model_zenith_axis,
+    efficiency_surface,
+    target_log10_energy,
+    target_zenith_deg,
+):
+    """Interpolate an efficiency surface in energy and cos(ze)."""
+    model_cos_zenith_axis = np.cos(np.deg2rad(np.asarray(model_zenith_axis, dtype=float)))
+    order = np.argsort(model_cos_zenith_axis)
+    interpolator = RegularGridInterpolator(
+        (model_cos_zenith_axis[order], np.asarray(model_energy_axis, dtype=float)),
+        np.asarray(efficiency_surface, dtype=float)[order, :],
+        bounds_error=False,
+        fill_value=None,
+    )
+
+    target_cos_zenith = np.cos(np.deg2rad(np.asarray(target_zenith_deg, dtype=float)))
+    target_cos_zenith = np.clip(
+        target_cos_zenith, model_cos_zenith_axis.min(), model_cos_zenith_axis.max()
+    )
+    target_log10_energy = np.clip(
+        np.asarray(target_log10_energy, dtype=float),
+        np.min(model_energy_axis),
+        np.max(model_energy_axis),
+    )
+
+    return np.asarray(
+        interpolator(np.column_stack([target_cos_zenith, target_log10_energy])),
+        dtype=float,
+    )
 
 
 def main():
@@ -179,49 +359,121 @@ def main():
     parser.add_argument("--livetime", type=float, default=3600.0)
     parser.add_argument("--gamma-eff-min", type=float, default=0.01)
     parser.add_argument("--gamma-eff-steps", type=int, default=200)
-    parser.add_argument("--grid-size", type=int, nargs=2, default=(50, 50))
-    parser.add_argument("--smooth-sigma", type=float, default=1.5)
+    parser.add_argument(
+        "--energy-bin-width",
+        type=float,
+        default=0.125,
+        help="Output bin width in log10(E/TeV) for the interpolated rate grid.",
+    )
+    parser.add_argument(
+        "--inverse-cosine-zenith-bin-width",
+        type=float,
+        default=0.05,
+        help="Output bin width in 1/cos(ze) for the interpolated rate grid.",
+    )
     parser.add_argument("--output", type=str, default="optimized_cuts.ecsv")
 
     args = parser.parse_args()
 
-    bg_interp, thresh_interp, energy_bins_map = _load_multi_bin_roc(args.roc_files)
+    bg_interp, thresh_interp, energy_bins_map, zenith_bins_deg = _load_multi_bin_roc(args.roc_files)
     x, y, on_rate, bg_rate = _load_rates(Path(args.input_root))
-    signal_rate = np.clip(on_rate - bg_rate, 0.0, None) * args.source_strength
+    rate_grid = _build_fine_rate_grid(
+        x,
+        y,
+        on_rate,
+        bg_rate,
+        args.energy_bin_width,
+        args.inverse_cosine_zenith_bin_width,
+    )
 
-    energy_min, energy_max = _map_energy_to_bins(x, energy_bins_map)
+    model_energy_axis = np.array(sorted(energy_bins_map.keys()), dtype=float)
+    model_zenith_axis = _model_zenith_bin_centers(zenith_bins_deg)
+    model_log10_energy, model_zenith_deg = _mesh_energy_zenith(model_energy_axis, model_zenith_axis)
+
+    model_on_rate = _sample_rate_interpolator(
+        rate_grid["on_interpolator"], model_log10_energy, model_zenith_deg
+    )
+    model_background_rate = _sample_rate_interpolator(
+        rate_grid["background_interpolator"], model_log10_energy, model_zenith_deg
+    )
+    model_signal_rate = (
+        np.clip(model_on_rate - model_background_rate, 0.0, None) * args.source_strength
+    )
 
     gamma_eff_grid = np.linspace(args.gamma_eff_min, 1.0, args.gamma_eff_steps)
-    best_eff = _optimize_cut_2d(
-        x, signal_rate, bg_rate, _ALPHA, args.livetime, gamma_eff_grid, bg_interp
+    best_eff_model = _optimize_cut_2d(
+        model_log10_energy,
+        model_signal_rate,
+        model_background_rate,
+        _ALPHA,
+        args.livetime,
+        gamma_eff_grid,
+        bg_interp,
     )
+    best_eff_surface = best_eff_model.reshape(len(model_zenith_axis), len(model_energy_axis))
 
-    x_grid, y_grid, eff_grid = _smooth_field(
-        x, y, best_eff, tuple(args.grid_size), args.smooth_sigma
+    fine_signal_rate = (
+        np.clip(
+            rate_grid["on_rate"] - rate_grid["background_rate"],
+            0.0,
+            None,
+        )
+        * args.source_strength
     )
     eff_smooth = np.clip(
-        _evaluate_on_points(x, y, x_grid, y_grid, eff_grid), args.gamma_eff_min, 1.0
+        _interpolate_efficiency_surface(
+            model_energy_axis,
+            model_zenith_axis,
+            best_eff_surface,
+            rate_grid["log10_energy_tev"],
+            rate_grid["zenith_deg"],
+        ),
+        args.gamma_eff_min,
+        1.0,
+    )
+    model_energy_limits = (np.min(model_energy_axis), np.max(model_energy_axis))
+    bg_eff_smooth = np.nan_to_num(
+        _evaluate_efficiency_interpolator(
+            bg_interp,
+            rate_grid["log10_energy_tev"],
+            eff_smooth,
+            model_energy_limits,
+        ),
+        nan=1.0,
+    )
+    thresholds_smooth = np.nan_to_num(
+        _evaluate_efficiency_interpolator(
+            thresh_interp,
+            rate_grid["log10_energy_tev"],
+            eff_smooth,
+            model_energy_limits,
+        ),
+        nan=1.0,
     )
 
-    eval_coords = np.column_stack([x, eff_smooth])
-    bg_eff_smooth = np.nan_to_num(bg_interp(eval_coords), nan=1.0)
-    thresholds_smooth = np.nan_to_num(thresh_interp(eval_coords), nan=1.0)
-
-    n_on = (signal_rate * eff_smooth + bg_rate * bg_eff_smooth) * args.livetime
-    n_off = (bg_rate * bg_eff_smooth) * args.livetime / _ALPHA
+    n_on = (
+        fine_signal_rate * eff_smooth + rate_grid["background_rate"] * bg_eff_smooth
+    ) * args.livetime
+    n_off = (rate_grid["background_rate"] * bg_eff_smooth) * args.livetime / _ALPHA
     sig_smooth = _li_ma_significance(n_on, n_off, _ALPHA)
+
+    energy_edges = _build_bin_edges_from_centers(rate_grid["energy_axis"])
+    energy_min = np.repeat(energy_edges[:-1], len(rate_grid["zenith_axis"]))
+    energy_max = np.repeat(energy_edges[1:], len(rate_grid["zenith_axis"]))
 
     t = Table()
     t.meta["alpha"] = _ALPHA
     t.meta["livetime_s"] = args.livetime
     t.meta["source_strength"] = args.source_strength
+    t.meta["energy_bin_width_log10_tev"] = args.energy_bin_width
+    t.meta["inverse_cosine_zenith_bin_width"] = args.inverse_cosine_zenith_bin_width
 
-    t["log10_energy_tev"] = x
+    t["log10_energy_tev"] = rate_grid["log10_energy_tev"]
     t["log10_energy_tev_min"] = energy_min
     t["log10_energy_tev_max"] = energy_max
-    t["zenith_deg"] = y
-    t["gamma_ray_rate"] = signal_rate
-    t["background_rate"] = bg_rate
+    t["zenith_deg"] = rate_grid["zenith_deg"]
+    t["gamma_ray_rate"] = fine_signal_rate
+    t["background_rate"] = rate_grid["background_rate"]
     t["gamma_efficiency"] = eff_smooth
     t["background_efficiency"] = bg_eff_smooth
     t["bdt_threshold"] = thresholds_smooth
