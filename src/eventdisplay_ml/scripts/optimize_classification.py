@@ -32,6 +32,24 @@ logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
 _ALPHA = 1.0 / 6.0
+_CRAB_INDEX = 2.63
+
+
+def _validate_source_index(source_index):
+    """Validate that the source spectral index is in the supported range."""
+    if not 2.0 <= float(source_index) <= 5.0:
+        raise ValueError(f"Source spectral index must be within [2, 5], got {source_index}.")
+
+
+def _spectral_reweight_factor(log10_energy_tev, source_index, reference_index=_CRAB_INDEX):
+    """
+    Compute spectral weights to re-normalize rates from reference to source index.
+
+    Assumes power-law spectra dN/dE ~ E^-index and log10_energy_tev = log10(E / TeV).
+    """
+    _validate_source_index(source_index)
+    delta_index = float(source_index) - float(reference_index)
+    return np.power(10.0, -delta_index * np.asarray(log10_energy_tev, dtype=float))
 
 
 @dataclass
@@ -356,6 +374,7 @@ def _fill_rate(
     energy_bins_map: dict,
     zenith_bins_deg: list,
     source_strength: float,
+    source_index: float,
     energy_bin_width: float,
     inverse_cosine_zenith_bin_width: float,
 ) -> RateGrid:
@@ -373,6 +392,8 @@ def _fill_rate(
         Zenith bin definitions from the classification models.
     source_strength :
         Fraction of the Crab Nebula flux used to compute the signal rate.
+    source_index :
+        Power-law source spectral index for dN/dE ~ E^-index.
     energy_bin_width :
         Output bin width in log10(E/TeV) for the fine rate grid.
     inverse_cosine_zenith_bin_width :
@@ -398,22 +419,30 @@ def _fill_rate(
     model_background_rate = _sample_rate_interpolator(
         raw_grid["background_interpolator"], model_log10_energy, model_zenith_deg
     )
+    fine_reweight = _spectral_reweight_factor(raw_grid["log10_energy_tev"], source_index)
+    model_reweight = _spectral_reweight_factor(model_log10_energy, source_index)
 
     return RateGrid(
         log10_energy_tev=raw_grid["log10_energy_tev"],
         zenith_deg=raw_grid["zenith_deg"],
         on_rate=raw_grid["on_rate"],
         background_rate=raw_grid["background_rate"],
-        signal_rate=np.clip(raw_grid["on_rate"] - raw_grid["background_rate"], 0.0, None)
-        * source_strength,
+        signal_rate=(
+            np.clip(raw_grid["on_rate"] - raw_grid["background_rate"], 0.0, None)
+            * source_strength
+            * fine_reweight
+        ),
         energy_axis=raw_grid["energy_axis"],
         zenith_axis=raw_grid["zenith_axis"],
         model_energy_axis=model_energy_axis,
         model_zenith_axis=model_zenith_axis,
         model_log10_energy=model_log10_energy,
         model_zenith_deg=model_zenith_deg,
-        model_signal_rate=np.clip(model_on_rate - model_background_rate, 0.0, None)
-        * source_strength,
+        model_signal_rate=(
+            np.clip(model_on_rate - model_background_rate, 0.0, None)
+            * source_strength
+            * model_reweight
+        ),
         model_background_rate=model_background_rate,
     )
 
@@ -424,6 +453,16 @@ def main():
     parser.add_argument("input_root", help="ROOT file with rate surfaces")
     parser.add_argument("roc_files", nargs="+", help="List of ebin*.joblib files")
     parser.add_argument("source_strength", type=float, help="Fraction of Crab (e.g. 0.1 for 10%%)")
+    parser.add_argument(
+        "--source-index",
+        "--source_index",
+        type=float,
+        default=_CRAB_INDEX,
+        help=(
+            "Power-law spectral index for source reweighting with dN/dE ~ E^-index "
+            "(allowed range: 2 to 5; default: Crab index)."
+        ),
+    )
     parser.add_argument("--livetime", type=float, default=3600.0)
     parser.add_argument("--gamma-eff-min", type=float, default=0.01)
     parser.add_argument("--gamma-eff-steps", type=int, default=200)
@@ -449,6 +488,7 @@ def main():
         energy_bins_map,
         zenith_bins_deg,
         args.source_strength,
+        args.source_index,
         args.energy_bin_width,
         args.inverse_cosine_zenith_bin_width,
     )
@@ -514,6 +554,8 @@ def main():
     t.meta["alpha"] = _ALPHA
     t.meta["livetime_s"] = args.livetime
     t.meta["source_strength"] = args.source_strength
+    t.meta["source_index"] = args.source_index
+    t.meta["reference_index"] = _CRAB_INDEX
     t.meta["energy_bin_width_log10_tev"] = args.energy_bin_width
     t.meta["inverse_cosine_zenith_bin_width"] = args.inverse_cosine_zenith_bin_width
 

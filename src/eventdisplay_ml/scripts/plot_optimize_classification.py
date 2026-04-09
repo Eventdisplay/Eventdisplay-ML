@@ -68,7 +68,16 @@ def _reshape_surface(table, value_column):
     return energy_axis, zenith_axis, surface
 
 
-def _plot_colz(table, output_dir, value_column, colorbar_label, title, filename, log_z=False):
+def _plot_colz(
+    table,
+    output_dir,
+    value_column,
+    colorbar_label,
+    title,
+    filename,
+    log_z=False,
+    z_limits=None,
+):
     """Create a 2D colormap plot in log10 energy and zenith."""
     energy_axis, zenith_axis, surface = _reshape_surface(table, value_column)
 
@@ -90,7 +99,10 @@ def _plot_colz(table, output_dir, value_column, colorbar_label, title, filename,
         colorbar_label = f"log10({colorbar_label})"
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    image = ax.pcolormesh(energy_axis, zenith_axis, plot_surface, shading="nearest", cmap="viridis")
+    pcolormesh_kwargs = {"shading": "nearest", "cmap": "viridis"}
+    if z_limits is not None:
+        pcolormesh_kwargs["vmin"], pcolormesh_kwargs["vmax"] = z_limits
+    image = ax.pcolormesh(energy_axis, zenith_axis, plot_surface, **pcolormesh_kwargs)
     ax.set_xlabel("log10(Energy [TeV])")
     ax.set_ylabel("Zenith Angle [deg]")
     ax.set_title(title)
@@ -112,6 +124,8 @@ def _plot_by_zenith(
     y_label,
     title,
     filename,
+    y_limits=None,
+    y_scale="linear",
 ):
     """Create one energy-dependent plot with one curve per zenith bin."""
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -132,6 +146,9 @@ def _plot_by_zenith(
 
     ax.set_xlabel("log10(Energy [TeV])")
     ax.set_ylabel(y_label)
+    ax.set_yscale(y_scale)
+    if y_limits is not None:
+        ax.set_ylim(*y_limits)
     ax.set_title(title)
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -185,6 +202,7 @@ def plot_results(ecsv_file, output_dir=None):
             "title": "Signal Efficiency vs Energy",
             "filename": "signal_efficiency_vs_energy.png",
             "required_columns": ["gamma_efficiency"],
+            "y_limits": (0.0, 1.0),
         },
         {
             "y_values_fn": lambda table, mask: table["significance"][mask],
@@ -199,6 +217,8 @@ def plot_results(ecsv_file, output_dir=None):
             "title": "Background Efficiency vs Energy",
             "filename": "background_efficiency_vs_energy.png",
             "required_columns": ["background_efficiency"],
+            "y_limits": (1e-4, 1.0),
+            "y_scale": "log",
         },
         {
             "y_values_fn": lambda table, mask: (
@@ -244,6 +264,8 @@ def plot_results(ecsv_file, output_dir=None):
             y_label=spec["y_label"],
             title=spec["title"],
             filename=spec["filename"],
+            y_limits=spec.get("y_limits"),
+            y_scale=spec.get("y_scale", "linear"),
         )
 
     colz_specs = [
@@ -253,6 +275,7 @@ def plot_results(ecsv_file, output_dir=None):
             "title": "Signal Efficiency in Energy and Zenith",
             "filename": "signal_efficiency_colz.png",
             "log_z": False,
+            "z_limits": (0.0, 1.0),
         },
         {
             "value_column": "significance",
@@ -267,6 +290,7 @@ def plot_results(ecsv_file, output_dir=None):
             "title": "Background Efficiency in Energy and Zenith",
             "filename": "background_efficiency_colz.png",
             "log_z": False,
+            "z_limits": (0.0, 1.0),
         },
         {
             "value_column": "gamma_ray_rate",
@@ -300,6 +324,7 @@ def plot_results(ecsv_file, output_dir=None):
             title=spec["title"],
             filename=spec["filename"],
             log_z=spec["log_z"],
+            z_limits=spec.get("z_limits"),
         )
 
 
