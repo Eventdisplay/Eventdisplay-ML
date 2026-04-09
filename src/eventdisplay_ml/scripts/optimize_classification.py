@@ -6,8 +6,13 @@ maximizes the Li & Ma significance for a given fraction of the Crab flux, using
 rate surfaces stored in a ROOT file.
 
 Input ROOT file must contain:
+
 - TGraph2DErrors gONRate : signal + background rate (1/s)
 - TGraph2DErrors gBGRate : background rate (1/s)
+
+Signal rates are expected to be derived from Crab observations, and can be re-weighted to a
+different source strength and spectral index using the `--source-strength` and `--source-index`
+parameters.
 
 Usage:
 
@@ -32,7 +37,8 @@ logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
 _ALPHA = 1.0 / 6.0
-_CRAB_INDEX = 2.63
+# expect Crab spectrum for input signal rate
+_CRAB_INDEX = 2.6
 
 
 def _validate_source_index(source_index):
@@ -54,7 +60,7 @@ def _spectral_reweight_factor(log10_energy_tev, source_index, reference_index=_C
 
 @dataclass
 class RateGrid:
-    """Rate-grid quantities used throughout the cut optimisation."""
+    """Rate-grid quantities used throughout the cut optimization."""
 
     # Fine interpolation grid (flattened energy * zenith mesh)
     log10_energy_tev: np.ndarray
