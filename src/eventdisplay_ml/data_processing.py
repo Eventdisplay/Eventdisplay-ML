@@ -1245,6 +1245,82 @@ def energy_in_bins(df_chunk, bins):
     return df_chunk["e_bin"]
 
 
+def energy_interpolation_bins(df_chunk, bins):
+    """Compute neighboring energy bins and interpolation weights per event.
+
+    Parameters
+    ----------
+    df_chunk : pandas.DataFrame
+        Chunk containing an ``Erec`` column in TeV.
+    bins : list[dict | None]
+        Energy bin definitions with ``E_min`` and ``E_max`` in log10(E/TeV).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        ``(e_bin_lo, e_bin_hi, e_alpha)`` where ``e_alpha`` is in ``[0, 1]``.
+        Invalid events get ``e_bin_lo = e_bin_hi = -1`` and ``e_alpha = 0``.
+    """
+    centers = np.array([(b["E_min"] + b["E_max"]) / 2 if b is not None else np.nan for b in bins])
+    n_events = len(df_chunk)
+
+    e_bin_lo = np.full(n_events, -1, dtype=np.int32)
+    e_bin_hi = np.full(n_events, -1, dtype=np.int32)
+    e_alpha = np.zeros(n_events, dtype=np.float32)
+
+    if n_events == 0 or np.isnan(centers).all():
+        return e_bin_lo, e_bin_hi, e_alpha
+
+    valid_event_mask = df_chunk["Erec"].to_numpy() > 0
+    if not np.any(valid_event_mask):
+        return e_bin_lo, e_bin_hi, e_alpha
+
+    valid_center_idx = np.flatnonzero(~np.isnan(centers))
+    valid_centers = centers[valid_center_idx]
+
+    order = np.argsort(valid_centers)
+    sorted_idx = valid_center_idx[order]
+    sorted_centers = valid_centers[order]
+
+    log_e_all = np.full(n_events, np.nan, dtype=np.float64)
+    log_e_all[valid_event_mask] = np.log10(df_chunk.loc[valid_event_mask, "Erec"].to_numpy())
+    valid_event_idx = np.flatnonzero(valid_event_mask)
+    log_e = log_e_all[valid_event_mask]
+
+    if len(sorted_idx) == 1:
+        only_idx = int(sorted_idx[0])
+        e_bin_lo[valid_event_idx] = only_idx
+        e_bin_hi[valid_event_idx] = only_idx
+        return e_bin_lo, e_bin_hi, e_alpha
+
+    insert_pos = np.searchsorted(sorted_centers, log_e, side="left")
+
+    lo_pos = np.clip(insert_pos - 1, 0, len(sorted_centers) - 1)
+    hi_pos = np.clip(insert_pos, 0, len(sorted_centers) - 1)
+
+    left_mask = insert_pos <= 0
+    right_mask = insert_pos >= len(sorted_centers)
+    lo_pos[left_mask] = 0
+    hi_pos[left_mask] = 0
+    lo_pos[right_mask] = len(sorted_centers) - 1
+    hi_pos[right_mask] = len(sorted_centers) - 1
+
+    lo_centers = sorted_centers[lo_pos]
+    hi_centers = sorted_centers[hi_pos]
+    denom = hi_centers - lo_centers
+
+    alpha = np.zeros_like(log_e, dtype=np.float64)
+    interp_mask = denom > 0
+    alpha[interp_mask] = (log_e[interp_mask] - lo_centers[interp_mask]) / denom[interp_mask]
+    alpha = np.clip(alpha, 0.0, 1.0)
+
+    e_bin_lo[valid_event_idx] = sorted_idx[lo_pos]
+    e_bin_hi[valid_event_idx] = sorted_idx[hi_pos]
+    e_alpha[valid_event_idx] = alpha.astype(np.float32)
+
+    return e_bin_lo, e_bin_hi, e_alpha
+
+
 def print_variable_statistics(df):
     """
     Print min, max, mean, and RMS for each variable in the DataFrame.
