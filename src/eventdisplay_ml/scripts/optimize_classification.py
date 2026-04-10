@@ -126,7 +126,7 @@ def _load_multi_bin_roc(joblib_paths):
                 all_bg.append(row["background_efficiency"])
                 all_thresh.append(row["threshold"])
         except (FileNotFoundError, KeyError) as e:
-            raise RuntimeError(f"Error loading {path}: {e}")
+            raise RuntimeError(f"Error loading {path}: {e}") from e
 
     coords = np.array(all_coords)
     bg_interp = LinearNDInterpolator(coords, np.array(all_bg))
