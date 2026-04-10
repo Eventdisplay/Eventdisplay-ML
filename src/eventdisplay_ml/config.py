@@ -54,7 +54,10 @@ def configure_training(analysis_type):
     parser.add_argument(
         "--max_events",
         type=int,
-        help="Maximum number of events to process across all files.",
+        help=(
+            "Maximum number of events to process per input file-list "
+            "(signal/background in classification)."
+        ),
     )
     parser.add_argument(
         "--random_state",
@@ -127,7 +130,14 @@ def configure_training(analysis_type):
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
     )
-    model_configs["models"]["xgboost"]["hyper_parameters"]["n_jobs"] = model_configs["max_cores"]
+    for model_name, model_cfg in model_configs["models"].items():
+        hyper_params = model_cfg.get("hyper_parameters")
+        if hyper_params is None:
+            _logger.warning(f"Model '{model_name}' has no hyper_parameters; skipping updates.")
+            continue
+        hyper_params["n_jobs"] = model_configs["max_cores"]
+        if model_configs.get("random_state") is not None:
+            hyper_params["random_state"] = model_configs["random_state"]
     model_configs["targets"] = target_features(analysis_type)
 
     if analysis_type == "stereo_analysis":

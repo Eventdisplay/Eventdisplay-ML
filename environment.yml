@@ -6,6 +6,7 @@ dependencies:
   - python=3.13
   - awkward
   - awkward-pandas
+  - astropy-base
   - joblib
   - matplotlib
   - numpy
@@ -21,10 +22,10 @@ dependencies:
   - tabulate
   - towncrier
   - uproot
-  - xgboost
+  - xgboost=3.1.3 # pinned as output format changed in 3.2
 
 # cheatsheet
 # create: conda env create -f environment.yml
 # activate: conda activate eventdisplay_ml
 # update (conda/mamba): conda env update -f environment.yml --prune
-# update (micromamba): micromamba update -f environment.yml
+# update (micromamba): micromamba env update -f environment.yml -n eventdisplay_ml
