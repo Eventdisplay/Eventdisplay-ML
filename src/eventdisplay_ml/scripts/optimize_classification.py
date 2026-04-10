@@ -11,8 +11,8 @@ Input ROOT file must contain:
 - TGraph2DErrors gBGRate : background rate (1/s)
 
 Signal rates are expected to be derived from Crab observations, and can be re-weighted to a
-different source strength and spectral index using the `--source-strength` and `--source-index`
-parameters.
+different source strength and spectral index using the `source_strength` positional argument
+and the `--source-index` parameter.
 
 Usage:
 
