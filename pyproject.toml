@@ -28,6 +28,7 @@ dynamic = [
   "version",
 ]
 dependencies = [
+  "astropy",
   "awkward",
   "awkward-pandas",
   "joblib",

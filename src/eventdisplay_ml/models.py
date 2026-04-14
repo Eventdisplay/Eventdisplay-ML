@@ -15,7 +15,7 @@ from sklearn.model_selection import train_test_split
 
 from eventdisplay_ml import data_processing, diagnostic_utils, features, utils
 from eventdisplay_ml.data_processing import (
-    energy_in_bins,
+    energy_interpolation_bins,
     flatten_feature_data,
     zenith_in_bins,
 )
@@ -100,7 +100,7 @@ def load_classification_models(model_prefix, model_name):
     pattern = f"{model_prefix.name}_ebin*.joblib"
     files = sorted(model_dir_path.glob(pattern))
 
-    _logger.info("Loading classification models")
+    _logger.info(f"Loading classification models from {files}")
     for file in files:
         match = re.search(r"_ebin(\d+)\.joblib$", file.name)
         if not match:
@@ -359,13 +359,18 @@ def apply_classification_models(df, model_configs, threshold_keys):
     tel_config = model_configs.get("tel_config")
     n_tel = tel_config["max_tel_id"] + 1 if tel_config else 4
 
-    for e_bin, group_df in df.groupby("e_bin"):
-        e_bin = int(e_bin)
-        if e_bin == -1:
-            _logger.warning("Skipping events with e_bin = -1")
+    for bin_pair, group_df in df.groupby(["e_bin_lo", "e_bin_hi"], dropna=False):
+        e_bin_lo, e_bin_hi = int(bin_pair[0]), int(bin_pair[1])
+        if e_bin_lo == -1 or e_bin_hi == -1:
+            _logger.warning("Skipping events with invalid energy interpolation bins")
             continue
 
-        _logger.info(f"Processing {len(group_df)} events with bin={e_bin}")
+        _logger.info(
+            "Processing %d events with interpolation bins (%d, %d)",
+            len(group_df),
+            e_bin_lo,
+            e_bin_hi,
+        )
 
         flatten_data = flatten_feature_data(
             group_df,
@@ -376,14 +381,35 @@ def apply_classification_models(df, model_configs, threshold_keys):
             observatory=model_configs.get("observatory", "veritas"),
             preview_rows=model_configs.get("preview_rows", 20),
         )
-        model = models[e_bin]["model"]
-        flatten_data = flatten_data.reindex(columns=models[e_bin]["features"])
-        class_probs = model.predict_proba(flatten_data)[:, 1]
+        model_lo = models[e_bin_lo]["model"]
+        model_hi = models[e_bin_hi]["model"]
+        flatten_lo = flatten_data.reindex(columns=models[e_bin_lo]["features"])
+        flatten_hi = flatten_data.reindex(columns=models[e_bin_hi]["features"])
+
+        class_probs_lo = model_lo.predict_proba(flatten_lo)[:, 1]
+        if e_bin_lo == e_bin_hi:
+            class_probs = class_probs_lo
+        else:
+            class_probs_hi = model_hi.predict_proba(flatten_hi)[:, 1]
+            alpha = group_df["e_alpha"].to_numpy(dtype=np.float32)
+            class_probs = (1.0 - alpha) * class_probs_lo + alpha * class_probs_hi
         class_probability[group_df.index] = class_probs
 
-        thresholds = models[e_bin].get("thresholds", {})
-        for eff, threshold in thresholds.items():
+        thresholds_lo = models[e_bin_lo].get("thresholds", {})
+        thresholds_hi = models[e_bin_hi].get("thresholds", {})
+        for eff in threshold_keys:
             if eff in is_gamma:
+                thr_lo = thresholds_lo.get(eff)
+                if thr_lo is None:
+                    continue
+                if e_bin_lo == e_bin_hi:
+                    threshold = thr_lo
+                else:
+                    thr_hi = thresholds_hi.get(eff)
+                    if thr_hi is None:
+                        continue
+                    alpha = group_df["e_alpha"].to_numpy(dtype=np.float32)
+                    threshold = (1.0 - alpha) * thr_lo + alpha * thr_hi
                 is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
 
     return class_probability, is_gamma
@@ -469,7 +495,12 @@ def process_file_chunked(analysis_type, model_configs):
             # index out-of-bounds when indexing chunk-sized output arrays
             df_chunk = df_chunk.reset_index(drop=True)
             if analysis_type == "classification":
-                df_chunk["e_bin"] = energy_in_bins(df_chunk, model_configs["energy_bins_log10_tev"])
+                e_bin_lo, e_bin_hi, e_alpha = energy_interpolation_bins(
+                    df_chunk, model_configs["energy_bins_log10_tev"]
+                )
+                df_chunk["e_bin_lo"] = e_bin_lo
+                df_chunk["e_bin_hi"] = e_bin_hi
+                df_chunk["e_alpha"] = e_alpha
                 df_chunk["ze_bin"] = zenith_in_bins(
                     90.0 - df_chunk["ArrayPointing_Elevation"].values,
                     model_configs["zenith_bins_deg"],

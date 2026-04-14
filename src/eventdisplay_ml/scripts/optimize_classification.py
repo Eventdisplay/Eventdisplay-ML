@@ -38,7 +38,7 @@ _logger = logging.getLogger(__name__)
 
 _ALPHA = 1.0 / 6.0
 # expect Crab spectrum for input signal rate
-_CRAB_INDEX = 2.6
+_CRAB_INDEX = 2.63
 
 
 def _validate_source_index(source_index):
