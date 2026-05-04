@@ -84,16 +84,18 @@ Output is a single ROOT tree called `Classification` with the same number of eve
 
 ### SHAP feature-importance summary
 
-Analysis type: stereo reconstruction.
+Analysis type: stereo reconstruction and gamma/hadron classification.
 
- Tests: Feature importance
+Tests: Feature importance
 
 - Load per-target SHAP importances cached in the trained model file
-- Create one top-20 feature plot per residual target (`Xoff_residual`, `Yoff_residual`, `E_residual`)
+- Create one top-20 feature plot per target
+  - Stereo: `Xoff_residual`, `Yoff_residual`, `E_residual`
+  - Classification: `label` (gamma vs hadron)
 
 Required inputs:
 
-- `--model_file`: trained stereo model `.joblib`
+- `--model_file`: trained stereo or classification model `.joblib`
 - `--output_dir`: directory for generated PNGs
 
 Run:
@@ -102,13 +104,23 @@ Run:
   eventdisplay-ml-diagnostic-shap-summary \
   --model_file models/stereo_model.joblib \
   --output_dir diagnostics/
+
+  eventdisplay-ml-diagnostic-shap-summary \
+  --model_file models/classification_model_ebin0.joblib \
+  --output_dir diagnostics/
 ```
 
-Outputs:
+Outputs (stereo):
 
 - `diagnostics/shap_importance_Xoff_residual.png`
 - `diagnostics/shap_importance_Yoff_residual.png`
 - `diagnostics/shap_importance_E_residual.png`
+
+Outputs (classification):
+
+- `diagnostics/shap_importance_label.png`
+
+Note: SHAP importances are cached during training. Existing model files trained before this feature was added will report a missing-cache error. Inference (`apply_xgb_classify`) does not require retraining, but running this diagnostic on a classification model does.
 
 ### Permutation importance
 

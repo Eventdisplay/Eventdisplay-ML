@@ -750,9 +750,19 @@ def train_classification(df, model_configs):
         _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
         model.fit(x_train, y_train, eval_set=eval_set, verbose=True)
-        evaluate_classification_model(model, x_test, y_test, full_df, x_data.columns.tolist(), name)
+
+        shap_importance = evaluate_classification_model(
+            model,
+            x_test,
+            y_test,
+            full_df,
+            x_data.columns.tolist(),
+            name,
+        )
         cfg["model"] = model
+        cfg["features"] = x_data.columns.tolist()  # Store feature names for diagnostics
         cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
+        cfg["shap_importance"] = shap_importance
 
     return model_configs
 
@@ -770,7 +780,7 @@ def _log_energy_bin_counts(df):
                          for both energy and multiplicity)
         Returns None if E_residual not found.
     """
-    # Reconstruct MC truth energy from residual + DispBDT baseline
+    # Reconstruct MC true energy from residual + DispBDT baseline
     if "E_residual" not in df or "ErecS" not in df:
         _logger.warning("E_residual or ErecS not found; skipping energy-bin availability printout.")
         return None

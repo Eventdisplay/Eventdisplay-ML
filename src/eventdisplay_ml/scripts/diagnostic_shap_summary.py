@@ -1,14 +1,15 @@
 r"""SHAP Feature Importance: Show cached feature importances from training.
 
-Displays the top 20 features for each reconstruction target (Xoff, Yoff, Energy)
-using XGBoost native feature importances cached during training.
+Displays the top 20 features for each model output target using cached SHAP
+importances written during training. Works for stereo reconstruction targets and
+for gamma/hadron classification (target: "label").
 
 This script requires no test data - it reads directly from the cached importance
 values stored in the model file during training.
 
 Usage:
     python diagnostic_shap_summary.py \\
-        --model_file stereo_model_Xoff_residual.joblib \\
+        --model_file stereo_or_classification_model.joblib \\
         --output_dir diagnostics/
 """
 
@@ -97,10 +98,13 @@ def main():
 
     _logger.info("=== SHAP Feature Importance Summary ===")
 
-    model_cfg, _ = load_model_config(args.model_file)
+    model_cfg, model_dict = load_model_config(args.model_file)
 
     shap_importance = model_cfg.get("shap_importance")
     features = model_cfg.get("features")
+    if features is None:
+        # Fallback for older model files that stored features at top level.
+        features = model_dict.get("features")
 
     if shap_importance is None:
         _logger.error("ERROR: No cached SHAP importance found in model file!")
