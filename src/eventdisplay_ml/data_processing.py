@@ -876,7 +876,9 @@ def load_training_data(model_configs, file_list, analysis_type):
                 # For TMVA-style classification, skip telescope flattening (use event-level features only)
                 if tmva_style and analysis_type == "classification":
                     _logger.info("Converting to pandas (no telescope flattening for TMVA style)")
-                    df_flat = ak.to_pandas(df)
+                    # Build DataFrame directly to stay compatible across awkward versions
+                    # (some versions do not provide ak.to_pandas).
+                    df_flat = pd.DataFrame({name: _to_numpy_1d(df[name]) for name in df.fields})
                 else:
                     df_flat = flatten_telescope_data_vectorized(
                         df,
