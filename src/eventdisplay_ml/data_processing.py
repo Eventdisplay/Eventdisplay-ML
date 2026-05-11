@@ -130,7 +130,15 @@ def _resolve_branch_aliases(tree, branch_list):
     resolved = [b for b in resolved if b not in synthesized]
 
     # Drop missing optional branches
-    optional = {"fpointing_dx", "fpointing_dy", "E", "Erec", "ErecS", "nlowgain"}
+    optional = {
+        "fpointing_dx",
+        "fpointing_dy",
+        "E",
+        "Erec",
+        "ErecS",
+        "nlowgain",
+        "SizeSecondMax",
+    }
     final = [b for b in resolved if b not in optional or b in keys]
 
     return final, rename
@@ -1205,8 +1213,9 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
-            "SizeSecondMax": _to_numpy_1d(df["SizeSecondMax"], np.float32),
         }
+        if _has_field(df, "SizeSecondMax"):
+            data["SizeSecondMax"] = _to_numpy_1d(df["SizeSecondMax"], np.float32)
         if not training:
             data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
 
