@@ -41,6 +41,8 @@ def evaluation_efficiency(name, model, x_test, y_test):
             "threshold": thresholds,
             "signal_efficiency": eff_signal,
             "background_efficiency": eff_background,
+            "n_signal": n_signal,
+            "n_background": n_background,
         }
     )
 

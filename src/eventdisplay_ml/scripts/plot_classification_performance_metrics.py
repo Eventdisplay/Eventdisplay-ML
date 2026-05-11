@@ -127,7 +127,6 @@ def load_efficiency_tmva(path, ebin, zebin=0):
 
 def load_efficiency_xgb(path, ebin):
     """Load efficiencies from XGB files."""
-    # 2. XGBoost
     data_joblib = joblib.load(Path(path) / f"gammahadron_bdt_ebin{ebin}.joblib")
     df_xgboost = data_joblib["models"]["xgboost"]["efficiency"]
 
