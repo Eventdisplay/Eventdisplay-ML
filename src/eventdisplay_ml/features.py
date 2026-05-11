@@ -136,8 +136,33 @@ def _regression_features(training):
     return var
 
 
-def _classification_features():
-    """Classification features."""
+def _classification_features(tmva_style=False):
+    """
+    Classification features.
+
+    Parameters
+    ----------
+    tmva_style : bool, optional
+        If True, return features matching TMVA BDT input (default: False).
+
+    Returns
+    -------
+    list
+        List of feature names.
+    """
+    if tmva_style:
+        return [
+            "DispNImages",
+            "EChi2S",
+            "EmissionHeight",
+            "EmissionHeightChi2",
+            "MSCW",
+            "MSCL",
+            "SizeSecondMax",
+            "ArrayPointing_Elevation",
+            "ArrayPointing_Azimuth",
+        ]
+
     var_tel = telescope_features("classification")
     var_array = [
         "DispNImages",

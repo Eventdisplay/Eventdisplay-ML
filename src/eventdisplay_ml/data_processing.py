@@ -1195,6 +1195,7 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
+            "SizeSecondMax": _to_numpy_1d(df["SizeSecondMax"], np.float32),
         }
         if not training:
             data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
