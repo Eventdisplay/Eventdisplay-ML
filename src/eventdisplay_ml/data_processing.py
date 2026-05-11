@@ -797,7 +797,12 @@ def load_training_data(model_configs, file_list, analysis_type):
 
     input_files = utils.read_input_file_list(file_list)
 
-    branch_list = features_module.features(analysis_type, training=True)
+    tmva_style = model_configs.get("tmva_style", False)
+    if tmva_style and analysis_type == "classification":
+        _logger.info("Using TMVA-style features for classification")
+        branch_list = features_module.features_tmva_style(analysis_type, training=True)
+    else:
+        branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)
@@ -860,17 +865,22 @@ def load_training_data(model_configs, file_list, analysis_type):
                     f" (fraction retained: {len(df) / n_before:.4f})"
                 )
 
-                df_flat = flatten_telescope_data_vectorized(
-                    df,
-                    tel_config["max_tel_id"] + 1,
-                    features_module.telescope_features(analysis_type),
-                    analysis_type,
-                    training=True,
-                    tel_config=tel_config,
-                    observatory=model_configs.get("observatory", "veritas"),
-                    max_tel_per_type=model_configs.get("max_tel_per_type", None),
-                    preview_rows=model_configs.get("preview_rows", 20),
-                )
+                # For TMVA-style classification, skip telescope flattening (use event-level features only)
+                if tmva_style and analysis_type == "classification":
+                    _logger.info("Converting to pandas (no telescope flattening for TMVA style)")
+                    df_flat = ak.to_pandas(df)
+                else:
+                    df_flat = flatten_telescope_data_vectorized(
+                        df,
+                        tel_config["max_tel_id"] + 1,
+                        features_module.telescope_features(analysis_type),
+                        analysis_type,
+                        training=True,
+                        tel_config=tel_config,
+                        observatory=model_configs.get("observatory", "veritas"),
+                        max_tel_per_type=model_configs.get("max_tel_per_type", None),
+                        preview_rows=model_configs.get("preview_rows", 20),
+                    )
 
                 # Filter out events with invalid energy reconstruction for stereo training
                 if analysis_type == "stereo_analysis":

@@ -1,6 +1,31 @@
 """Features used for XGB training and prediction."""
 
 
+def features_tmva_style(analysis_type, training=True):
+    """
+    Get TMVA-style features for classification analysis.
+
+    Parameters
+    ----------
+    analysis_type : str
+        Type of analysis.
+    training : bool, optional
+        If True (default), return features including target features.
+        If False, return only non-target features (i.e. features used
+        for prediction).
+
+    Returns
+    -------
+    list
+        List of feature names.
+    """
+    if analysis_type == "stereo_analysis":
+        return _regression_features(training)
+    if "classification" in analysis_type:
+        return _classification_features(tmva_style=True)
+    raise ValueError(f"Unknown analysis type: {analysis_type}")
+
+
 def target_features(analysis_type):
     """
     Get target features based on analysis type.
