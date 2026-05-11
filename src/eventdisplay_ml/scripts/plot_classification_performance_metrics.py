@@ -125,10 +125,9 @@ def load_efficiency_tmva(path, ebin, zebin=0):
     return x_root, y_effs, y_effb
 
 
-def load_efficiency_xgb(path, ebin, ntel=4):
+def load_efficiency_xgb(path, ebin):
     """Load efficiencies from XGB files."""
-    # 2. XGBoost
-    data_joblib = joblib.load(Path(path) / f"gammahadron_bdt_ntel{ntel}_ebin{ebin}.joblib")
+    data_joblib = joblib.load(Path(path) / f"gammahadron_bdt_ebin{ebin}.joblib")
     df_xgboost = data_joblib["models"]["xgboost"]["efficiency"]
 
     x_joblib = df_xgboost["threshold"]

@@ -1,14 +1,15 @@
 r"""SHAP Feature Importance: Show cached feature importances from training.
 
-Displays the top 20 features for each reconstruction target (Xoff, Yoff, Energy)
-using XGBoost native feature importances cached during training.
+Displays the top 20 features for each model output target using cached SHAP
+importances written during training. Works for stereo reconstruction targets and
+for gamma/hadron classification (target: "label").
 
 This script requires no test data - it reads directly from the cached importance
 values stored in the model file during training.
 
 Usage:
     python diagnostic_shap_summary.py \\
-        --model_file stereo_model_Xoff_residual.joblib \\
+        --model_file stereo_or_classification_model.joblib \\
         --output_dir diagnostics/
 """
 
@@ -42,7 +43,7 @@ def load_model_config(model_file):
     return model_cfg, model_dict
 
 
-def plot_feature_importance(features, importances, target_name, output_dir):
+def plot_feature_importance(features, importances, target_name, output_dir, output_file):
     """Create feature importance bar plot for a single target.
 
     Parameters
@@ -55,6 +56,8 @@ def plot_feature_importance(features, importances, target_name, output_dir):
         Name of the target (e.g., "Xoff_residual").
     output_dir : str
         Output directory for plot.
+    output_file : str
+        Base name for the output file.
     """
     importance_df = (
         pd.DataFrame({"Feature": features, "Importance": importances})
@@ -71,7 +74,7 @@ def plot_feature_importance(features, importances, target_name, output_dir):
     ax.grid(axis="x", alpha=0.3)
 
     plt.tight_layout()
-    output_path = Path(output_dir) / f"shap_importance_{target_name}.png"
+    output_path = Path(output_dir) / f"{output_file}_{target_name}.png"
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     _logger.info(f"Saved {target_name} importance plot to {output_path}")
     plt.close()
@@ -89,6 +92,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model_file", required=True, help="Path to trained model joblib file")
     parser.add_argument("--output_dir", default="diagnostics", help="Output directory for plots")
+    parser.add_argument(
+        "--output_file", default="shap_importance", help="Output file name for plots"
+    )
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -97,10 +103,13 @@ def main():
 
     _logger.info("=== SHAP Feature Importance Summary ===")
 
-    model_cfg, _ = load_model_config(args.model_file)
+    model_cfg, model_dict = load_model_config(args.model_file)
 
     shap_importance = model_cfg.get("shap_importance")
     features = model_cfg.get("features")
+    if features is None:
+        # Fallback for older model files that stored features at top level.
+        features = model_dict.get("features")
 
     if shap_importance is None:
         _logger.error("ERROR: No cached SHAP importance found in model file!")
@@ -117,7 +126,9 @@ def main():
     # Create plots for each target using cached SHAP importance
     for target_name, importances in shap_importance.items():
         _logger.info(f"\nProcessing {target_name}...")
-        plot_feature_importance(features, importances, target_name, args.output_dir)
+        plot_feature_importance(
+            features, importances, target_name, args.output_dir, args.output_file
+        )
 
     _logger.info(f"\nPlots saved to {args.output_dir}")
 

@@ -82,18 +82,20 @@ Output is a single ROOT tree called `Classification` with the same number of eve
 
 ## Diagnostic Tools
 
-The committed regression diagnostics in this branch are:
-
 ### SHAP feature-importance summary
 
- Tests: Feature importance
+Analysis type: stereo reconstruction and gamma/hadron classification.
+
+Tests: Feature importance
 
 - Load per-target SHAP importances cached in the trained model file
-- Create one top-20 feature plot per residual target (`Xoff_residual`, `Yoff_residual`, `E_residual`)
+- Create one top-20 feature plot per target
+  - Stereo: `Xoff_residual`, `Yoff_residual`, `E_residual`
+  - Classification: `label` (gamma vs hadron)
 
 Required inputs:
 
-- `--model_file`: trained stereo model `.joblib`
+- `--model_file`: trained stereo or classification model `.joblib`
 - `--output_dir`: directory for generated PNGs
 
 Run:
@@ -102,15 +104,27 @@ Run:
   eventdisplay-ml-diagnostic-shap-summary \
   --model_file models/stereo_model.joblib \
   --output_dir diagnostics/
+
+  eventdisplay-ml-diagnostic-shap-summary \
+  --model_file models/classification_model_ebin0.joblib \
+  --output_dir diagnostics/
 ```
 
-Outputs:
+Outputs (stereo):
 
 - `diagnostics/shap_importance_Xoff_residual.png`
 - `diagnostics/shap_importance_Yoff_residual.png`
 - `diagnostics/shap_importance_E_residual.png`
 
+Outputs (classification):
+
+- `diagnostics/shap_importance_label.png`
+
+Note: SHAP importances are cached during training. Existing model files trained before this feature was added will report a missing-cache error. Inference (`apply_xgb_classify`) does not require retraining, but running this diagnostic on a classification model does.
+
 ### Permutation importance
+
+Analysis type: stereo reconstruction.
 
 - Rebuild the held-out test split from the model metadata and original input files
 - Shuffle one feature at a time and measure the relative RMSE increase per residual target
@@ -152,6 +166,8 @@ Notes:
 
 ### Generalization gap
 
+Analysis type: stereo reconstruction.
+
 - Read the cached train/test RMSE summary written during training
 - Compare final train and test RMSE for each residual target
 - Quantify the overfitting gap after training is complete
@@ -190,6 +206,8 @@ Notes:
 - Unlike `plot_training_evaluation.py`, it summarizes final RMSE, not the per-iteration XGBoost training history.
 
 ### Partial Dependence Plots
+
+Analysis type: stereo reconstruction.
 
 - Visualize how each feature influences model predictions
 - Prove the model captures physics by checking that multiplicity reduces corrections and baselines show smooth relationships
@@ -231,6 +249,8 @@ Notes:
 - This diagnostic rebuilds the held-out test split and is slower than SHAP summary
 
 ### Residual Normality Diagnostics
+
+Analysis type: stereo reconstruction.
 
 - Validate that model residuals follow a normal distribution
 - Detect outlier events and check for systematic biases in reconstruction errors
@@ -276,6 +296,8 @@ Notes:
 - Outlier counts help identify events with unusually large reconstruction errors
 
 ### Training-evaluation curves
+
+Analysis type: stereo reconstruction or gamma/hadron separation, depending on the model file.
 
 - Plot XGBoost training vs validation metric curves
 - Useful for checking convergence and overfitting behavior

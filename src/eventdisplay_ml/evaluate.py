@@ -41,12 +41,20 @@ def evaluation_efficiency(name, model, x_test, y_test):
             "threshold": thresholds,
             "signal_efficiency": eff_signal,
             "background_efficiency": eff_background,
+            "n_signal": n_signal,
+            "n_background": n_background,
         }
     )
 
 
 def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
-    """Evaluate the trained model on the test set and log performance metrics."""
+    """Evaluate the trained model on the test set and log performance metrics.
+
+    Returns
+    -------
+    dict
+        SHAP feature importance arrays keyed by target name.
+    """
     y_pred_proba = model.predict_proba(x_test)[:, 1]
     y_pred = (y_pred_proba >= 0.5).astype(int)
 
@@ -62,8 +70,12 @@ def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
     _logger.info(f"\n{report}")
 
     feature_importance(model, x_cols, ["label"], name)
+
+    shap_importance_dict = {}
     if name == "xgboost":
-        shap_feature_importance(model, x_test, ["label"])
+        shap_importance_dict = shap_feature_importance(model, x_test, ["label"])
+
+    return shap_importance_dict
 
 
 def evaluate_regression_model(
