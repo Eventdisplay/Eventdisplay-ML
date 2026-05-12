@@ -184,8 +184,7 @@ def _classification_features(tmva_style=False):
             "MSCW",
             "MSCL",
             "SizeSecondMax",
-            "ArrayPointing_Elevation",
-            "ArrayPointing_Azimuth",
+            "ze_bin",
         ]
 
     var_tel = telescope_features("classification")

@@ -809,6 +809,11 @@ def load_training_data(model_configs, file_list, analysis_type):
     if tmva_style and analysis_type == "classification":
         _logger.info("Using TMVA-style features for classification")
         branch_list = features_module.features_tmva_style(analysis_type, training=True)
+        # ze_bin is a derived feature and not present in ROOT input.
+        # Read elevation as auxiliary input to derive ze_bin.
+        branch_list = [b for b in branch_list if b not in {"ze_bin", "ArrayPointing_Azimuth"}] + [
+            "ArrayPointing_Elevation"
+        ]
     else:
         branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
@@ -931,6 +936,14 @@ def load_training_data(model_configs, file_list, analysis_type):
                     }
                 for col_name, values in new_cols.items():
                     df_flat[col_name] = values
+
+                # For TMVA-style classification, keep pointing only as an intermediate
+                # to compute ze_bin, but do not expose raw pointing as ML features.
+                if tmva_style and analysis_type == "classification":
+                    df_flat = df_flat.drop(
+                        columns=["ArrayPointing_Elevation", "ArrayPointing_Azimuth"],
+                        errors="ignore",
+                    )
 
                 # Filter out events with NaN in residuals (can't train on these)
                 if analysis_type == "stereo_analysis":
