@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import uproot
 
+from eventdisplay_ml import utils
+
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
@@ -127,7 +129,8 @@ def load_efficiency_tmva(path, ebin, zebin=0):
 
 def load_efficiency_xgb(path, ebin):
     """Load efficiencies from XGB files."""
-    data_joblib = joblib.load(Path(path) / f"gammahadron_bdt_ebin{ebin}.joblib")
+    model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
+    data_joblib = joblib.load(model_file)
     df_xgboost = data_joblib["models"]["xgboost"]["efficiency"]
 
     x_joblib = df_xgboost["threshold"]
@@ -142,10 +145,18 @@ def main():
     parser = argparse.ArgumentParser(description="Plot TMVA and XGBoost metrics.")
     parser.add_argument("root_dir", help="Path to the  TMVA BDT .root file")
     parser.add_argument("joblib_dir", help="Path to the XGB BDT .joblib file")
+    parser.add_argument(
+        "--energy-bin",
+        type=int,
+        choices=range(9),
+        default=None,
+        help="Plot only a single energy bin (0-8). If omitted, all bins are processed.",
+    )
     args = parser.parse_args()
 
     # assume energy binning is identical in XGB and TMVA files.
-    for ebin in range(9):
+    energy_bins = [args.energy_bin] if args.energy_bin is not None else range(9)
+    for ebin in energy_bins:
         x_root, y_effs, y_effb = load_efficiency_tmva(args.root_dir, ebin)
         x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(args.joblib_dir, ebin)
 

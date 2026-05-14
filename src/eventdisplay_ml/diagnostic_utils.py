@@ -14,6 +14,7 @@ from scipy import stats
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 
+from eventdisplay_ml import utils
 from eventdisplay_ml.data_processing import load_training_data
 
 _logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ _logger = logging.getLogger(__name__)
 
 def _load_model_cfg(model_file):
     """Load full model dictionary and the first model configuration entry."""
-    model_dict = joblib.load(model_file)
+    model_dict = joblib.load(utils.resolve_joblib_path(model_file))
     models = model_dict.get("models", {})
     model_cfg = next(iter(models.values())) if models else None
     return model_dict, model_cfg

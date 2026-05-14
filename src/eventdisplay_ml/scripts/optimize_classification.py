@@ -33,6 +33,8 @@ import uproot
 from astropy.table import Table
 from scipy.interpolate import LinearNDInterpolator, RegularGridInterpolator
 
+from eventdisplay_ml import utils
+
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
@@ -106,7 +108,8 @@ def _load_multi_bin_roc(joblib_paths):
 
     for path in joblib_paths:
         try:
-            data = joblib.load(path)
+            resolved_path = utils.resolve_joblib_path(path)
+            data = joblib.load(resolved_path)
             ebins = data["energy_bins_log10_tev"]
             e_min = ebins["E_min"]
             e_max = ebins["E_max"]
@@ -457,7 +460,9 @@ def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Optimize classification cuts.")
     parser.add_argument("input_root", help="ROOT file with rate surfaces")
-    parser.add_argument("roc_files", nargs="+", help="List of ebin*.joblib files")
+    parser.add_argument(
+        "roc_files", nargs="+", help="List of ebin* model files (.joblib.gz preferred)."
+    )
     parser.add_argument("source_strength", type=float, help="Fraction of Crab (e.g. 0.1 for 10%%)")
     parser.add_argument(
         "--source-index",
