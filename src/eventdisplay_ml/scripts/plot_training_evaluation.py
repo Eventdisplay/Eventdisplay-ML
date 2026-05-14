@@ -179,7 +179,13 @@ def main():
         if "targets" in model_configs:
             _logger.info(f"Target variables: {model_configs['targets']}")
 
-        plot_training_curves(evals_result, args.output_file)
+        output_file = args.output_file
+        if output_file is None:
+            # Save as training_evaluation_<joblib_basename>.png in current directory
+            output_file = f"training_evaluation_{model_path.stem}.png"
+            _logger.info(f"No --output_file given. Saving to {output_file}")
+
+        plot_training_curves(evals_result, output_file)
         _logger.info("Plotting completed successfully.")
 
     elif args.model_dir:
