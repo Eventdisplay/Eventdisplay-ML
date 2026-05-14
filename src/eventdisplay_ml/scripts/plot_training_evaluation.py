@@ -144,7 +144,6 @@ def main():
     )
 
     args = parser.parse_args()
-
     if args.model_file:
         model_path = Path(args.model_file)
         if not model_path.exists():
@@ -179,13 +178,7 @@ def main():
         if "targets" in model_configs:
             _logger.info(f"Target variables: {model_configs['targets']}")
 
-        output_file = args.output_file
-        if output_file is None:
-            # Save as training_evaluation_<joblib_basename>.png in current directory
-            output_file = f"training_evaluation_{model_path.stem}.png"
-            _logger.info(f"No --output_file given. Saving to {output_file}")
-
-        plot_training_curves(evals_result, output_file)
+        plot_training_curves(evals_result, args.output_file)
         _logger.info("Plotting completed successfully.")
 
     elif args.model_dir:
@@ -220,7 +213,7 @@ def main():
                 continue
 
             evals_result = xgb_model.evals_result()
-            output_file = output_dir / (model_path.stem + ".png")
+            output_file = output_dir / (f"training_evaluation_{model_path.stem}.png")
             plot_training_curves(evals_result, output_file)
             _logger.info(f"Saved plot for {model_path.name} to {output_file}")
 
