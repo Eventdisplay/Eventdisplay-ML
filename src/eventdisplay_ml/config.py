@@ -149,12 +149,23 @@ def configure_training(analysis_type):
         model_parameters = utils.load_model_parameters(
             model_configs["model_parameters"], model_configs["energy_bin_number"]
         )
+        tmva_style_raw = model_parameters.get("tmva_style", False)
+        if isinstance(tmva_style_raw, str):
+            model_configs["tmva_style"] = tmva_style_raw.strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        else:
+            model_configs["tmva_style"] = bool(tmva_style_raw)
         model_configs["pre_cuts"] = pre_cuts_classification(
             e_min=np.power(10.0, model_parameters.get("energy_bins_log10_tev", []).get("E_min")),
             e_max=np.power(10.0, model_parameters.get("energy_bins_log10_tev", []).get("E_max")),
         )
         model_configs["energy_bins_log10_tev"] = model_parameters.get("energy_bins_log10_tev", [])
         model_configs["zenith_bins_deg"] = model_parameters.get("zenith_bins_deg", [])
+        _logger.info(f"TMVA-style classification: {model_configs['tmva_style']}")
 
     _logger.info(f"Pre-cuts: {model_configs['pre_cuts']}")
 

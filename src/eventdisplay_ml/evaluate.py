@@ -36,13 +36,16 @@ def evaluation_efficiency(name, model, x_test, y_test):
             f"Background Efficiency: {eff_background[-1]:.4f}"
         )
 
+    eff_signal = np.asarray(eff_signal, dtype=float)
+    eff_background = np.asarray(eff_background, dtype=float)
+
     return pd.DataFrame(
         {
             "threshold": thresholds,
             "signal_efficiency": eff_signal,
             "background_efficiency": eff_background,
-            "n_signal": n_signal,
-            "n_background": n_background,
+            "n_signal": n_signal * eff_signal,
+            "n_background": n_background * eff_background,
         }
     )
 

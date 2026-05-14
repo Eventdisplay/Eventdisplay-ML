@@ -70,3 +70,25 @@ def test_apply_classification_models_interpolates_probabilities_and_thresholds(m
 
     # Thresholds are interpolated the same way: [0.5, 0.7]
     np.testing.assert_array_equal(is_gamma[50], np.array([0, 1], dtype=np.uint8))
+
+
+def test_extra_columns_skip_tmva_only_size_second_max_when_branch_missing():
+    """Standard classification should not synthesize the TMVA-only SizeSecondMax column."""
+    df = pd.DataFrame(
+        {
+            "MSCW": [0.1, 0.2],
+            "MSCL": [0.3, 0.4],
+            "EChi2S": [1.0, 2.0],
+            "EmissionHeight": [10.0, 20.0],
+            "EmissionHeightChi2": [0.5, 0.25],
+        }
+    )
+
+    result = data_processing.extra_columns(
+        df,
+        analysis_type="classification",
+        training=True,
+        index=pd.RangeIndex(2),
+    )
+
+    assert "SizeSecondMax" not in result.columns
