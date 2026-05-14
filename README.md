@@ -302,11 +302,6 @@ Analysis type: stereo reconstruction or gamma/hadron separation, depending on th
 - Plot XGBoost training vs validation metric curves
 - Useful for checking convergence and overfitting behavior
 
-Required inputs:
-
-- `--model_file`: trained model `.joblib` containing an XGBoost model
-- `--output_file`: output image path (optional; if omitted, plot is shown interactively)
-
 Run:
 
 ```bash

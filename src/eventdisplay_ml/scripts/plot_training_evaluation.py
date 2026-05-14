@@ -136,13 +136,19 @@ def main():
     group.add_argument(
         "--model_dir",
         type=str,
-        help="Directory containing multiple joblib model files. All *.joblib files will be processed.",
+        help=(
+            "Directory containing multiple joblib model files. "
+            "All *.joblib files will be processed.",
+        ),
     )
     parser.add_argument(
         "--output_file",
         type=str,
         default=None,
-        help="Path to save the output plot (PNG/PDF). If not provided, display interactively. Only for single file mode.",
+        help=(
+            "Path to save the output plot (PNG/PDF). If not provided, display interactively. "
+            "Only for single file mode."
+        ),
     )
     parser.add_argument(
         "--output_dir",
@@ -219,23 +225,22 @@ def main():
             _logger.info(f"Loading model from: {model_path}")
             try:
                 model_configs = joblib.load(model_path)
+                if "models" not in model_configs or "xgboost" not in model_configs["models"]:
+                    _logger.error(f"Skipping {model_path}: missing 'models/xgboost' key.")
+                    continue
+
+                xgb_model = model_configs["models"]["xgboost"].get("model")
+                if not hasattr(xgb_model, "evals_result"):
+                    _logger.error(f"Skipping {model_path}: model missing 'evals_result'.")
+                    continue
+
+                evals_result = xgb_model.evals_result()
+                output_file = output_dir / f"training_evaluation_{_joblib_basename(model_path)}.png"
+                plot_training_curves(evals_result, output_file)
+                _logger.info(f"Saved plot for {model_path.name} to {output_file}")
             except Exception as e:
-                _logger.error(f"Failed to load {model_path}: {e}")
+                _logger.exception(f"Skipping {model_path}: failed to process model ({e})")
                 continue
-
-            if "models" not in model_configs or "xgboost" not in model_configs["models"]:
-                _logger.error(f"Skipping {model_path}: missing 'models/xgboost' key.")
-                continue
-
-            xgb_model = model_configs["models"]["xgboost"].get("model")
-            if not hasattr(xgb_model, "evals_result"):
-                _logger.error(f"Skipping {model_path}: model missing 'evals_result'.")
-                continue
-
-            evals_result = xgb_model.evals_result()
-            output_file = output_dir / f"training_evaluation_{_joblib_basename(model_path)}.png"
-            plot_training_curves(evals_result, output_file)
-            _logger.info(f"Saved plot for {model_path.name} to {output_file}")
 
         _logger.info("Batch plotting completed.")
 
