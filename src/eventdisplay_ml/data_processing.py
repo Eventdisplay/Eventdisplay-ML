@@ -137,6 +137,9 @@ def _resolve_branch_aliases(tree, branch_list):
         "ErecS",
         "nlowgain",
         "SizeSecondMax",
+        "Xcore",
+        "Ycore",
+        "DispAbsSumWeigth",
     }
     final = [b for b in resolved if b not in optional or b in keys]
 
@@ -202,48 +205,6 @@ def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, sort_indices=No
     for tel_idx in range(max_tel_id + 1):
         columns[f"tel_active_{tel_idx}"] = active_matrix[:, tel_idx]
     return columns
-
-
-def _ground_to_shower_coords(x, y, sin_azim, cos_azim, sin_elev):
-    """Transform ground coordinates to shower-plane coordinates.
-
-    Rotates around vertical axis by azimuth, then projects onto shower plane.
-
-    Parameters
-    ----------
-    x : numpy.ndarray
-        X coordinate(s), shape (...,).
-    y : numpy.ndarray
-        Y coordinate(s), shape (...,).
-    sin_azim : numpy.ndarray
-        Sine of azimuth angle, shape (...,).
-    cos_azim : numpy.ndarray
-        Cosine of azimuth angle, shape (...,).
-    sin_elev : numpy.ndarray
-        Sine of elevation angle, shape (...,).
-
-    Returns
-    -------
-    shower_x : numpy.ndarray
-        Shower-plane X coordinate.
-    shower_y : numpy.ndarray
-        Shower-plane Y coordinate scaled by sin(elevation).
-
-    Notes
-    -----
-    Original formula (azimuth definition of Eventdisplay is relevant)
-
-        shower_x = -sin_azim * x + cos_azim * y
-        shower_y = sin_elev * (cos_azim * x + sin_azim * y)
-        return shower_x, shower_y
-    """
-    s_az = -sin_azim
-    c_az = -cos_azim
-
-    shower_x = c_az * x + s_az * y
-    shower_y = sin_elev * (-s_az * x + c_az * y)
-
-    return shower_x, shower_y
 
 
 def _make_relative_coord_columns(
@@ -767,6 +728,132 @@ def flatten_feature_data(
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
 
+def _select_training_branches(model_configs, analysis_type):
+    """Return branch list and TMVA-style flag for training data loading."""
+    tmva_style = model_configs.get("tmva_style", False)
+    if tmva_style and analysis_type == "classification":
+        _logger.info("Using TMVA-style features for classification")
+        tmva_features = features_module.features_tmva_style(analysis_type, training=True)
+        # Derived features are not present in ROOT input.
+        # Read auxiliary branches required to derive ze_bin and Core_Distance.
+        branch_list = [b for b in tmva_features if b not in {"ze_bin", "Core_Distance"}]
+        branch_list.extend(["ArrayPointing_Elevation", "Xcore", "Ycore"])
+        # Preserve order while removing duplicates.
+        branch_list = list(dict.fromkeys(branch_list))
+    else:
+        branch_list = features_module.features(analysis_type, training=True)
+    return branch_list, tmva_style
+
+
+def _compute_max_events_per_file(max_events, n_input_files):
+    """Compute per-file event cap from global max_events setting."""
+    if max_events is not None and max_events > 0:
+        return max_events // n_input_files
+    return None
+
+
+def _maybe_subsample_events(df, max_events_per_file, random_state):
+    """Subsample awkward-array rows if max_events_per_file is set."""
+    if max_events_per_file and len(df) > max_events_per_file:
+        rng = np.random.default_rng(random_state)
+        indices = rng.choice(len(df), max_events_per_file, replace=False)
+        return df[indices]
+    return df
+
+
+def _flatten_training_chunk(df, analysis_type, tmva_style, tel_config, model_configs):
+    """Flatten raw events into a training DataFrame chunk."""
+    if tmva_style and analysis_type == "classification":
+        _logger.info("Converting to pandas (no telescope flattening for TMVA style)")
+        # Build DataFrame directly to stay compatible across awkward versions
+        # (some versions do not provide ak.to_pandas).
+        return pd.DataFrame({name: _to_numpy_1d(df[name]) for name in df.fields})
+
+    return flatten_telescope_data_vectorized(
+        df,
+        tel_config["max_tel_id"] + 1,
+        features_module.telescope_features(analysis_type),
+        analysis_type,
+        training=True,
+        tel_config=tel_config,
+        observatory=model_configs.get("observatory", "veritas"),
+        max_tel_per_type=model_configs.get("max_tel_per_type", None),
+        preview_rows=model_configs.get("preview_rows", 20),
+    )
+
+
+def _apply_stereo_training_targets_and_filters(df, df_flat):
+    """Apply stereo-specific filters and residual target creation."""
+    n_before_erec_filter = len(df_flat)
+    valid_erec_mask = (df_flat["ErecS"] > 0) & np.isfinite(df_flat["ErecS"])
+    df_flat = df_flat[valid_erec_mask]
+    n_removed_erec = n_before_erec_filter - len(df_flat)
+    if n_removed_erec > 0:
+        _logger.info(
+            f"Removed {n_removed_erec} events with ErecS <= 0 or NaN "
+            f"(fraction removed: {n_removed_erec / n_before_erec_filter:.4f})"
+        )
+
+    mc_xoff = _to_numpy_1d(df["MCxoff"], np.float32)[valid_erec_mask]
+    mc_yoff = _to_numpy_1d(df["MCyoff"], np.float32)[valid_erec_mask]
+    mc_e0 = _to_numpy_1d(df["MCe0"], np.float32)[valid_erec_mask]
+
+    disp_xoff = df_flat["Xoff_weighted_bdt"].values
+    disp_yoff = df_flat["Yoff_weighted_bdt"].values
+    disp_erec = df_flat["ErecS"].values
+
+    # Compute log energies (ErecS already filtered > 0)
+    mc_e0_log = np.where(mc_e0 > 0, np.log10(mc_e0), np.nan)
+    disp_erec_log = np.log10(disp_erec)  # Safe since already filtered > 0
+
+    df_flat["Xoff_residual"] = mc_xoff - disp_xoff
+    df_flat["Yoff_residual"] = mc_yoff - disp_yoff
+    df_flat["E_residual"] = mc_e0_log - disp_erec_log
+
+    n_before_nan_filter = len(df_flat)
+    valid_mask = (
+        np.isfinite(df_flat["Xoff_residual"])
+        & np.isfinite(df_flat["Yoff_residual"])
+        & np.isfinite(df_flat["E_residual"])
+    )
+    df_flat = df_flat[valid_mask]
+    n_removed = n_before_nan_filter - len(df_flat)
+    if n_removed > 0:
+        _logger.info(
+            f"Removed {n_removed} events with NaN residuals "
+            f"(fraction removed: {n_removed / n_before_nan_filter:.4f})"
+        )
+
+    return df_flat
+
+
+def _apply_classification_training_targets(df, df_flat, model_configs, tmva_style):
+    """Apply classification-specific derived targets and TMVA cleanups."""
+    df_flat["ze_bin"] = zenith_in_bins(
+        90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
+        model_configs.get("zenith_bins_deg", []),
+    )
+
+    # For TMVA-style classification, keep pointing only as an intermediate
+    # to compute ze_bin, but do not expose raw pointing as ML features.
+    if tmva_style:
+        df_flat = df_flat.drop(
+            columns=["ArrayPointing_Elevation", "ArrayPointing_Azimuth"],
+            errors="ignore",
+        )
+
+    return df_flat
+
+
+def _apply_training_targets_and_filters(df, df_flat, analysis_type, model_configs, tmva_style):
+    """Apply analysis-specific post-processing to flattened training chunks."""
+    if analysis_type == "stereo_analysis":
+        return _apply_stereo_training_targets_and_filters(df, df_flat)
+    if analysis_type == "classification":
+        return _apply_classification_training_targets(df, df_flat, model_configs, tmva_style)
+    return df_flat
+
+
 def load_training_data(model_configs, file_list, analysis_type):
     """
     Load and flatten training data from the mscw file.
@@ -803,168 +890,80 @@ def load_training_data(model_configs, file_list, analysis_type):
         _logger.info(f"Adding zenith binning: {model_configs.get('zenith_bins_deg', [])}")
 
     input_files = utils.read_input_file_list(file_list)
-
-    tmva_style = model_configs.get("tmva_style", False)
-    if tmva_style and analysis_type == "classification":
-        _logger.info("Using TMVA-style features for classification")
-        branch_list = features_module.features_tmva_style(analysis_type, training=True)
-        # ze_bin is a derived feature and not present in ROOT input.
-        # Read elevation as auxiliary input to derive ze_bin.
-        branch_list = [b for b in branch_list if b not in {"ze_bin", "ArrayPointing_Azimuth"}] + [
-            "ArrayPointing_Elevation"
-        ]
-    else:
-        branch_list = features_module.features(analysis_type, training=True)
+    branch_list, tmva_style = _select_training_branches(model_configs, analysis_type)
     _logger.info(f"Branch list: {branch_list}")
-    if max_events is not None and max_events > 0:
-        max_events_per_file = max_events // len(input_files)
-    else:
-        max_events_per_file = None
+    max_events_per_file = _compute_max_events_per_file(max_events, len(input_files))
     _logger.info(f"Max events per file: {max_events_per_file}")
 
     tel_config = None  # Will be read from first file
     dfs = []
-    executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
     total_files = len(input_files)
-    for file_idx, f in enumerate(input_files, start=1):
-        try:
-            with uproot.open(f) as root_file:
-                if "data" not in root_file:
-                    _logger.warning(f"File: {f} does not contain a 'data' tree.")
-                    continue
+    with ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1)) as executor:
+        for file_idx, f in enumerate(input_files, start=1):
+            try:
+                with uproot.open(f) as root_file:
+                    if "data" not in root_file:
+                        _logger.warning(f"File: {f} does not contain a 'data' tree.")
+                        continue
 
-                if tel_config is None:
-                    tel_config = read_telescope_config(root_file)
-                    model_configs["tel_config"] = tel_config
-                else:
-                    # Check if current file has a larger max_tel_id and update if needed
                     current_tel_config = read_telescope_config(root_file)
-                    if current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
+                    if tel_config is None:
+                        tel_config = current_tel_config
+                        model_configs["tel_config"] = tel_config
+                    elif current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
                         _logger.info(
                             f"Updating telescope configuration: max_tel_id from "
                             f"{tel_config['max_tel_id']} to {current_tel_config['max_tel_id']} "
                             f"(file: {f})"
                         )
-                        # Replace the full telescope configuration to keep all fields consistent
                         tel_config = current_tel_config
                         model_configs["tel_config"] = tel_config
 
-                _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
-                tree = root_file["data"]
-                resolved_branch_list, rename_map = _resolve_branch_aliases(tree, branch_list)
-                df = tree.arrays(
-                    resolved_branch_list,
-                    cut=model_configs.get("pre_cuts", None),
-                    library="ak",
-                    decompression_executor=executor,
-                )
-                if rename_map:
-                    rename_present = {k: v for k, v in rename_map.items() if k in df.fields}
-                    if rename_present:
-                        df = _rename_fields(df, rename_present)
-                df = _ensure_fpointing_fields(df)
-                if len(df) == 0:
-                    continue
+                    _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
+                    tree = root_file["data"]
+                    resolved_branch_list, rename_map = _resolve_branch_aliases(tree, branch_list)
+                    df = tree.arrays(
+                        resolved_branch_list,
+                        cut=model_configs.get("pre_cuts", None),
+                        library="ak",
+                        decompression_executor=executor,
+                    )
+                    if rename_map:
+                        rename_present = {k: v for k, v in rename_map.items() if k in df.fields}
+                        if rename_present:
+                            df = _rename_fields(df, rename_present)
+                    df = _ensure_fpointing_fields(df)
+                    if len(df) == 0:
+                        continue
 
-                if max_events_per_file and len(df) > max_events_per_file:
-                    rng = np.random.default_rng(random_state)
-                    indices = rng.choice(len(df), max_events_per_file, replace=False)
-                    df = df[indices]
+                    df = _maybe_subsample_events(df, max_events_per_file, random_state)
 
-                n_before = tree.num_entries
-                _logger.info(
-                    f"Number of events before / after event cut: {n_before} / {len(df)}"
-                    f" (fraction retained: {len(df) / n_before:.4f})"
-                )
+                    n_before = tree.num_entries
+                    _logger.info(
+                        f"Number of events before / after event cut: {n_before} / {len(df)}"
+                        f" (fraction retained: {len(df) / n_before:.4f})"
+                    )
 
-                # For TMVA-style classification, skip telescope flattening (use event-level features only)
-                if tmva_style and analysis_type == "classification":
-                    _logger.info("Converting to pandas (no telescope flattening for TMVA style)")
-                    # Build DataFrame directly to stay compatible across awkward versions
-                    # (some versions do not provide ak.to_pandas).
-                    df_flat = pd.DataFrame({name: _to_numpy_1d(df[name]) for name in df.fields})
-                else:
-                    df_flat = flatten_telescope_data_vectorized(
+                    df_flat = _flatten_training_chunk(
                         df,
-                        tel_config["max_tel_id"] + 1,
-                        features_module.telescope_features(analysis_type),
                         analysis_type,
-                        training=True,
-                        tel_config=tel_config,
-                        observatory=model_configs.get("observatory", "veritas"),
-                        max_tel_per_type=model_configs.get("max_tel_per_type", None),
-                        preview_rows=model_configs.get("preview_rows", 20),
+                        tmva_style,
+                        tel_config,
+                        model_configs,
                     )
-
-                # Filter out events with invalid energy reconstruction for stereo training
-                if analysis_type == "stereo_analysis":
-                    n_before_erec_filter = len(df_flat)
-                    valid_erec_mask = (df_flat["ErecS"] > 0) & np.isfinite(df_flat["ErecS"])
-                    df_flat = df_flat[valid_erec_mask]
-                    n_removed_erec = n_before_erec_filter - len(df_flat)
-                    if n_removed_erec > 0:
-                        _logger.info(
-                            f"Removed {n_removed_erec} events with ErecS <= 0 or NaN "
-                            f"(fraction removed: {n_removed_erec / n_before_erec_filter:.4f})"
-                        )
-
-                if analysis_type == "stereo_analysis":
-                    mc_xoff = _to_numpy_1d(df["MCxoff"], np.float32)[valid_erec_mask]
-                    mc_yoff = _to_numpy_1d(df["MCyoff"], np.float32)[valid_erec_mask]
-                    mc_e0 = _to_numpy_1d(df["MCe0"], np.float32)[valid_erec_mask]
-
-                    disp_xoff = df_flat["Xoff_weighted_bdt"].values
-                    disp_yoff = df_flat["Yoff_weighted_bdt"].values
-                    disp_erec = df_flat["ErecS"].values
-
-                    # Compute log energies (ErecS already filtered > 0)
-                    mc_e0_log = np.where(mc_e0 > 0, np.log10(mc_e0), np.nan)
-                    disp_erec_log = np.log10(disp_erec)  # Safe since already filtered > 0
-
-                    new_cols = {
-                        "Xoff_residual": mc_xoff - disp_xoff,
-                        "Yoff_residual": mc_yoff - disp_yoff,
-                        "E_residual": mc_e0_log - disp_erec_log,
-                    }
-                elif analysis_type == "classification":
-                    new_cols = {
-                        "ze_bin": zenith_in_bins(
-                            90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
-                            model_configs.get("zenith_bins_deg", []),
-                        )
-                    }
-                for col_name, values in new_cols.items():
-                    df_flat[col_name] = values
-
-                # For TMVA-style classification, keep pointing only as an intermediate
-                # to compute ze_bin, but do not expose raw pointing as ML features.
-                if tmva_style and analysis_type == "classification":
-                    df_flat = df_flat.drop(
-                        columns=["ArrayPointing_Elevation", "ArrayPointing_Azimuth"],
-                        errors="ignore",
+                    df_flat = _apply_training_targets_and_filters(
+                        df,
+                        df_flat,
+                        analysis_type,
+                        model_configs,
+                        tmva_style,
                     )
+                    dfs.append(df_flat)
+            except Exception as e:
+                raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
-                # Filter out events with NaN in residuals (can't train on these)
-                if analysis_type == "stereo_analysis":
-                    n_before_nan_filter = len(df_flat)
-                    valid_mask = (
-                        np.isfinite(df_flat["Xoff_residual"])
-                        & np.isfinite(df_flat["Yoff_residual"])
-                        & np.isfinite(df_flat["E_residual"])
-                    )
-                    df_flat = df_flat[valid_mask]
-                    n_removed = n_before_nan_filter - len(df_flat)
-                    if n_removed > 0:
-                        _logger.info(
-                            f"Removed {n_removed} events with NaN residuals "
-                            f"(fraction removed: {n_removed / n_before_nan_filter:.4f})"
-                        )
-
-                dfs.append(df_flat)
-
-                del df
-        except Exception as e:
-            raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
+    if not dfs:
+        raise ValueError("No data loaded from input files.")
 
     df_final = pd.concat(dfs, ignore_index=True)
     df_final.dropna(axis=1, how="all", inplace=True)
@@ -980,9 +979,6 @@ def load_training_data(model_configs, file_list, analysis_type):
         counts = df_final["ze_bin"].value_counts().sort_index()
         for zb, n in counts.items():
             _logger.info(f"\tze_bin={zb}: {n} events")
-
-    if len(df_final) == 0:
-        raise ValueError("No data loaded from input files.")
 
     print_variable_statistics(df_final)
 
@@ -1179,89 +1175,94 @@ def _calculate_array_footprint(tel_config, tel_list_matrix):
     return footprints
 
 
+def _optional_float_column(df, field_name, n_rows):
+    """Return a float32 column or a NaN-filled fallback if the field is missing."""
+    if _has_field(df, field_name):
+        return _to_numpy_1d(df[field_name], np.float32)
+    return np.full(n_rows, DEFAULT_FILL_VALUE, dtype=np.float32)
+
+
+def _build_stereo_extra_data(df, n_rows, tel_config, observatory):
+    """Build stereo-analysis event-level columns."""
+    xoff = _to_numpy_1d(df["Xoff"], np.float32)
+    yoff = _to_numpy_1d(df["Yoff"], np.float32)
+    xoff_intersect = _to_numpy_1d(df["Xoff_intersect"], np.float32)
+    yoff_intersect = _to_numpy_1d(df["Yoff_intersect"], np.float32)
+
+    data = {
+        "Xoff_weighted_bdt": xoff,
+        "Yoff_weighted_bdt": yoff,
+        "Xoff_intersect": xoff_intersect,
+        "Yoff_intersect": yoff_intersect,
+        "Diff_Xoff": (xoff - xoff_intersect).astype(np.float32),
+        "Diff_Yoff": (yoff - yoff_intersect).astype(np.float32),
+        "DispNImages": _to_numpy_1d(df["DispNImages"], np.int32),
+        "img2_ang": _to_numpy_1d(df["img2_ang"], np.float32),
+        "Erec": _optional_float_column(df, "Erec", n_rows),
+        "ErecS": _optional_float_column(df, "ErecS", n_rows),
+        "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
+        "Geomagnetic_Angle": calculate_geomagnetic_angles(
+            _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32),
+            _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
+            observatory=observatory,
+        ),
+    }
+
+    if tel_config is not None:
+        tel_list_matrix = _to_dense_array(df["DispTelList_T"])
+        data["array_footprint"] = _calculate_array_footprint(tel_config, tel_list_matrix)
+
+    return data
+
+
+def _build_classification_extra_data(df, n_rows, training):
+    """Build classification event-level columns."""
+    data = {
+        "MSCW": _to_numpy_1d(df["MSCW"], np.float32),
+        "MSCL": _to_numpy_1d(df["MSCL"], np.float32),
+        "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
+        "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
+        "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
+    }
+
+    if _has_field(df, "SizeSecondMax"):
+        data["SizeSecondMax"] = _to_numpy_1d(df["SizeSecondMax"], np.float32)
+
+    if _has_field(df, "Xcore") and _has_field(df, "Ycore"):
+        xcore = _to_numpy_1d(df["Xcore"], np.float32)
+        ycore = _to_numpy_1d(df["Ycore"], np.float32)
+        data["Core_Distance"] = np.sqrt(xcore**2 + ycore**2).astype(np.float32)
+    else:
+        data["Core_Distance"] = np.full(n_rows, DEFAULT_FILL_VALUE, dtype=np.float32)
+
+    data["DispAbsSumWeigth"] = _optional_float_column(df, "DispAbsSumWeigth", n_rows)
+
+    if not training:
+        data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
+
+    return data
+
+
+def _log10_variables_for_extra_columns(analysis_type):
+    """Return variables that require log10 transform after clipping in extra columns."""
+    if analysis_type == "stereo_analysis":
+        return ["EChi2S", "EmissionHeightChi2"]
+    return ["EChi2S", "EmissionHeightChi2", "Erec", "ErecS", "SizeSecondMax"]
+
+
 def extra_columns(df, analysis_type, training, index, tel_config=None, observatory="veritas"):
     """Add extra columns required for analysis type."""
+    n_rows = len(index)
+
     if analysis_type == "stereo_analysis":
-        n = len(index)
-        data = {
-            "Xoff_weighted_bdt": _to_numpy_1d(df["Xoff"], np.float32),
-            "Yoff_weighted_bdt": _to_numpy_1d(df["Yoff"], np.float32),
-            "Xoff_intersect": _to_numpy_1d(df["Xoff_intersect"], np.float32),
-            "Yoff_intersect": _to_numpy_1d(df["Yoff_intersect"], np.float32),
-            "Diff_Xoff": (
-                _to_numpy_1d(df["Xoff"], np.float32)
-                - _to_numpy_1d(df["Xoff_intersect"], np.float32)
-            ).astype(np.float32),
-            "Diff_Yoff": (
-                _to_numpy_1d(df["Yoff"], np.float32)
-                - _to_numpy_1d(df["Yoff_intersect"], np.float32)
-            ).astype(np.float32),
-            "DispNImages": _to_numpy_1d(df["DispNImages"], np.int32),
-            "img2_ang": _to_numpy_1d(df["img2_ang"], np.float32),
-            # These may be absent in some datasets; if missing, fill with NaN
-            "Erec": (
-                _to_numpy_1d(df["Erec"], np.float32)
-                if _has_field(df, "Erec")
-                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
-            ),
-            "ErecS": (
-                _to_numpy_1d(df["ErecS"], np.float32)
-                if _has_field(df, "ErecS")
-                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
-            ),
-            "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
-            "Geomagnetic_Angle": calculate_geomagnetic_angles(
-                _to_numpy_1d(df["ArrayPointing_Azimuth"], np.float32),
-                _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
-                observatory=observatory,
-            ),
-        }
-        # Add array footprint if telescope configuration is available
-        if tel_config is not None:
-            tel_list_matrix = _to_dense_array(df["DispTelList_T"])
-            data["array_footprint"] = _calculate_array_footprint(tel_config, tel_list_matrix)
+        data = _build_stereo_extra_data(df, n_rows, tel_config, observatory)
     elif "classification" in analysis_type:
-        n = len(index)
-        data = {
-            "MSCW": _to_numpy_1d(df["MSCW"], np.float32),
-            "MSCL": _to_numpy_1d(df["MSCL"], np.float32),
-            "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
-            "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
-            "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
-        }
-        if _has_field(df, "SizeSecondMax"):
-            data["SizeSecondMax"] = _to_numpy_1d(df["SizeSecondMax"], np.float32)
-        # Add core distance: sqrt(Xcore^2 + Ycore^2)
-        if _has_field(df, "Xcore") and _has_field(df, "Ycore"):
-            xcore = _to_numpy_1d(df["Xcore"], np.float32)
-            ycore = _to_numpy_1d(df["Ycore"], np.float32)
-            data["Core_Distance"] = np.sqrt(xcore**2 + ycore**2).astype(np.float32)
-        else:
-            data["Core_Distance"] = np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
-        if _has_field(df, "DispAbsSumWeigth"):
-            data["DispAbsSumWeigth"] = _to_numpy_1d(df["DispAbsSumWeigth"], np.float32)
-        else:
-            data["DispAbsSumWeigth"] = np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
-        if not training:
-            data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
+        data = _build_classification_extra_data(df, n_rows, training)
+    else:
+        raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
     df_extra = pd.DataFrame(data, index=index)
-    # For stereo_analysis, Erec/ErecS must remain in linear space for residual computation
-    # (log10 is applied explicitly when computing E_residual = log10(MC) - log10(ErecS))
-    # For classification, Erec/ErecS can be log10'd as features
-    if analysis_type == "stereo_analysis":
-        apply_log10_list = [
-            "EChi2S",
-            "EmissionHeightChi2",
-        ]
-    else:
-        apply_log10_list = [
-            "EChi2S",
-            "EmissionHeightChi2",
-            "Erec",
-            "ErecS",
-            "SizeSecondMax",
-        ]
+    apply_log10_list = _log10_variables_for_extra_columns(analysis_type)
     apply_clip_intervals(
         df_extra,
         apply_log10=apply_log10_list,
@@ -1276,20 +1277,6 @@ def zenith_in_bins(zenith_angles, bins):
     bins = np.asarray(bins, dtype=float)
     idx = np.clip(np.digitize(zenith_angles, bins) - 1, 0, len(bins) - 2)
     return idx.astype(np.int32)
-
-
-def energy_in_bins(df_chunk, bins):
-    """Apply energy binning based on reconstructed energy and given limits."""
-    centers = np.array([(b["E_min"] + b["E_max"]) / 2 if b is not None else np.nan for b in bins])
-    valid = (df_chunk["Erec"].to_numpy() > 0) & ~np.isnan(centers).all()
-    e_bin = np.full(len(df_chunk), -1, dtype=np.int32)
-    log_e = np.log10(df_chunk.loc[valid, "Erec"].to_numpy())
-    distances = np.abs(log_e[:, None] - centers)
-    distances[:, np.isnan(centers)] = np.inf
-
-    e_bin[valid] = np.argmin(distances, axis=1)
-    df_chunk["e_bin"] = e_bin
-    return df_chunk["e_bin"]
 
 
 def energy_interpolation_bins(df_chunk, bins):

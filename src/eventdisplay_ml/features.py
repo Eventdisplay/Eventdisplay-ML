@@ -176,7 +176,7 @@ def _classification_features(tmva_style=False):
         List of feature names.
     """
     if tmva_style:
-        # Base features from ROOT file needed to compute derived features
+        # Final TMVA-style model features. Some are derived during preprocessing.
         return [
             "DispNImages",
             "EChi2S",
@@ -185,10 +185,9 @@ def _classification_features(tmva_style=False):
             "MSCW",
             "MSCL",
             "SizeSecondMax",
-            "Xcore",
-            "Ycore",
+            "Core_Distance",
             "DispAbsSumWeigth",
-            "ArrayPointing_Elevation",
+            "ze_bin",
         ]
 
     var_tel = telescope_features("classification")
