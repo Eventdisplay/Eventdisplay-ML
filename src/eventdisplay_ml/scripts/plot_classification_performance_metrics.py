@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import uproot
 
+from eventdisplay_ml import utils
+
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
@@ -127,7 +129,8 @@ def load_efficiency_tmva(path, ebin, zebin=0):
 
 def load_efficiency_xgb(path, ebin):
     """Load efficiencies from XGB files."""
-    data_joblib = joblib.load(Path(path) / f"gammahadron_bdt_ebin{ebin}.joblib")
+    model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
+    data_joblib = joblib.load(model_file)
     df_xgboost = data_joblib["models"]["xgboost"]["efficiency"]
 
     x_joblib = df_xgboost["threshold"]

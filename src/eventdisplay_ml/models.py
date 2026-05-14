@@ -97,12 +97,24 @@ def load_classification_models(model_prefix, model_name):
     models = {}
     par = {}
 
-    pattern = f"{model_prefix.name}_ebin*.joblib"
-    files = sorted(model_dir_path.glob(pattern))
+    pattern = re.compile(rf"^{re.escape(model_prefix.name)}_ebin(\d+)\.joblib(?:\.gz)?$")
+    matched_files = [
+        file for file in model_dir_path.iterdir() if file.is_file() and pattern.match(file.name)
+    ]
+    files_by_bin = {}
+    for file in matched_files:
+        match = pattern.match(file.name)
+        if not match:
+            continue
+        e_bin = int(match.group(1))
+        existing = files_by_bin.get(e_bin)
+        if existing is None or file.name.endswith(".joblib.gz"):
+            files_by_bin[e_bin] = file
+    files = [files_by_bin[e_bin] for e_bin in sorted(files_by_bin)]
 
     _logger.info(f"Loading classification models from {files}")
     for file in files:
-        match = re.search(r"_ebin(\d+)\.joblib$", file.name)
+        match = pattern.match(file.name)
         if not match:
             _logger.warning(f"Could not extract energy bin from filename: {file.name}")
             continue
@@ -206,7 +218,7 @@ def load_regression_models(model_prefix, model_name):
     dict
         Model dictionary.
     """
-    model_path = Path(model_prefix).with_suffix(".joblib")
+    model_path = utils.resolve_joblib_path(model_prefix)
     _logger.info(f"Loading regression model: {model_path}")
 
     model_data = joblib.load(model_path)

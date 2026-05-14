@@ -22,13 +22,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from eventdisplay_ml import utils
+
 _logger = logging.getLogger(__name__)
 
 
 def load_model_config(model_file):
     """Load model configuration with cached feature importances."""
     _logger.info(f"Loading model from {model_file}")
-    model_dict = joblib.load(model_file)
+    model_dict = joblib.load(utils.resolve_joblib_path(model_file))
 
     models = model_dict.get("models")
     if not isinstance(models, dict) or not models:

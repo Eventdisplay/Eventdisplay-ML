@@ -7,6 +7,25 @@ from pathlib import Path
 _logger = logging.getLogger(__name__)
 
 
+def resolve_joblib_path(path_or_prefix):
+    """Resolve model path supporting .joblib.gz (preferred) and .joblib."""
+    path = Path(path_or_prefix)
+    path_str = str(path)
+
+    if path_str.endswith(".joblib.gz"):
+        candidates = [path, Path(path_str.removesuffix(".gz"))]
+    elif path_str.endswith(".joblib"):
+        candidates = [Path(f"{path_str}.gz"), path]
+    else:
+        candidates = [Path(f"{path_str}.joblib.gz"), Path(f"{path_str}.joblib"), path]
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    raise FileNotFoundError(f"Could not resolve model file from '{path_or_prefix}'.")
+
+
 def read_input_file_list(input_file_list):
     """
     Read a list of input files from a text file.
@@ -129,6 +148,6 @@ def output_file_name(model_prefix, n_tel=None, energy_bin_number=None):
         filename = f"{model_prefix!s}_ntel{n_tel}"
     if energy_bin_number is not None:
         filename += f"_ebin{energy_bin_number}"
-    filename += ".joblib"
+    filename += ".joblib.gz"
     _logger.info(f"Output filename: {filename}")
     return filename
