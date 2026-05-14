@@ -142,10 +142,18 @@ def main():
     parser = argparse.ArgumentParser(description="Plot TMVA and XGBoost metrics.")
     parser.add_argument("root_dir", help="Path to the  TMVA BDT .root file")
     parser.add_argument("joblib_dir", help="Path to the XGB BDT .joblib file")
+    parser.add_argument(
+        "--energy-bin",
+        type=int,
+        choices=range(9),
+        default=None,
+        help="Plot only a single energy bin (0-8). If omitted, all bins are processed.",
+    )
     args = parser.parse_args()
 
     # assume energy binning is identical in XGB and TMVA files.
-    for ebin in range(9):
+    energy_bins = [args.energy_bin] if args.energy_bin is not None else range(9)
+    for ebin in energy_bins:
         x_root, y_effs, y_effb = load_efficiency_tmva(args.root_dir, ebin)
         x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(args.joblib_dir, ebin)
 
