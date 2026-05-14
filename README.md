@@ -315,6 +315,14 @@ eventdisplay-ml-plot-training-evaluation \
   --output_file diagnostics/training_curves.png
 ```
 
+or for all joblib files in a directory:
+
+```bash
+eventdisplay-ml-plot-training-evaluation \
+  --model_dir models/ \
+  --output_dir diagnostics/
+```
+
 Output:
 
 - Figure with one panel per tracked metric (for example `rmse`), showing training and test curves.
