@@ -20,7 +20,7 @@ def features_tmva_style(analysis_type, training=True):
         List of feature names.
     """
     if analysis_type == "stereo_analysis":
-        return _regression_features(training)
+        raise ValueError("TMVA-style features are only defined for classification analysis.")
     if "classification" in analysis_type:
         return _classification_features(tmva_style=True)
     raise ValueError(f"Unknown analysis type: {analysis_type}")
@@ -92,7 +92,7 @@ def telescope_features(analysis_type):
     Parameters
     ----------
     analysis_type : str
-        Type of analysis, e.g. ``"classification"`` or ``"stereo_analysis"``.
+        Type of analysis.
 
     Returns
     -------
@@ -176,6 +176,7 @@ def _classification_features(tmva_style=False):
         List of feature names.
     """
     if tmva_style:
+        # Base features from ROOT file needed to compute derived features
         return [
             "DispNImages",
             "EChi2S",
@@ -184,7 +185,10 @@ def _classification_features(tmva_style=False):
             "MSCW",
             "MSCL",
             "SizeSecondMax",
-            "ze_bin",
+            "Xcore",
+            "Ycore",
+            "DispAbsSumWeigth",
+            "ArrayPointing_Elevation",
         ]
 
     var_tel = telescope_features("classification")
@@ -211,6 +215,9 @@ def clip_intervals():
     """
     Get clip intervals for variables.
 
+    Clip intervals are defined based on physical bounds or ranges used
+    in the classical TMVA BDT analysis.
+
     Returns
     -------
     dict
@@ -232,8 +239,8 @@ def clip_intervals():
         # Energy-related variables - log10 transformation with lower bound
         "Erec": (energy_min, None),
         "ErecS": (energy_min, None),
-        "EChi2S": (energy_min, None),
-        "EmissionHeightChi2": (1e-6, None),
+        "EChi2S": (energy_min, 10000.0),  # TMVA: -6 to 4 (before log10)
+        "EmissionHeightChi2": (1e-6, 10000.0),  # TMVA: -11 to 4 (before log10)
         "img2_ang": (0.0, 360.0),
         # Per-telescope energy and size variables - log10 transformation with lower bound
         "size": (1, None),
@@ -244,8 +251,13 @@ def clip_intervals():
         # Derived variables - avoid numerical issues
         "size_dist2": (1.0, None),
         "tgrad_x": (-50.0, 50.0),
+        "MSCW": (-2.0, 2.0),
+        "MSCL": (-2.0, 5.0),
+        "SizeSecondMax": (1e-6, 100000.0),  # TMVA: 0 to 5 (after log10)
+        "Core_Distance": (0.0, 1000.0),  # sqrt(Xcore^2 + Ycore^2)
+        "DispAbsSumWeigth": (0.0, 5.0),  # TMVA: 0 to 5
         # Physical bounds
-        "EmissionHeight": (0, 120),  # top of atmosphere
+        "EmissionHeight": (0, 100),  # top of atmosphere
         "R_core": (-10, None),  # badly reconstructed events
     }
 
