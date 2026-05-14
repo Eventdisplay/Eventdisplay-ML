@@ -51,7 +51,6 @@ def read_telescope_config(root_file):
 
     n_tel = int(telconfig_data["NTel"][0])
     tel_ids = telconfig_data["TelID"]
-    # Keep array of mirror areas; avoid shadowing this name later
     mirror_area_arr = telconfig_data["MirrorArea"]
     tel_x = telconfig_data["TelX"]
     tel_y = telconfig_data["TelY"]
@@ -1222,6 +1221,7 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             tel_list_matrix = _to_dense_array(df["DispTelList_T"])
             data["array_footprint"] = _calculate_array_footprint(tel_config, tel_list_matrix)
     elif "classification" in analysis_type:
+        n = len(index)
         data = {
             "MSCW": _to_numpy_1d(df["MSCW"], np.float32),
             "MSCL": _to_numpy_1d(df["MSCL"], np.float32),
@@ -1231,6 +1231,17 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
         }
         if _has_field(df, "SizeSecondMax"):
             data["SizeSecondMax"] = _to_numpy_1d(df["SizeSecondMax"], np.float32)
+        # Add core distance: sqrt(Xcore^2 + Ycore^2)
+        if _has_field(df, "Xcore") and _has_field(df, "Ycore"):
+            xcore = _to_numpy_1d(df["Xcore"], np.float32)
+            ycore = _to_numpy_1d(df["Ycore"], np.float32)
+            data["Core_Distance"] = np.sqrt(xcore**2 + ycore**2).astype(np.float32)
+        else:
+            data["Core_Distance"] = np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
+        if _has_field(df, "DispAbsSumWeigth"):
+            data["DispAbsSumWeigth"] = _to_numpy_1d(df["DispAbsSumWeigth"], np.float32)
+        else:
+            data["DispAbsSumWeigth"] = np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
         if not training:
             data["ze_bin"] = _to_numpy_1d(df["ze_bin"], np.float32)
 
@@ -1249,6 +1260,7 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             "EmissionHeightChi2",
             "Erec",
             "ErecS",
+            "SizeSecondMax",
         ]
     apply_clip_intervals(
         df_extra,
@@ -1282,6 +1294,8 @@ def energy_in_bins(df_chunk, bins):
 
 def energy_interpolation_bins(df_chunk, bins):
     """Compute neighboring energy bins and interpolation weights per event.
+
+    Allows to interpolate downstream using 'value = (1 - alpha) * value_lo + alpha * value_hi'.
 
     Parameters
     ----------
