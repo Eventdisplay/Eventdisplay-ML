@@ -137,9 +137,6 @@ def _resolve_branch_aliases(tree, branch_list):
         "ErecS",
         "nlowgain",
         "SizeSecondMax",
-        "Xcore",
-        "Ycore",
-        "DispAbsSumWeigth",
     }
     final = [b for b in resolved if b not in optional or b in keys]
 
@@ -1282,7 +1279,7 @@ def zenith_in_bins(zenith_angles, bins):
 def energy_interpolation_bins(df_chunk, bins):
     """Compute neighboring energy bins and interpolation weights per event.
 
-    Allows to interpolate downstream using 'value = (1 - alpha) * value_lo + alpha * value_hi'.
+    Allows downstream interpolation using 'value = (1 - alpha) * value_lo + alpha * value_hi'.
 
     Parameters
     ----------
