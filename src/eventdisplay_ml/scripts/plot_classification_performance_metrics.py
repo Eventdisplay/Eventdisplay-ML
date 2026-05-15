@@ -127,11 +127,20 @@ def load_efficiency_tmva(path, ebin, zebin=0):
     return x_root, y_effs, y_effb
 
 
-def load_efficiency_xgb(path, ebin):
+def load_efficiency_xgb(path, ebin, zebin=-1):
     """Load efficiencies from XGB files."""
     model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
     data_joblib = joblib.load(model_file)
-    df_xgboost = data_joblib["models"]["xgboost"]["efficiency"]
+    efficiency_key = "efficiency" if zebin < 0 else f"efficiency_ze{zebin}"
+    model_data = data_joblib["models"]["xgboost"]
+    if efficiency_key not in model_data:
+        _logger.warning(
+            "Efficiency key '%s' not found for ebin %s. Falling back to 'efficiency'.",
+            efficiency_key,
+            ebin,
+        )
+        efficiency_key = "efficiency"
+    df_xgboost = model_data[efficiency_key]
 
     x_joblib = df_xgboost["threshold"]
     y_effs_xgb = df_xgboost["signal_efficiency"]
@@ -152,13 +161,27 @@ def main():
         default=None,
         help="Plot only a single energy bin (0-8). If omitted, all bins are processed.",
     )
+    parser.add_argument(
+        "--zenith-bin-tmva",
+        type=int,
+        default=0,
+        help="Zenith bin index for TMVA ROOT files (second digit in BDT_<ebin>_<zebin>.root). Default: 0.",
+    )
+    parser.add_argument(
+        "--zenith-bin-xgb",
+        type=int,
+        default=-1,
+        help="Zenith bin index for XGB efficiency tables (-1 uses all events via 'efficiency', 0+ uses 'efficiency_zeN'). Default: -1 (all events).",
+    )
     args = parser.parse_args()
 
     # assume energy binning is identical in XGB and TMVA files.
     energy_bins = [args.energy_bin] if args.energy_bin is not None else range(9)
     for ebin in energy_bins:
-        x_root, y_effs, y_effb = load_efficiency_tmva(args.root_dir, ebin)
-        x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(args.joblib_dir, ebin)
+        x_root, y_effs, y_effb = load_efficiency_tmva(args.root_dir, ebin, args.zenith_bin_tmva)
+        x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(
+            args.joblib_dir, ebin, args.zenith_bin_xgb
+        )
 
         fig, axs = plt.subplots(2, 2, figsize=(16, 16), sharex=False)
         fig.set_constrained_layout(True)

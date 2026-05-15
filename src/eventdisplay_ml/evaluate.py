@@ -15,11 +15,8 @@ from sklearn.metrics import (
 _logger = logging.getLogger(__name__)
 
 
-def evaluation_efficiency(name, model, x_test, y_test):
-    """Calculate signal and background efficiency as a function of threshold."""
-    y_pred_proba = model.predict_proba(x_test)[:, 1]
-    thresholds = np.linspace(0, 1, 101)
-
+def _efficiency_dataframe(name, y_pred_proba, y_test, thresholds, context_label=""):
+    """Compute efficiency dataframe for a prediction/label slice."""
     n_signal = (y_test == 1).sum()
     n_background = (y_test == 0).sum()
 
@@ -31,7 +28,7 @@ def evaluation_efficiency(name, model, x_test, y_test):
         eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else 0)
         eff_background.append(((pred) & (y_test == 0)).sum() / n_background if n_background else 0)
         _logger.info(
-            f"{name} Threshold: {t:.2f} | "
+            f"{name}{context_label} Threshold: {t:.2f} | "
             f"Signal Efficiency: {eff_signal[-1]:.4f} | "
             f"Background Efficiency: {eff_background[-1]:.4f}"
         )
@@ -48,6 +45,44 @@ def evaluation_efficiency(name, model, x_test, y_test):
             "n_background": n_background * eff_background,
         }
     )
+
+
+def evaluation_efficiency(name, model, x_test, y_test, return_by_zenith=False):
+    """Calculate signal/background efficiency for all events and optionally by zenith bin."""
+    y_pred_proba = model.predict_proba(x_test)[:, 1]
+    thresholds = np.linspace(0, 1, 101)
+
+    efficiency_all = _efficiency_dataframe(name, y_pred_proba, y_test, thresholds)
+    if not return_by_zenith:
+        return efficiency_all
+
+    efficiencies_by_zenith = {}
+    if "ze_bin" not in x_test.columns:
+        _logger.warning("Column 'ze_bin' missing in x_test; per-zenith efficiencies not computed.")
+        return efficiency_all, efficiencies_by_zenith
+
+    ze_bins = pd.Series(x_test["ze_bin"]).dropna().unique().tolist()
+    ze_bins = sorted(ze_bins)
+    for ze_bin in ze_bins:
+        mask = x_test["ze_bin"] == ze_bin
+        if not np.any(mask):
+            continue
+        try:
+            key = int(ze_bin)
+        except (TypeError, ValueError):
+            _logger.warning(
+                "Skipping non-integer ze_bin value in efficiency calculation: %s", ze_bin
+            )
+            continue
+        efficiencies_by_zenith[key] = _efficiency_dataframe(
+            name,
+            y_pred_proba[mask],
+            y_test[mask],
+            thresholds,
+            context_label=f" [ze{key}]",
+        )
+
+    return efficiency_all, efficiencies_by_zenith
 
 
 def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):
