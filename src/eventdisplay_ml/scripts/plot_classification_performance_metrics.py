@@ -116,19 +116,38 @@ def plot_score_distributions(
 def load_efficiency_tmva(path, ebin, zebin=0):
     """Load efficiencies from TMVA root files."""
     file_path = Path(path) / f"BDT_{ebin}_{zebin}.root"
-    with uproot.open(file_path) as rf:
-        base_path = "Method_BDT/BDT_0"
-        effs_rt = rf[f"{base_path}/MVA_BDT_0_effS"]
-        effb_rt = rf[f"{base_path}/MVA_BDT_0_effB"]
-        x_root_raw = (
-            effs_rt.axis().centers() if hasattr(effs_rt, "axis") else effs_rt.values(axis=0)
+    try:
+        with uproot.open(file_path) as rf:
+            base_path = "Method_BDT/BDT_0"
+            effs_rt = rf[f"{base_path}/MVA_BDT_0_effS"]
+            effb_rt = rf[f"{base_path}/MVA_BDT_0_effB"]
+            x_root_raw = (
+                effs_rt.axis().centers() if hasattr(effs_rt, "axis") else effs_rt.values(axis=0)
+            )
+            x_min = np.min(x_root_raw)
+            x_max = np.max(x_root_raw)
+            if x_max == x_min:
+                _logger.warning(
+                    "TMVA efficiency axis is degenerate in %s (ebin=%s, zebin=%s); skipping TMVA overlay.",
+                    file_path,
+                    ebin,
+                    zebin,
+                )
+                return None
+            # map [-x_min, x_max] -> [0, 1]
+            x_root = (x_root_raw - x_min) / (x_max - x_min)
+            y_effs = effs_rt.values()
+            y_effb = effb_rt.values()
+    except OSError as exc:
+        _logger.warning(
+            "TMVA efficiency histograms unavailable in %s (ebin=%s, zebin=%s): %s. "
+            "Plotting XGB only for this bin.",
+            file_path,
+            ebin,
+            zebin,
+            exc,
         )
-        x_min = np.min(x_root_raw)
-        x_max = np.max(x_root_raw)
-        # map [-x_min, x_max] -> [0, 1]
-        x_root = (x_root_raw - x_min) / (x_max - x_min)
-        y_effs = effs_rt.values()
-        y_effb = effb_rt.values()
+        return None
 
     return x_root, y_effs, y_effb
 
