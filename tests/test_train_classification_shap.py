@@ -80,7 +80,7 @@ def test_train_classification_caches_shap_importance_and_features():
         with patch("eventdisplay_ml.models.evaluate_classification_model") as mock_eval:
             with patch("eventdisplay_ml.models.evaluation_efficiency") as mock_eff:
                 mock_eval.return_value = expected_shap
-                mock_eff.return_value = expected_efficiency
+                mock_eff.return_value = (expected_efficiency, {})
 
                 result = models.train_classification([signal_df, background_df], cfg)
 
