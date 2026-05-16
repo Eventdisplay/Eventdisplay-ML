@@ -138,7 +138,7 @@ def load_efficiency_tmva(path, ebin, zebin=0):
             x_root = (x_root_raw - x_min) / (x_max - x_min)
             y_effs = effs_rt.values()
             y_effb = effb_rt.values()
-    except OSError as exc:
+    except (OSError, KeyError) as exc:
         _logger.warning(
             "TMVA efficiency histograms unavailable in %s (ebin=%s, zebin=%s): %s. "
             "Plotting XGB only for this bin.",
