@@ -152,10 +152,14 @@ def load_efficiency_tmva(path, ebin, zebin=0):
     return x_root, y_effs, y_effb
 
 
-def load_efficiency_xgb(path, ebin, zebin=-1):
-    """Load efficiencies from XGB files."""
+def load_xgb_model_data(path, ebin):
+    """Load XGB joblib model payload for one energy bin."""
     model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
-    data_joblib = joblib.load(model_file)
+    return joblib.load(model_file)
+
+
+def load_efficiency_xgb(data_joblib, ebin, zebin=-1):
+    """Load efficiencies from XGB model payload."""
     model_data = data_joblib["models"]["xgboost"]
 
     if zebin < 0:
@@ -186,10 +190,8 @@ def load_efficiency_xgb(path, ebin, zebin=-1):
     return x_joblib, y_effs_xgb, y_effb_xgb
 
 
-def xgb_zenith_bins(path, ebin):
-    """Return available XGB zenith bins from the joblib model file."""
-    model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
-    data_joblib = joblib.load(model_file)
+def xgb_zenith_bins(data_joblib):
+    """Return available XGB zenith bins from loaded joblib model payload."""
     model_data = data_joblib["models"]["xgboost"]
     ze_bins = []
     for key in model_data:
@@ -248,7 +250,6 @@ def make_figure(x_joblib, y_effs_xgb, y_effb_xgb, x_root=None, y_effs=None, y_ef
     for ax in axs.flatten():
         ax.legend(fontsize=9, frameon=False, loc="best")
 
-    plt.tight_layout()
     return fig
 
 
@@ -323,12 +324,13 @@ def main():
     # assume energy binning is identical in XGB and TMVA files.
     energy_bins = [args.energy_bin] if args.energy_bin is not None else range(9)
     for ebin in energy_bins:
-        available_xgb_bins = xgb_zenith_bins(joblib_dir, ebin)
+        xgb_model_data = load_xgb_model_data(joblib_dir, ebin)
+        available_xgb_bins = xgb_zenith_bins(xgb_model_data)
         available_tmva_bins = tmva_zenith_bins(root_dir, ebin) if root_dir else []
         xgb_bins_to_plot = selected_xgb_bins(args.zenith_bin_xgb, available_xgb_bins)
 
         for xgb_zebin in xgb_bins_to_plot:
-            x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(joblib_dir, ebin, xgb_zebin)
+            x_joblib, y_effs_xgb, y_effb_xgb = load_efficiency_xgb(xgb_model_data, ebin, xgb_zebin)
             tmva_zebin = resolve_tmva_zebin(xgb_zebin, available_tmva_bins, args.zenith_bin_tmva)
 
             tmva_data = tmva_overlay_data(root_dir, ebin, xgb_zebin, tmva_zebin)
