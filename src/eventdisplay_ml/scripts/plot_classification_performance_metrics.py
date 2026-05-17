@@ -156,15 +156,27 @@ def load_efficiency_xgb(path, ebin, zebin=-1):
     """Load efficiencies from XGB files."""
     model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
     data_joblib = joblib.load(model_file)
-    efficiency_key = "efficiency" if zebin < 0 else f"efficiency_ze{zebin}"
     model_data = data_joblib["models"]["xgboost"]
-    if efficiency_key not in model_data:
-        _logger.warning(
-            "Efficiency key '%s' not found for ebin %s. Falling back to 'efficiency'.",
-            efficiency_key,
-            ebin,
-        )
+
+    if zebin < 0:
         efficiency_key = "efficiency"
+    else:
+        efficiency_key = f"efficiency_ze{zebin}"
+        if efficiency_key not in model_data:
+            available_ze_bins = []
+            for key in model_data:
+                match = re.fullmatch(r"efficiency_ze(\d+)", key)
+                if match:
+                    available_ze_bins.append(int(match.group(1)))
+            available_ze_bins = sorted(set(available_ze_bins))
+            raise KeyError(
+                f"Efficiency key '{efficiency_key}' not found for ebin {ebin}. "
+                f"Available zenith bins: {available_ze_bins or 'none'}."
+            )
+
+    if efficiency_key not in model_data:
+        raise KeyError(f"Efficiency key '{efficiency_key}' not found for ebin {ebin}.")
+
     df_xgboost = model_data[efficiency_key]
 
     x_joblib = df_xgboost["threshold"]
