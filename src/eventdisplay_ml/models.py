@@ -773,7 +773,12 @@ def train_classification(df, model_configs):
         )
         cfg["model"] = model
         cfg["features"] = x_data.columns.tolist()  # Store feature names for diagnostics
-        cfg["efficiency"] = evaluation_efficiency(name, model, x_test, y_test)
+        efficiency_all, efficiencies_by_zenith = evaluation_efficiency(
+            name, model, x_test, y_test, return_by_zenith=True
+        )
+        cfg["efficiency"] = efficiency_all
+        for ze_bin, ze_efficiency in efficiencies_by_zenith.items():
+            cfg[f"efficiency_ze{ze_bin}"] = ze_efficiency
         cfg["shap_importance"] = shap_importance
 
     return model_configs
