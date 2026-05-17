@@ -134,7 +134,7 @@ def load_efficiency_tmva(path, ebin, zebin=0):
                     zebin,
                 )
                 return None
-            # map [-x_min, x_max] -> [0, 1]
+            # map [x_min, x_max] -> [0, 1]
             x_root = (x_root_raw - x_min) / (x_max - x_min)
             y_effs = effs_rt.values()
             y_effb = effb_rt.values()
