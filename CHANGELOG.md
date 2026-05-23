@@ -7,6 +7,17 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v3.0.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v3.0.0) - 2026-05-23
+
+### New Features
+
+- Add script to optimize gamma/hadron cut value using Li & Ma significance. Introduce fine binning for cut values and allow to take different source strengths and source spectral shapes into account. ([#56](https://github.com/Eventdisplay/Eventdisplay-ML/pull/56))
+- Add energy-bin interpolation support to the gamma/hadron classification application pipeline and improve the cut-optimization utilities by validating/interpolating rate/efficiency surfaces over energy and zenith (via 1/cos(ze) or cos(ze)). Add SHAP summary for gamma/hadron classification. ([#57](https://github.com/Eventdisplay/Eventdisplay-ML/pull/57))
+- Add TMVA-style gamma/hadron separation with the same features as TMVA BDT classification analysis. ([#58](https://github.com/Eventdisplay/Eventdisplay-ML/pull/58))
+- Improve classification hyperparameters with a focus on robustness, and add user-facing plotting CLI options for selecting `--model_dir`/`--output_dir` and `--energy-bin`. ([#60](https://github.com/Eventdisplay/Eventdisplay-ML/pull/60))
+- Add calculation and plotting of zenith-angle dependent signal and background efficiencies (classification mode). ([#61](https://github.com/Eventdisplay/Eventdisplay-ML/pull/61))
+
+
 ## [v2.0.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v2.0.0) - 2026-04-03
 
 ### New Features
