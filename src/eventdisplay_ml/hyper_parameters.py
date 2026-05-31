@@ -2,48 +2,12 @@
 
 import json
 import logging
+from importlib.resources import files
+from pathlib import Path
 
 _logger = logging.getLogger(__name__)
 
-
-XGB_REGRESSION_HYPERPARAMETERS = {
-    "xgboost": {
-        "model": None,
-        "hyper_parameters": {
-            "n_estimators": 10000,
-            "early_stopping_rounds": 50,
-            "eval_metric": ["rmse"],
-            "learning_rate": 0.02,  # Shrinkage
-            "max_depth": 7,
-            "min_child_weight": 10.0,  # Equivalent to MinNodeSize=1.0% for XGBoost
-            "objective": "reg:squarederror",
-            "n_jobs": 8,
-            "random_state": None,
-            "tree_method": "hist",
-            "subsample": 0.7,  # Default sensible value
-            "colsample_bytree": 0.7,  # Default sensible value
-        },
-    }
-}
-
-XGB_CLASSIFICATION_HYPERPARAMETERS = {
-    "xgboost": {
-        "model": None,
-        "hyper_parameters": {
-            "objective": "binary:logistic",
-            "eval_metric": ["logloss", "auc"],
-            "n_estimators": 5000,
-            "early_stopping_rounds": 100,
-            "max_depth": 4,
-            "learning_rate": 0.02,
-            "gamma": 0.2,
-            "subsample": 0.8,
-            "colsample_bytree": 0.6,
-            "random_state": None,
-            "n_jobs": 96,
-        },
-    }
-}
+_CONFIGS_DIR = files("eventdisplay_ml") / "configs"
 
 PRE_CUTS_REGRESSION = []
 
@@ -69,23 +33,25 @@ def hyper_parameters(analysis_type, config_file=None):
 
 def regression_hyper_parameters(config_file=None):
     """Get hyperparameters for XGBoost regression model."""
-    if config_file:
-        return _load_hyper_parameters_from_file(config_file)
-    _logger.info(f"Default hyperparameters: {XGB_REGRESSION_HYPERPARAMETERS}")
-    return XGB_REGRESSION_HYPERPARAMETERS
+    path = (
+        Path(config_file) if config_file else _CONFIGS_DIR / "default_hyperparameters_stereo.json"
+    )
+    return _load_hyper_parameters_from_file(path)
 
 
 def classification_hyper_parameters(config_file=None):
     """Get hyperparameters for XGBoost classification model."""
-    if config_file:
-        return _load_hyper_parameters_from_file(config_file)
-    _logger.info(f"Default hyperparameters: {XGB_CLASSIFICATION_HYPERPARAMETERS}")
-    return XGB_CLASSIFICATION_HYPERPARAMETERS
+    path = (
+        Path(config_file)
+        if config_file
+        else _CONFIGS_DIR / "default_hyperparameters_classification.json"
+    )
+    return _load_hyper_parameters_from_file(path)
 
 
 def _load_hyper_parameters_from_file(config_file):
     """Load hyperparameters from a JSON file."""
-    with open(config_file) as f:
+    with config_file.open() as f:
         hyperparameters = json.load(f)
     _logger.info(f"Loaded hyperparameters from {config_file}: {hyperparameters}")
     return hyperparameters

@@ -81,6 +81,9 @@ package-dir = { "" = "src" }
 where = [ "src" ]
 exclude = [ "eventdisplay_ml._dev_version.*" ]
 
+[tool.setuptools.package-data]
+"eventdisplay_ml" = ["configs/*.json"]
+
 [tool.setuptools_scm]
 write_to = "src/eventdisplay_ml/_version.py"
 

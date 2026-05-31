@@ -1,0 +1,18 @@
+{
+    "xgboost": {
+        "model": null,
+        "hyper_parameters": {
+            "objective": "binary:logistic",
+            "eval_metric": ["logloss", "auc"],
+            "n_estimators": 5000,
+            "early_stopping_rounds": 100,
+            "max_depth": 4,
+            "learning_rate": 0.02,
+            "gamma": 0.2,
+            "subsample": 0.8,
+            "colsample_bytree": 0.6,
+            "random_state": null,
+            "n_jobs": 96
+        }
+    }
+}
