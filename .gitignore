@@ -7,3 +7,4 @@ build/
 .coverage
 .vscode
 tmp_testing*
+diagnostics/

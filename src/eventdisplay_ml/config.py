@@ -160,8 +160,8 @@ def configure_training(analysis_type):
         else:
             model_configs["tmva_style"] = bool(tmva_style_raw)
         model_configs["pre_cuts"] = pre_cuts_classification(
-            e_min=np.power(10.0, model_parameters.get("energy_bins_log10_tev", []).get("E_min")),
-            e_max=np.power(10.0, model_parameters.get("energy_bins_log10_tev", []).get("E_max")),
+            e_min=np.power(10.0, model_parameters.get("energy_bins_log10_tev", {}).get("E_min")),
+            e_max=np.power(10.0, model_parameters.get("energy_bins_log10_tev", {}).get("E_max")),
         )
         model_configs["energy_bins_log10_tev"] = model_parameters.get("energy_bins_log10_tev", [])
         model_configs["zenith_bins_deg"] = model_parameters.get("zenith_bins_deg", [])

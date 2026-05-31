@@ -438,7 +438,14 @@ def process_file_chunked(analysis_type, model_configs):
     model_configs : dict
         Dictionary of model configurations.
     """
-    branch_list = features.features(analysis_type, training=False)
+    tmva_style = model_configs.get("tmva_style", False)
+    if tmva_style and analysis_type == "classification":
+        branch_list = features.features_tmva_style(analysis_type, training=False)
+        branch_list = [b for b in branch_list if b not in {"ze_bin", "ArrayPointing_Azimuth"}] + [
+            "ArrayPointing_Elevation"
+        ]
+    else:
+        branch_list = features.features(analysis_type, training=False)
     _logger.info(f"Using branches: {branch_list}")
     rename_map = {}
 
