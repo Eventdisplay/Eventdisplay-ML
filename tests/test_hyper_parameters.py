@@ -60,11 +60,10 @@ def test_classification_hyper_parameters_has_expected_keys():
         assert key in hp
 
 
-def test_regression_returns_copy_not_same_object():
-    """Default dict should be returned as-is; mutations could affect defaults."""
+def test_regression_hyper_parameters_returns_same_default_dict_object():
+    """regression_hyper_parameters returns the module-level default dict (no defensive copy)."""
     r1 = regression_hyper_parameters()
     r2 = regression_hyper_parameters()
-    # Both calls should return the same default dict
     assert r1 is r2
 
 
