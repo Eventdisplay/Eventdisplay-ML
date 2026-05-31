@@ -159,9 +159,16 @@ def configure_training(analysis_type):
             }
         else:
             model_configs["tmva_style"] = bool(tmva_style_raw)
+        e_bins = model_parameters.get("energy_bins_log10_tev", {})
+        e_min_log = e_bins.get("E_min")
+        e_max_log = e_bins.get("E_max")
+        if e_min_log is None or e_max_log is None:
+            raise ValueError(
+                "Model parameters must include 'energy_bins_log10_tev' with 'E_min' and 'E_max'."
+            )
         model_configs["pre_cuts"] = pre_cuts_classification(
-            e_min=np.power(10.0, model_parameters.get("energy_bins_log10_tev", {}).get("E_min")),
-            e_max=np.power(10.0, model_parameters.get("energy_bins_log10_tev", {}).get("E_max")),
+            e_min=np.power(10.0, e_min_log),
+            e_max=np.power(10.0, e_max_log),
         )
         model_configs["energy_bins_log10_tev"] = model_parameters.get("energy_bins_log10_tev", [])
         model_configs["zenith_bins_deg"] = model_parameters.get("zenith_bins_deg", [])

@@ -190,10 +190,10 @@ def test_configure_apply_classification_omits_regression_scalers(monkeypatch):
     assert result["models"][0]["model"] is not None
 
 
-def test_configure_training_classification_missing_energy_bins_no_attribute_error(
+def test_configure_training_classification_missing_energy_bins_raises_clear_error(
     monkeypatch, tmp_path
 ):
-    """Regression test for E6: missing energy_bins_log10_tev must not raise AttributeError."""
+    """Regression test for E6: missing energy_bins_log10_tev must raise a clear ValueError."""
     params_path = tmp_path / "params_no_bins.json"
     params_path.write_text(json.dumps({}))
     monkeypatch.setattr(
@@ -222,8 +222,5 @@ def test_configure_training_classification_missing_energy_bins_no_attribute_erro
         "load_model_parameters",
         lambda *_: {"tmva_style": False, "zenith_bins_deg": []},
     )
-    # No energy bin information available: training config should fall back without crashing.
-    result = config.configure_training("classification")
-
-    assert result["energy_bins_log10_tev"] == []
-    assert result["pre_cuts"] == (0.0, 1e9)
+    with pytest.raises(ValueError, match=r"E_min.*E_max|energy_bins_log10_tev"):
+        config.configure_training("classification")
