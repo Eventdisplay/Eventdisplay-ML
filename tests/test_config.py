@@ -222,9 +222,8 @@ def test_configure_training_classification_missing_energy_bins_no_attribute_erro
         "load_model_parameters",
         lambda *_: {"tmva_style": False, "zenith_bins_deg": []},
     )
-    # Patch np.power so None exponents don't raise TypeError (we only care about no AttributeError)
-    monkeypatch.setattr(config.np, "power", lambda base, exp: exp)
-
+    # No energy bin information available: training config should fall back without crashing.
     result = config.configure_training("classification")
 
     assert result["energy_bins_log10_tev"] == []
+    assert result["pre_cuts"] == (0.0, 1e9)
