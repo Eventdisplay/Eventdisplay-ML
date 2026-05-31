@@ -219,6 +219,6 @@ def test_output_file_name_creates_parent_directory(tmp_path):
     assert (tmp_path / "subdir").is_dir()
 
 
-def test_output_file_name_returns_path_object(tmp_path):
+def test_output_file_name_returns_string(tmp_path):
     result = output_file_name(tmp_path / "model")
     assert isinstance(result, str)
