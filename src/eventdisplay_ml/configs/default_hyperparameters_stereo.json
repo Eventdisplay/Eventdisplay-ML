@@ -1,0 +1,19 @@
+{
+    "xgboost": {
+        "model": null,
+        "hyper_parameters": {
+            "n_estimators": 10000,
+            "early_stopping_rounds": 50,
+            "eval_metric": ["rmse"],
+            "learning_rate": 0.02,
+            "max_depth": 7,
+            "min_child_weight": 10.0,
+            "objective": "reg:squarederror",
+            "n_jobs": 8,
+            "random_state": null,
+            "tree_method": "hist",
+            "subsample": 0.7,
+            "colsample_bytree": 0.7
+        }
+    }
+}

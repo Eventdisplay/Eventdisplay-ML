@@ -60,11 +60,12 @@ def test_classification_hyper_parameters_has_expected_keys():
         assert key in hp
 
 
-def test_regression_hyper_parameters_returns_same_default_dict_object():
-    """regression_hyper_parameters returns the module-level default dict (no defensive copy)."""
+def test_regression_hyper_parameters_default_loads_bundled_json():
+    """Default call loads the bundled JSON file and returns a fresh dict each time."""
     r1 = regression_hyper_parameters()
     r2 = regression_hyper_parameters()
-    assert r1 is r2
+    assert r1 == r2
+    assert r1 is not r2
 
 
 # ---------------------------------------------------------------------------
