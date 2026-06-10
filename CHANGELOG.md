@@ -20,7 +20,7 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 - Move default XGBoost hyperparameters from hard-coded Python dicts into versioned JSON files
   (`src/eventdisplay_ml/configs/default_hyperparameters_stereo.json` and
-  `default_hyperparameters_classification.json`). The `hyper_parameters` module now always loads
+  `src/eventdisplay_ml/configs/default_hyperparameters_classification.json`). The `hyper_parameters` module now always loads
   from a file — either the bundled default or a user-supplied `--hyperparameter_config` path —
   so the full training configuration is captured in a single auditable artifact. ([#66](https://github.com/Eventdisplay/Eventdisplay-ML/pull/66))
 
