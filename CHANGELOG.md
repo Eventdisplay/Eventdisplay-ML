@@ -7,6 +7,30 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v3.1.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v3.1.0) - 2026-06-10
+
+### Bugfixes
+
+- Fix classification feature mismatch during application (E5): `process_file_chunked` now uses
+  `features_tmva_style` when `tmva_style=True`, matching the training branch. ([#63](https://github.com/Eventdisplay/Eventdisplay-ML/pull/63))
+- Fix `AttributeError` in `configure_training` when `energy_bins_log10_tev` is absent from
+  model parameters (E6): changed fallback default from `[]` (list, no `.get`) to `{}`. ([#63](https://github.com/Eventdisplay/Eventdisplay-ML/pull/63))
+
+### New Features
+
+- Move default XGBoost hyperparameters from hard-coded Python dicts into versioned JSON files
+  (`src/eventdisplay_ml/configs/default_hyperparameters_stereo.json` and
+  `src/eventdisplay_ml/configs/default_hyperparameters_classification.json`). The `hyper_parameters` module now always loads
+  from a file — either the bundled default or a user-supplied `--hyperparameter_config` path —
+  so the full training configuration is captured in a single auditable artifact. ([#66](https://github.com/Eventdisplay/Eventdisplay-ML/pull/66))
+
+### Maintenance
+
+- Add comprehensive unit-test suite covering all production modules (`config`, `data_processing`,
+  `diagnostic_utils`, `evaluate`, `features`, `geomag`, `hyper_parameters`, `models`, `optimize_classification`,
+  `utils`). Overall line coverage exceeds 90 %. ([#63](https://github.com/Eventdisplay/Eventdisplay-ML/pull/63))
+
+
 ## [v3.0.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v3.0.0) - 2026-05-23
 
 ### New Features
