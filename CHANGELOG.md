@@ -12,9 +12,8 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 ### Bugfixes
 
 - Fix classification feature mismatch during application (E5): `process_file_chunked` now uses
-  `features_tmva_style` when `tmva_style=True`, matching the training branch.
-
-  Fix `AttributeError` in `configure_training` when `energy_bins_log10_tev` is absent from
+  `features_tmva_style` when `tmva_style=True`, matching the training branch. ([#63](https://github.com/Eventdisplay/Eventdisplay-ML/pull/63))
+- Fix `AttributeError` in `configure_training` when `energy_bins_log10_tev` is absent from
   model parameters (E6): changed fallback default from `[]` (list, no `.get`) to `{}`. ([#63](https://github.com/Eventdisplay/Eventdisplay-ML/pull/63))
 
 ### New Features
