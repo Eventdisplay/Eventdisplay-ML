@@ -97,6 +97,9 @@ def load_classification_models(model_prefix, model_name):
     models = {}
     par = {}
 
+    if not model_dir_path.is_dir():
+        raise FileNotFoundError(f"Classification model directory not found: '{model_dir_path}'")
+
     pattern = re.compile(rf"^{re.escape(model_prefix.name)}_ebin(\d+)\.joblib(?:\.gz)?$")
     matched_files = [
         file for file in model_dir_path.iterdir() if file.is_file() and pattern.match(file.name)
@@ -113,6 +116,13 @@ def load_classification_models(model_prefix, model_name):
     files = [files_by_bin[e_bin] for e_bin in sorted(files_by_bin)]
 
     _logger.info(f"Loading classification models from {files}")
+    if not files:
+        raise FileNotFoundError(
+            "No classification model files found for prefix "
+            f"'{model_prefix}'. Expected files named "
+            f"'{model_prefix.name}_ebin<N>.joblib' or "
+            f"'{model_prefix.name}_ebin<N>.joblib.gz' in '{model_dir_path}'."
+        )
     for file in files:
         match = pattern.match(file.name)
         if not match:
@@ -137,6 +147,16 @@ def load_classification_models(model_prefix, model_name):
             model_data.get("zenith_bins_deg"),
             model_data.get("energy_bins_log10_tev", {}),
             e_bin,
+        )
+    if not par.get("energy_bins_log10_tev"):
+        raise ValueError(
+            f"Classification models for prefix '{model_prefix}' do not define "
+            "'energy_bins_log10_tev'. Re-train or provide model files with bin metadata."
+        )
+    if not par.get("zenith_bins_deg"):
+        raise ValueError(
+            f"Classification models for prefix '{model_prefix}' do not define "
+            "'zenith_bins_deg'. Re-train or provide model files with bin metadata."
         )
     _logger.info(f"Loaded classification models. Parameters: {par}")
     return models, par
