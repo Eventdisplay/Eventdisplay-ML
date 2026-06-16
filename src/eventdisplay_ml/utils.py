@@ -2,9 +2,31 @@
 
 import json
 import logging
+import resource
+import sys
 from pathlib import Path
 
 _logger = logging.getLogger(__name__)
+
+
+def _max_rss_gb():
+    """Return the process peak resident set size in GB."""
+    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        return max_rss / 1024**3
+    return max_rss / 1024**2
+
+
+def log_memory_checkpoint(label, df=None, enabled=False):
+    """Log process peak RSS and optional dataframe memory for profiling large jobs."""
+    if not enabled:
+        return
+
+    msg = f"Memory checkpoint [{label}]: max_rss={_max_rss_gb():.2f} GB"
+    if df is not None:
+        df_memory_gb = df.memory_usage(deep=True).sum() / 1024**3
+        msg += f", dataframe={df_memory_gb:.2f} GB, shape={df.shape}"
+    _logger.info(msg)
 
 
 def resolve_joblib_path(path_or_prefix):

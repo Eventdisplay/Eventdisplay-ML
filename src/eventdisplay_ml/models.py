@@ -641,12 +641,16 @@ def train_regression(df, model_configs):
         _logger.warning("Skipping training due to empty data.")
         return None
 
+    memory_profile = model_configs.get("memory_profile", False)
+    utils.log_memory_checkpoint("train_regression:start", df, enabled=memory_profile)
+
     # Exclude target residuals from features
     excluded_cols = set(model_configs["targets"])
     x_cols = [col for col in df.columns if col not in excluded_cols]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
     x_data, y_data = df[x_cols], df[model_configs["targets"]]
+    utils.log_memory_checkpoint("after feature/target selection", x_data, enabled=memory_profile)
 
     # Split data first to avoid data leakage in weight computation
     x_train, x_test, y_train, y_test = train_test_split(
@@ -655,6 +659,8 @@ def train_regression(df, model_configs):
         train_size=model_configs.get("train_test_fraction", 0.5),
         random_state=model_configs.get("random_state", None),
     )
+    utils.log_memory_checkpoint("after train_test_split:x_train", x_train, enabled=memory_profile)
+    utils.log_memory_checkpoint("after train_test_split:x_test", x_test, enabled=memory_profile)
 
     # Verify indices are preserved correctly
     _logger.info(
@@ -669,6 +675,7 @@ def train_regression(df, model_configs):
     df_train = df.loc[y_train.index]
     bin_result = _log_energy_bin_counts(df_train)
     weights_train = bin_result[2] if bin_result else None
+    utils.log_memory_checkpoint("after sample-weight calculation", df_train, enabled=memory_profile)
 
     # Standardize targets to prevent energy from dominating direction in multi-target learning
     # Compute mean and std from training data only
@@ -697,7 +704,9 @@ def train_regression(df, model_configs):
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
+        utils.log_memory_checkpoint(f"{name}: before XGBRegressor init", enabled=memory_profile)
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
+        utils.log_memory_checkpoint(f"{name}: before model.fit", x_train, enabled=memory_profile)
         model.fit(
             x_train,
             y_train_scaled,
@@ -705,12 +714,18 @@ def train_regression(df, model_configs):
             eval_set=eval_set,
             verbose=False,
         )
+        utils.log_memory_checkpoint(f"{name}: after model.fit", x_train, enabled=memory_profile)
         _logger.info(
             f"Training stopped at iteration {model.best_iteration} "
             f"(best score: {model.best_score:.4f})"
         )
 
         y_train_pred_scaled = model.predict(x_train)
+        utils.log_memory_checkpoint(
+            f"{name}: after training-set prediction",
+            x_train,
+            enabled=memory_profile,
+        )
         y_train_pred = pd.DataFrame(
             y_train_pred_scaled * y_std.values + y_mean.values,
             columns=model_configs["targets"],
@@ -719,6 +734,11 @@ def train_regression(df, model_configs):
 
         # Predict on scaled targets and inverse transform back to original scale
         y_pred_scaled = model.predict(x_test)
+        utils.log_memory_checkpoint(
+            f"{name}: after test-set prediction",
+            x_test,
+            enabled=memory_profile,
+        )
         y_pred = pd.DataFrame(
             y_pred_scaled * y_std.values + y_mean.values,
             columns=model_configs["targets"],

@@ -792,8 +792,10 @@ def load_training_data(model_configs, file_list, analysis_type):
     """
     max_events = model_configs.get("max_events", None)
     random_state = model_configs.get("random_state", None)
+    memory_profile = model_configs.get("memory_profile", False)
 
     _logger.info(f"--- Loading and Flattening Data for {analysis_type} ---")
+    utils.log_memory_checkpoint("load_training_data:start", enabled=memory_profile)
     _logger.info("Processing all events regardless of multiplicity")
     _logger.info(
         "Max events to process: "
@@ -858,6 +860,10 @@ def load_training_data(model_configs, file_list, analysis_type):
                     library="ak",
                     decompression_executor=executor,
                 )
+                utils.log_memory_checkpoint(
+                    f"file {file_idx}/{total_files}: after tree.arrays",
+                    enabled=memory_profile,
+                )
                 if rename_map:
                     rename_present = {k: v for k, v in rename_map.items() if k in df.fields}
                     if rename_present:
@@ -895,6 +901,11 @@ def load_training_data(model_configs, file_list, analysis_type):
                         max_tel_per_type=model_configs.get("max_tel_per_type", None),
                         preview_rows=model_configs.get("preview_rows", 20),
                     )
+                utils.log_memory_checkpoint(
+                    f"file {file_idx}/{total_files}: after flattening",
+                    df_flat,
+                    enabled=memory_profile,
+                )
 
                 # Filter out events with invalid energy reconstruction for stereo training
                 if analysis_type == "stereo_analysis":
@@ -961,13 +972,24 @@ def load_training_data(model_configs, file_list, analysis_type):
                         )
 
                 dfs.append(df_flat)
+                utils.log_memory_checkpoint(
+                    f"file {file_idx}/{total_files}: after append to dfs",
+                    df_flat,
+                    enabled=memory_profile,
+                )
 
                 del df
+                utils.log_memory_checkpoint(
+                    f"file {file_idx}/{total_files}: after deleting awkward arrays",
+                    enabled=memory_profile,
+                )
         except Exception as e:
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
     df_final = pd.concat(dfs, ignore_index=True)
+    utils.log_memory_checkpoint("after final pandas concat", df_final, enabled=memory_profile)
     df_final.dropna(axis=1, how="all", inplace=True)
+    utils.log_memory_checkpoint("after dropping all-NaN columns", df_final, enabled=memory_profile)
     _logger.info(f"Total events loaded: {len(df_final)}")
 
     # Log multiplicity distribution
@@ -985,6 +1007,7 @@ def load_training_data(model_configs, file_list, analysis_type):
         raise ValueError("No data loaded from input files.")
 
     print_variable_statistics(df_final)
+    utils.log_memory_checkpoint("load_training_data:end", df_final, enabled=memory_profile)
 
     return df_final
 
