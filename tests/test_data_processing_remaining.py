@@ -195,7 +195,7 @@ def test_load_training_data_tmva_style_classification(monkeypatch, tel_config):
     )
     tree = MagicMock()
     tree.num_entries = 2
-    tree.arrays.return_value = arrays
+    tree.iterate.return_value = [arrays]
     root_file = MagicMock()
     root_file.__enter__.return_value = {"data": tree, "telconfig": MagicMock()}
     root_file.__exit__.return_value = False
@@ -237,7 +237,7 @@ def test_load_training_data_stereo_adds_residuals(monkeypatch, tel_config):
     )
     tree = MagicMock()
     tree.num_entries = 2
-    tree.arrays.return_value = arrays
+    tree.iterate.return_value = [arrays]
     root_data = {"data": tree, "telconfig": MagicMock()}
     root_file = MagicMock()
     root_file.__enter__.return_value = root_data
@@ -267,3 +267,44 @@ def test_load_training_data_stereo_adds_residuals(monkeypatch, tel_config):
     assert result["Xoff_residual"].tolist() == pytest.approx([0.2, 0.4])
     assert result["Yoff_residual"].tolist() == pytest.approx([0.1, 0.4])
     assert result["E_residual"].tolist() == pytest.approx([np.log10(10.0) - np.log10(5.0), 1.0])
+
+
+def test_load_training_data_caps_iterated_chunks(monkeypatch, tel_config):
+    chunks = [
+        ak.Array([{"MCxoff": 1.0, "MCyoff": 2.0, "MCe0": 10.0} for _ in range(3)]),
+        ak.Array([{"MCxoff": 1.0, "MCyoff": 2.0, "MCe0": 10.0} for _ in range(3)]),
+    ]
+    tree = MagicMock()
+    tree.num_entries = 6
+    tree.iterate.return_value = chunks
+    root_file = MagicMock()
+    root_file.__enter__.return_value = {"data": tree, "telconfig": MagicMock()}
+    root_file.__exit__.return_value = False
+    monkeypatch.setattr(data_processing.utils, "read_input_file_list", lambda _: ["file.root"])
+    monkeypatch.setattr(data_processing.uproot, "open", lambda _: root_file)
+    monkeypatch.setattr(data_processing, "read_telescope_config", lambda _: tel_config)
+    monkeypatch.setattr(
+        data_processing, "_resolve_branch_aliases", lambda tree, branches: (branches, {})
+    )
+    monkeypatch.setattr(data_processing, "_ensure_fpointing_fields", lambda arr: arr)
+    monkeypatch.setattr(
+        data_processing,
+        "flatten_telescope_data_vectorized",
+        lambda df, *args, **kwargs: pd.DataFrame(
+            {
+                "Xoff_weighted_bdt": np.ones(len(df)),
+                "Yoff_weighted_bdt": np.ones(len(df)),
+                "ErecS": np.ones(len(df)),
+            }
+        ),
+    )
+    monkeypatch.setattr(data_processing, "print_variable_statistics", lambda *_: None)
+
+    result = data_processing.load_training_data(
+        {"max_cores": 1, "max_events": 2, "random_state": 0},
+        "inputs.txt",
+        "stereo_analysis",
+    )
+
+    assert len(result) == 2
+    assert "_sample_key" not in result.columns
