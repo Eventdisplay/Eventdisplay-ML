@@ -38,13 +38,14 @@ def save_models(model_configs):
 
     Models already have per-target SHAP importance values cached during evaluation.
     """
-    joblib.dump(
-        model_configs,
-        utils.output_file_name(
-            model_configs.get("model_prefix"),
-            energy_bin_number=model_configs.get("energy_bin_number"),
-        ),
+    memory_profile = model_configs.get("memory_profile", False)
+    utils.log_memory_checkpoint("save_models:start", enabled=memory_profile)
+    output_file = utils.output_file_name(
+        model_configs.get("model_prefix"),
+        energy_bin_number=model_configs.get("energy_bin_number"),
     )
+    joblib.dump(model_configs, output_file)
+    utils.log_memory_checkpoint("save_models:end", enabled=memory_profile)
 
 
 def load_models(analysis_type, model_prefix, model_name):
@@ -759,9 +760,11 @@ def train_regression(df, model_configs):
             model_configs["targets"],
         )
 
+        utils.log_memory_checkpoint(f"{name}: before regression evaluation", enabled=memory_profile)
         shap_importance = evaluate_regression_model(
             model, x_test, y_pred, y_test, df, x_cols, y_data, name
         )
+        utils.log_memory_checkpoint(f"{name}: after regression evaluation", enabled=memory_profile)
         cfg["model"] = model
         cfg["features"] = x_cols  # Store feature names for later use
         cfg["generalization_metrics"] = generalization_metrics
