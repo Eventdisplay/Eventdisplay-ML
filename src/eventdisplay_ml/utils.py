@@ -5,9 +5,12 @@ import logging
 import os
 import resource
 import sys
+import time
 from pathlib import Path
 
 _logger = logging.getLogger(__name__)
+_profile_start_time = None
+_profile_last_time = None
 
 
 def _max_rss_gb():
@@ -28,13 +31,22 @@ def _current_rss_gb():
 
 
 def log_memory_checkpoint(label, df=None, enabled=False):
-    """Log process RSS, peak RSS, and optional dataframe memory for profiling large jobs."""
+    """Log process RSS, peak RSS, timing, and optional dataframe memory for profiling large jobs."""
     if not enabled:
         return
 
+    global _profile_last_time, _profile_start_time
+    now = time.perf_counter()
+    if _profile_start_time is None:
+        _profile_start_time = now
+    elapsed_s = now - _profile_start_time
+    delta_s = 0.0 if _profile_last_time is None else now - _profile_last_time
+    _profile_last_time = now
+
     msg = (
         f"Memory checkpoint [{label}]: "
-        f"rss={_current_rss_gb():.2f} GB, max_rss={_max_rss_gb():.2f} GB"
+        f"rss={_current_rss_gb():.2f} GB, max_rss={_max_rss_gb():.2f} GB, "
+        f"elapsed={elapsed_s:.2f} s, delta={delta_s:.2f} s"
     )
     if df is not None:
         df_memory_gb = df.memory_usage(deep=True).sum() / 1024**3

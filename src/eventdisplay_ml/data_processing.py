@@ -869,27 +869,57 @@ def _flatten_training_chunk(
     return df_flat
 
 
-def _update_awkward_reservoir(reservoir, priorities, chunk, max_rows, rng):
+def _compact_awkward_reservoir(reservoir_chunks, priorities, max_rows):
+    """Compact selected awkward chunks to the lowest-priority rows."""
+    if not reservoir_chunks:
+        return [], priorities
+
+    candidates = (
+        reservoir_chunks[0] if len(reservoir_chunks) == 1 else ak.concatenate(reservoir_chunks)
+    )
+    if max_rows is not None and max_rows > 0 and len(candidates) > max_rows:
+        keep_indices = np.argpartition(priorities, max_rows - 1)[:max_rows]
+        candidates = candidates[keep_indices]
+        priorities = priorities[keep_indices]
+
+    return [candidates], priorities
+
+
+def _update_awkward_reservoir(reservoir_chunks, priorities, chunk, max_rows, rng):
     """Keep a uniform random awkward-row sample up to max_rows using random priorities."""
     if max_rows is None or max_rows <= 0:
-        return (chunk, None) if reservoir is None else (ak.concatenate([reservoir, chunk]), None)
+        reservoir_chunks = [] if reservoir_chunks is None else reservoir_chunks
+        reservoir_chunks.append(chunk)
+        return reservoir_chunks, None
     if len(chunk) == 0:
-        return reservoir, priorities
+        return reservoir_chunks, priorities
 
     chunk_priorities = rng.random(len(chunk))
-    if reservoir is None:
-        candidates = chunk
-        candidate_priorities = chunk_priorities
-    else:
-        candidates = ak.concatenate([reservoir, chunk])
-        candidate_priorities = np.concatenate([priorities, chunk_priorities])
+    reservoir_chunks = [] if reservoir_chunks is None else reservoir_chunks
 
-    if len(candidates) > max_rows:
-        keep_indices = np.argpartition(candidate_priorities, max_rows - 1)[:max_rows]
-        candidates = candidates[keep_indices]
-        candidate_priorities = candidate_priorities[keep_indices]
+    if priorities is not None and len(priorities) >= max_rows:
+        # Priorities define an exact uniform sample. Once full, rows with a
+        # priority worse than the current reservoir maximum can never enter.
+        keep_chunk = chunk_priorities < priorities.max()
+        if not np.any(keep_chunk):
+            return reservoir_chunks, priorities
+        chunk = chunk[keep_chunk]
+        chunk_priorities = chunk_priorities[keep_chunk]
 
-    return candidates, candidate_priorities
+    reservoir_chunks.append(chunk)
+    priorities = (
+        chunk_priorities if priorities is None else np.concatenate([priorities, chunk_priorities])
+    )
+
+    compact_limit = max_rows + max(10000, max_rows // 4)
+    if len(priorities) > compact_limit:
+        reservoir_chunks, priorities = _compact_awkward_reservoir(
+            reservoir_chunks,
+            priorities,
+            max_rows,
+        )
+
+    return reservoir_chunks, priorities
 
 
 def load_training_data(model_configs, file_list, analysis_type):
@@ -982,7 +1012,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                 n_before = tree.num_entries
                 n_after_event_cut = 0
                 file_df = None
-                raw_reservoir = None
+                raw_reservoir_chunks = []
                 reservoir_priorities = None
                 file_dfs = []
                 rng = np.random.default_rng(random_state)
@@ -1010,8 +1040,8 @@ def load_training_data(model_configs, file_list, analysis_type):
 
                     n_after_event_cut += len(df)
                     if max_events_per_file:
-                        raw_reservoir, reservoir_priorities = _update_awkward_reservoir(
-                            raw_reservoir,
+                        raw_reservoir_chunks, reservoir_priorities = _update_awkward_reservoir(
+                            raw_reservoir_chunks,
                             reservoir_priorities,
                             df,
                             max_events_per_file,
@@ -1044,7 +1074,17 @@ def load_training_data(model_configs, file_list, analysis_type):
                         enabled=memory_profile,
                     )
 
-                if max_events_per_file and raw_reservoir is not None and len(raw_reservoir) > 0:
+                if (
+                    max_events_per_file
+                    and reservoir_priorities is not None
+                    and len(reservoir_priorities) > 0
+                ):
+                    raw_reservoir_chunks, reservoir_priorities = _compact_awkward_reservoir(
+                        raw_reservoir_chunks,
+                        reservoir_priorities,
+                        max_events_per_file,
+                    )
+                    raw_reservoir = raw_reservoir_chunks[0]
                     file_df = _flatten_training_chunk(
                         raw_reservoir,
                         model_configs,
@@ -1054,6 +1094,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                         f"file {file_idx}/{total_files}: sampled events",
                     )
                     del raw_reservoir
+                    del raw_reservoir_chunks
                     del reservoir_priorities
                 elif file_dfs:
                     file_df = pd.concat(file_dfs, ignore_index=True)
