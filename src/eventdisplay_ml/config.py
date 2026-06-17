@@ -111,13 +111,13 @@ def configure_training(analysis_type):
     )
     parser.add_argument(
         "--read_step_size",
-        default="100 MB",
+        default="250 MB",
         help="Chunk size passed to uproot while reading training ROOT trees.",
     )
     parser.add_argument(
         "--eval_max_events",
         type=int,
-        default=200000,
+        default=100000,
         help="Maximum number of test events used in XGBoost eval_set for early stopping.",
     )
     if analysis_type == "stereo_analysis":
