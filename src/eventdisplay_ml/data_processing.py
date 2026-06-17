@@ -869,24 +869,27 @@ def _flatten_training_chunk(
     return df_flat
 
 
-def _update_dataframe_reservoir(reservoir, df_chunk, max_rows, rng):
-    """Keep a uniform random row sample up to max_rows using random priorities."""
+def _update_awkward_reservoir(reservoir, priorities, chunk, max_rows, rng):
+    """Keep a uniform random awkward-row sample up to max_rows using random priorities."""
     if max_rows is None or max_rows <= 0:
-        return (
-            df_chunk if reservoir is None else pd.concat([reservoir, df_chunk], ignore_index=True)
-        )
-    if df_chunk.empty:
-        return reservoir
+        return (chunk, None) if reservoir is None else (ak.concatenate([reservoir, chunk]), None)
+    if len(chunk) == 0:
+        return reservoir, priorities
 
-    df_chunk = df_chunk.copy()
-    df_chunk["_sample_key"] = rng.random(len(df_chunk))
+    chunk_priorities = rng.random(len(chunk))
     if reservoir is None:
-        candidates = df_chunk
+        candidates = chunk
+        candidate_priorities = chunk_priorities
     else:
-        candidates = pd.concat([reservoir, df_chunk], ignore_index=True)
+        candidates = ak.concatenate([reservoir, chunk])
+        candidate_priorities = np.concatenate([priorities, chunk_priorities])
+
     if len(candidates) > max_rows:
-        candidates = candidates.nsmallest(max_rows, "_sample_key")
-    return candidates
+        keep_indices = np.argpartition(candidate_priorities, max_rows - 1)[:max_rows]
+        candidates = candidates[keep_indices]
+        candidate_priorities = candidate_priorities[keep_indices]
+
+    return candidates, candidate_priorities
 
 
 def load_training_data(model_configs, file_list, analysis_type):
@@ -979,6 +982,9 @@ def load_training_data(model_configs, file_list, analysis_type):
                 n_before = tree.num_entries
                 n_after_event_cut = 0
                 file_df = None
+                raw_reservoir = None
+                reservoir_priorities = None
+                file_dfs = []
                 rng = np.random.default_rng(random_state)
                 chunk_iterator = tree.iterate(
                     resolved_branch_list,
@@ -1003,37 +1009,58 @@ def load_training_data(model_configs, file_list, analysis_type):
                         continue
 
                     n_after_event_cut += len(df)
-                    df_flat = _flatten_training_chunk(
-                        df,
-                        model_configs,
-                        analysis_type,
-                        tel_config,
-                        tmva_style,
-                        chunk_label,
-                    )
-                    file_df = _update_dataframe_reservoir(
-                        file_df,
-                        df_flat,
-                        max_events_per_file,
-                        rng,
-                    )
-                    utils.log_memory_checkpoint(
-                        f"{chunk_label}: after file reservoir update",
-                        file_df,
-                        enabled=memory_profile,
-                    )
-                    del df
-                    del df_flat
+                    if max_events_per_file:
+                        raw_reservoir, reservoir_priorities = _update_awkward_reservoir(
+                            raw_reservoir,
+                            reservoir_priorities,
+                            df,
+                            max_events_per_file,
+                            rng,
+                        )
+                        utils.log_memory_checkpoint(
+                            f"{chunk_label}: after raw event reservoir update",
+                            enabled=memory_profile,
+                        )
+                        del df
+                    else:
+                        df_flat = _flatten_training_chunk(
+                            df,
+                            model_configs,
+                            analysis_type,
+                            tel_config,
+                            tmva_style,
+                            chunk_label,
+                        )
+                        file_dfs.append(df_flat)
+                        utils.log_memory_checkpoint(
+                            f"{chunk_label}: after appending flattened chunk",
+                            df_flat,
+                            enabled=memory_profile,
+                        )
+                        del df
+                        del df_flat
                     utils.log_memory_checkpoint(
                         f"{chunk_label}: after deleting chunk arrays",
                         enabled=memory_profile,
                     )
 
+                if max_events_per_file and raw_reservoir is not None and len(raw_reservoir) > 0:
+                    file_df = _flatten_training_chunk(
+                        raw_reservoir,
+                        model_configs,
+                        analysis_type,
+                        tel_config,
+                        tmva_style,
+                        f"file {file_idx}/{total_files}: sampled events",
+                    )
+                    del raw_reservoir
+                    del reservoir_priorities
+                elif file_dfs:
+                    file_df = pd.concat(file_dfs, ignore_index=True)
+                    del file_dfs
+
                 if file_df is None or file_df.empty:
                     continue
-
-                if "_sample_key" in file_df.columns:
-                    file_df = file_df.drop(columns=["_sample_key"])
 
                 _logger.info(
                     f"Number of events before / after event cut: {n_before} / "

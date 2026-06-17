@@ -227,6 +227,31 @@ class TestEnergyBinWeighting:
                 assert sample_weight is not None, "sample_weight should be passed to fit()"
                 assert len(sample_weight) == len(df) // 2  # Training set size
 
+    def test_eval_max_events_limits_xgboost_eval_set(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify only a bounded test subset is passed to XGBoost eval_set."""
+        df = regression_training_df
+        cfg = regression_model_config.copy()
+        cfg["eval_max_events"] = 10
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+            mock_model.predict.side_effect = lambda x_values: np.zeros(
+                (len(x_values), len(cfg["targets"]))
+            )
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model") as mock_eval:
+                mock_eval.return_value = {}
+                models.train_regression(df, cfg)
+
+        eval_set = mock_model.fit.call_args.kwargs["eval_set"]
+        assert len(eval_set[0][0]) == len(df) // 2
+        assert len(eval_set[1][0]) == 10
+
 
 class TestTrainRegressionIntegration:
     """Integration tests for train_regression() with standardization and weighting."""

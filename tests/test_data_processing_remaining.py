@@ -287,17 +287,16 @@ def test_load_training_data_caps_iterated_chunks(monkeypatch, tel_config):
         data_processing, "_resolve_branch_aliases", lambda tree, branches: (branches, {})
     )
     monkeypatch.setattr(data_processing, "_ensure_fpointing_fields", lambda arr: arr)
-    monkeypatch.setattr(
-        data_processing,
-        "flatten_telescope_data_vectorized",
-        lambda df, *args, **kwargs: pd.DataFrame(
+    flatten_mock = MagicMock(
+        side_effect=lambda df, *args, **kwargs: pd.DataFrame(
             {
                 "Xoff_weighted_bdt": np.ones(len(df)),
                 "Yoff_weighted_bdt": np.ones(len(df)),
                 "ErecS": np.ones(len(df)),
             }
-        ),
+        )
     )
+    monkeypatch.setattr(data_processing, "flatten_telescope_data_vectorized", flatten_mock)
     monkeypatch.setattr(data_processing, "print_variable_statistics", lambda *_: None)
 
     result = data_processing.load_training_data(
@@ -308,3 +307,4 @@ def test_load_training_data_caps_iterated_chunks(monkeypatch, tel_config):
 
     assert len(result) == 2
     assert "_sample_key" not in result.columns
+    assert flatten_mock.call_count == 1
