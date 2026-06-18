@@ -629,7 +629,8 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
 
 def _feature_array(df, row_indices, x_cols):
     """Build a float32 feature array for selected row positions."""
-    return df.iloc[row_indices][x_cols].to_numpy(dtype=np.float32, copy=True)
+    column_indices = df.columns.get_indexer(x_cols)
+    return df.iloc[row_indices, column_indices].to_numpy(dtype=np.float32, copy=True)
 
 
 def _predict_unscaled_chunked(model, df, row_indices, x_cols, y_mean, y_std, targets, chunk_size):
@@ -637,16 +638,18 @@ def _predict_unscaled_chunked(model, df, row_indices, x_cols, y_mean, y_std, tar
     if chunk_size is None or chunk_size <= 0:
         chunk_size = max(len(row_indices), 1)
 
-    predictions = []
+    prediction_dtype = np.result_type(np.float32, y_mean.dtype, y_std.dtype)
+    predictions = np.empty((len(row_indices), len(targets)), dtype=prediction_dtype)
     for start in range(0, len(row_indices), chunk_size):
         chunk_indices = row_indices[start : start + chunk_size]
         x_chunk = _feature_array(df, chunk_indices, x_cols)
-        predictions.append(model.predict(x_chunk))
-        del x_chunk
-
-    pred_scaled = np.concatenate(predictions, axis=0)
+        stop = start + len(chunk_indices)
+        pred_scaled = np.asarray(model.predict(x_chunk)).reshape(len(chunk_indices), -1)
+        pred_unscaled = pred_scaled * y_std.values + y_mean.values
+        predictions[start:stop] = pred_unscaled
+        del x_chunk, pred_scaled, pred_unscaled
     return pd.DataFrame(
-        pred_scaled * y_std.values + y_mean.values,
+        predictions,
         columns=targets,
         index=df.index[row_indices],
     )
@@ -722,8 +725,9 @@ def train_regression(df, model_configs):
 
     # Standardize targets to prevent energy from dominating direction in multi-target learning
     # Compute mean and std from training data only
-    y_train = df.iloc[train_idx][targets]
-    y_test = df.iloc[test_idx][targets]
+    target_indices = df.columns.get_indexer(targets)
+    y_train = df.iloc[train_idx, target_indices]
+    y_test = df.iloc[test_idx, target_indices]
     y_mean = y_train.mean()
     y_std = y_train.std()
 
@@ -756,7 +760,7 @@ def train_regression(df, model_configs):
         x_train = _feature_array(df, train_idx, x_cols)
         y_train_scaled_array = y_train_scaled.to_numpy(dtype=np.float32, copy=True)
         x_eval = _feature_array(df, eval_idx, x_cols)
-        y_eval_scaled_array = ((df.iloc[eval_idx][targets] - y_mean) / y_std).to_numpy(
+        y_eval_scaled_array = ((df.iloc[eval_idx, target_indices] - y_mean) / y_std).to_numpy(
             dtype=np.float32, copy=True
         )
         eval_set = [(x_train, y_train_scaled_array), (x_eval, y_eval_scaled_array)]
@@ -836,7 +840,7 @@ def train_regression(df, model_configs):
             1000,
             model_configs.get("random_state", None),
         )
-        x_test_shap = df.iloc[shap_idx][x_cols]
+        x_test_shap = df.iloc[shap_idx, df.columns.get_indexer(x_cols)]
         utils.log_memory_checkpoint(f"{name}: before regression evaluation", enabled=memory_profile)
         shap_importance = evaluate_regression_model(
             model, x_test_shap, y_pred, y_test, df, x_cols, y_test, name

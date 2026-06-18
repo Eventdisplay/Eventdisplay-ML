@@ -1123,12 +1123,13 @@ def load_training_data(model_configs, file_list, analysis_type):
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
     df_final = pd.concat(dfs, ignore_index=True)
+    del dfs
     utils.log_memory_checkpoint("after final pandas concat", df_final, enabled=memory_profile)
     all_nan_columns = [col for col in df_final.columns if df_final[col].isna().all()]
     _logger.info(f"All-NaN columns detected after concat: {len(all_nan_columns)}")
     if all_nan_columns:
         _logger.info(f"Dropping all-NaN columns: {all_nan_columns}")
-        df_final = df_final.drop(columns=all_nan_columns)
+        df_final.drop(columns=all_nan_columns, inplace=True)
         utils.log_memory_checkpoint(
             "after dropping all-NaN columns",
             df_final,
