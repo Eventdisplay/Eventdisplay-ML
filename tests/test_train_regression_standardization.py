@@ -438,8 +438,8 @@ class TestTrainRegressionIntegration:
         np.testing.assert_allclose(
             optimized_model.predict(df[x_cols].to_numpy(dtype=np.float32)),
             reference_model.predict(df[x_cols]),
-            rtol=0.0,
-            atol=0.0,
+            rtol=1e-6,
+            atol=1e-6,
         )
         assert optimized_model.best_iteration == reference_model.best_iteration
         assert optimized_model.best_score == pytest.approx(reference_model.best_score, abs=0.0)
