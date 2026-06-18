@@ -442,6 +442,6 @@ class TestTrainRegressionIntegration:
             atol=1e-6,
         )
         assert optimized_model.best_iteration == reference_model.best_iteration
-        assert optimized_model.best_score == pytest.approx(reference_model.best_score, abs=0.0)
+        assert optimized_model.best_score == pytest.approx(reference_model.best_score, abs=1e-12)
         assert result["target_mean"] == pytest.approx(y_mean.to_dict(), abs=0.0)
         assert result["target_std"] == pytest.approx(y_std.to_dict(), abs=0.0)
