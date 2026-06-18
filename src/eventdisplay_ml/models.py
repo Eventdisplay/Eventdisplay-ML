@@ -634,6 +634,9 @@ def _feature_array(df, row_indices, x_cols):
 
 def _predict_unscaled_chunked(model, df, row_indices, x_cols, y_mean, y_std, targets, chunk_size):
     """Predict residuals in chunks and return unscaled predictions as a DataFrame."""
+    if chunk_size is None or chunk_size <= 0:
+        chunk_size = max(len(row_indices), 1)
+
     predictions = []
     for start in range(0, len(row_indices), chunk_size):
         chunk_indices = row_indices[start : start + chunk_size]
