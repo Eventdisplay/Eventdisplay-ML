@@ -71,6 +71,81 @@ def test_load_classification_models_collects_bins_and_thresholds(classification_
     assert par["energy_bins_log10_tev"][1]["E_max"] == pytest.approx(2.0)
 
 
+def test_load_classification_models_rejects_missing_files(tmp_path):
+    with pytest.raises(FileNotFoundError, match="No classification model files found"):
+        models.load_classification_models(str(tmp_path / "missing"), "xgboost")
+
+
+def test_load_classification_models_rejects_missing_zenith_metadata(tmp_path):
+    prefix = tmp_path / "model"
+    efficiency = pd.DataFrame(
+        {
+            "signal_efficiency": np.linspace(0.0, 1.0, 101),
+            "background_efficiency": np.linspace(1.0, 0.0, 101),
+            "threshold": np.linspace(1.0, 0.0, 101),
+        }
+    )
+    joblib.dump(
+        {
+            "models": {"xgboost": {"model": "clf", "efficiency": efficiency}},
+            "features": ["f1"],
+            "energy_bins_log10_tev": {"E_min": 0.0, "E_max": 1.0},
+            "energy_bin_number": 0,
+        },
+        tmp_path / "model_ebin0.joblib",
+    )
+
+    with pytest.raises(ValueError, match="zenith_bins_deg"):
+        models.load_classification_models(str(prefix), "xgboost")
+
+
+def test_load_classification_models_rejects_missing_energy_bin_metadata(tmp_path):
+    prefix = tmp_path / "model"
+    efficiency = pd.DataFrame(
+        {
+            "signal_efficiency": np.linspace(0.0, 1.0, 101),
+            "background_efficiency": np.linspace(1.0, 0.0, 101),
+            "threshold": np.linspace(1.0, 0.0, 101),
+        }
+    )
+    joblib.dump(
+        {
+            "models": {"xgboost": {"model": "clf", "efficiency": efficiency}},
+            "features": ["f1"],
+            "zenith_bins_deg": [{"Ze_min": 0, "Ze_max": 20}],
+            "energy_bin_number": 0,
+        },
+        tmp_path / "model_ebin0.joblib",
+    )
+
+    with pytest.raises(ValueError, match=r"model_ebin0\.joblib.*energy_bins_log10_tev"):
+        models.load_classification_models(str(prefix), "xgboost")
+
+
+def test_load_classification_models_rejects_incomplete_energy_bin_metadata(tmp_path):
+    prefix = tmp_path / "model"
+    efficiency = pd.DataFrame(
+        {
+            "signal_efficiency": np.linspace(0.0, 1.0, 101),
+            "background_efficiency": np.linspace(1.0, 0.0, 101),
+            "threshold": np.linspace(1.0, 0.0, 101),
+        }
+    )
+    joblib.dump(
+        {
+            "models": {"xgboost": {"model": "clf", "efficiency": efficiency}},
+            "features": ["f1"],
+            "energy_bins_log10_tev": {"E_min": 0.0},
+            "zenith_bins_deg": [{"Ze_min": 0, "Ze_max": 20}],
+            "energy_bin_number": 0,
+        },
+        tmp_path / "model_ebin0.joblib",
+    )
+
+    with pytest.raises(ValueError, match=r"model_ebin0\.joblib.*E_max"):
+        models.load_classification_models(str(prefix), "xgboost")
+
+
 def test_classification_thresholds_and_parameter_updates():
     efficiency = pd.DataFrame({"signal_efficiency": [0.2, 0.4, 0.6], "threshold": [0.9, 0.5, 0.1]})
     thresholds = models._calculate_classification_thresholds(

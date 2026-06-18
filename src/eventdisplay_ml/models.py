@@ -97,6 +97,9 @@ def load_classification_models(model_prefix, model_name):
     models = {}
     par = {}
 
+    if not model_dir_path.is_dir():
+        raise FileNotFoundError(f"Classification model directory not found: '{model_dir_path}'")
+
     pattern = re.compile(rf"^{re.escape(model_prefix.name)}_ebin(\d+)\.joblib(?:\.gz)?$")
     matched_files = [
         file for file in model_dir_path.iterdir() if file.is_file() and pattern.match(file.name)
@@ -113,6 +116,13 @@ def load_classification_models(model_prefix, model_name):
     files = [files_by_bin[e_bin] for e_bin in sorted(files_by_bin)]
 
     _logger.info(f"Loading classification models from {files}")
+    if not files:
+        raise FileNotFoundError(
+            "No classification model files found for prefix "
+            f"'{model_prefix}'. Expected files named "
+            f"'{model_prefix.name}_ebin<N>.joblib' or "
+            f"'{model_prefix.name}_ebin<N>.joblib.gz' in '{model_dir_path}'."
+        )
     for file in files:
         match = pattern.match(file.name)
         if not match:
@@ -132,11 +142,25 @@ def load_classification_models(model_prefix, model_name):
         models[e_bin]["thresholds"] = _calculate_classification_thresholds(
             models[e_bin]["efficiency"]
         )
+        energy_bin_metadata = _validate_energy_bin_metadata(
+            model_data.get("energy_bins_log10_tev"),
+            file,
+        )
         par = _update_parameters(
             par,
             model_data.get("zenith_bins_deg"),
-            model_data.get("energy_bins_log10_tev", {}),
+            energy_bin_metadata,
             e_bin,
+        )
+    if not par.get("energy_bins_log10_tev"):
+        raise ValueError(
+            f"Classification models for prefix '{model_prefix}' do not define "
+            "'energy_bins_log10_tev'. Re-train or provide model files with bin metadata."
+        )
+    if not par.get("zenith_bins_deg"):
+        raise ValueError(
+            f"Classification models for prefix '{model_prefix}' do not define "
+            "'zenith_bins_deg'. Re-train or provide model files with bin metadata."
         )
     _logger.info(f"Loaded classification models. Parameters: {par}")
     return models, par
@@ -184,6 +208,40 @@ def _check_bin(expected, actual):
     """Check if expected and actual bin numbers match."""
     if expected != actual:
         raise ValueError(f"Bin number mismatch: expected {expected}, got {actual}")
+
+
+def _validate_energy_bin_metadata(energy_bin, model_file):
+    """Validate per-file classification energy bin metadata.
+
+    Parameters
+    ----------
+    energy_bin : Any
+        Raw ``energy_bins_log10_tev`` value loaded from one model file.
+    model_file : pathlib.Path
+        Source model file path used for error reporting.
+
+    Returns
+    -------
+    dict
+        Validated metadata containing ``E_min`` and ``E_max`` keys.
+    """
+    if not isinstance(energy_bin, dict):
+        raise ValueError(
+            "Classification model file "
+            f"'{model_file}' has invalid 'energy_bins_log10_tev' metadata: "
+            "expected a dict with keys 'E_min' and 'E_max'."
+        )
+
+    missing_keys = [key for key in ("E_min", "E_max") if key not in energy_bin]
+    if missing_keys:
+        missing = ", ".join(f"'{key}'" for key in missing_keys)
+        raise ValueError(
+            "Classification model file "
+            f"'{model_file}' has incomplete 'energy_bins_log10_tev' metadata: "
+            f"missing required key(s): {missing}."
+        )
+
+    return energy_bin
 
 
 def _update_parameters(full_params, zenith_bins, energy_bin, e_bin_number):
