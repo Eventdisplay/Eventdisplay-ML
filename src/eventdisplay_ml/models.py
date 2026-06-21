@@ -38,13 +38,14 @@ def save_models(model_configs):
 
     Models already have per-target SHAP importance values cached during evaluation.
     """
-    joblib.dump(
-        model_configs,
-        utils.output_file_name(
-            model_configs.get("model_prefix"),
-            energy_bin_number=model_configs.get("energy_bin_number"),
-        ),
+    memory_profile = model_configs.get("memory_profile", False)
+    utils.log_memory_checkpoint("save_models:start", enabled=memory_profile)
+    output_file = utils.output_file_name(
+        model_configs.get("model_prefix"),
+        energy_bin_number=model_configs.get("energy_bin_number"),
     )
+    joblib.dump(model_configs, output_file)
+    utils.log_memory_checkpoint("save_models:end", enabled=memory_profile)
 
 
 def load_models(analysis_type, model_prefix, model_name):
@@ -664,6 +665,42 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
         raise ValueError(f"Unknown analysis_type: {analysis_type}")
 
 
+def _feature_array(df, row_indices, x_cols):
+    """Build a float32 feature array for selected row positions."""
+    column_indices = df.columns.get_indexer(x_cols)
+    return df.iloc[row_indices, column_indices].to_numpy(dtype=np.float32, copy=True)
+
+
+def _predict_unscaled_chunked(model, df, row_indices, x_cols, y_mean, y_std, targets, chunk_size):
+    """Predict residuals in chunks and return unscaled predictions as a DataFrame."""
+    if chunk_size is None or chunk_size <= 0:
+        chunk_size = max(len(row_indices), 1)
+
+    prediction_dtype = np.result_type(np.float32, y_mean.dtype, y_std.dtype)
+    predictions = np.empty((len(row_indices), len(targets)), dtype=prediction_dtype)
+    for start in range(0, len(row_indices), chunk_size):
+        chunk_indices = row_indices[start : start + chunk_size]
+        x_chunk = _feature_array(df, chunk_indices, x_cols)
+        stop = start + len(chunk_indices)
+        pred_scaled = np.asarray(model.predict(x_chunk)).reshape(len(chunk_indices), -1)
+        pred_unscaled = pred_scaled * y_std.values + y_mean.values
+        predictions[start:stop] = pred_unscaled
+        del x_chunk, pred_scaled, pred_unscaled
+    return pd.DataFrame(
+        predictions,
+        columns=targets,
+        index=df.index[row_indices],
+    )
+
+
+def _sample_eval_indices(test_idx, max_events, random_state):
+    """Select a bounded subset of test indices for XGBoost eval_set."""
+    if max_events is None or max_events <= 0 or len(test_idx) <= max_events:
+        return test_idx
+    rng = np.random.default_rng(random_state)
+    return rng.choice(test_idx, max_events, replace=False)
+
+
 def train_regression(df, model_configs):
     """
     Train a single XGBoost model for multi-target regression.
@@ -679,37 +716,56 @@ def train_regression(df, model_configs):
         _logger.warning("Skipping training due to empty data.")
         return None
 
+    memory_profile = model_configs.get("memory_profile", False)
+    utils.log_memory_checkpoint("train_regression:start", df, enabled=memory_profile)
+
     # Exclude target residuals from features
     excluded_cols = set(model_configs["targets"])
     x_cols = [col for col in df.columns if col not in excluded_cols]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
-    x_data, y_data = df[x_cols], df[model_configs["targets"]]
+    targets = model_configs["targets"]
+    utils.log_memory_checkpoint("after feature list creation", df, enabled=memory_profile)
 
-    # Split data first to avoid data leakage in weight computation
-    x_train, x_test, y_train, y_test = train_test_split(
-        x_data,
-        y_data,
+    row_indices = np.arange(len(df))
+    train_idx, test_idx = train_test_split(
+        row_indices,
         train_size=model_configs.get("train_test_fraction", 0.5),
         random_state=model_configs.get("random_state", None),
     )
+    utils.log_memory_checkpoint("after index train_test_split", enabled=memory_profile)
 
     # Verify indices are preserved correctly
     _logger.info(
-        f"Train indices: min={y_train.index.min()}, max={y_train.index.max()}, len={len(y_train)}"
+        f"Train indices: min={df.index[train_idx].min()}, "
+        f"max={df.index[train_idx].max()}, len={len(train_idx)}"
     )
     _logger.info(
-        f"Test indices: min={y_test.index.min()}, max={y_test.index.max()}, len={len(y_test)}"
+        f"Test indices: min={df.index[test_idx].min()}, "
+        f"max={df.index[test_idx].max()}, len={len(test_idx)}"
     )
 
     # Calculate energy bin weights for balancing ONLY on training data
     # This avoids data leakage from test set distribution
-    df_train = df.loc[y_train.index]
-    bin_result = _log_energy_bin_counts(df_train)
+    train_erec_s = df["ErecS"].to_numpy()[train_idx]
+    train_e_residual = df["E_residual"].to_numpy()[train_idx]
+    train_disp_nimages = df["DispNImages"].to_numpy()[train_idx]
+    bin_result = _log_energy_bin_counts_from_arrays(
+        train_erec_s,
+        train_e_residual,
+        train_disp_nimages,
+    )
     weights_train = bin_result[2] if bin_result else None
+    del train_erec_s
+    del train_e_residual
+    del train_disp_nimages
+    utils.log_memory_checkpoint("after sample-weight calculation", enabled=memory_profile)
 
     # Standardize targets to prevent energy from dominating direction in multi-target learning
     # Compute mean and std from training data only
+    target_indices = df.columns.get_indexer(targets)
+    y_train = df.iloc[train_idx, target_indices]
+    y_test = df.iloc[test_idx, target_indices]
     y_mean = y_train.mean()
     y_std = y_train.std()
 
@@ -718,49 +774,89 @@ def train_regression(df, model_configs):
         _logger.info(f"  {target}: mean={y_mean[target]:.6f}, std={y_std[target]:.6f}")
 
     y_train_scaled = (y_train - y_mean) / y_std
-    y_test_scaled = (y_test - y_mean) / y_std
 
     # Store scalers for later use during inference
     model_configs["target_mean"] = y_mean.to_dict()
     model_configs["target_std"] = y_std.to_dict()
 
-    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    _logger.info(f"Training events: {len(train_idx)}, Testing events: {len(test_idx)}")
     if weights_train is not None:
         _logger.info(
             f"Using energy-bin-based sample weights (mean={weights_train.mean():.3f}, "
             f"std={weights_train.std():.3f})"
         )
 
-    eval_set = [(x_train, y_train_scaled), (x_test, y_test_scaled)]
+    eval_idx = _sample_eval_indices(
+        test_idx,
+        model_configs.get("eval_max_events", 200000),
+        model_configs.get("random_state", None),
+    )
+    _logger.info(f"XGBoost eval_set test events: {len(eval_idx)}")
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
+        x_train = _feature_array(df, train_idx, x_cols)
+        y_train_scaled_array = y_train_scaled.to_numpy(dtype=np.float32, copy=True)
+        x_eval = _feature_array(df, eval_idx, x_cols)
+        y_eval_scaled_array = ((df.iloc[eval_idx, target_indices] - y_mean) / y_std).to_numpy(
+            dtype=np.float32, copy=True
+        )
+        eval_set = [(x_train, y_train_scaled_array), (x_eval, y_eval_scaled_array)]
+        utils.log_memory_checkpoint("after building XGBoost fit arrays", enabled=memory_profile)
+
+        utils.log_memory_checkpoint(f"{name}: before XGBRegressor init", enabled=memory_profile)
         model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
+        utils.log_memory_checkpoint(f"{name}: before model.fit", enabled=memory_profile)
         model.fit(
             x_train,
-            y_train_scaled,
+            y_train_scaled_array,
             sample_weight=weights_train,
             eval_set=eval_set,
             verbose=False,
         )
+        utils.log_memory_checkpoint(f"{name}: after model.fit", enabled=memory_profile)
         _logger.info(
             f"Training stopped at iteration {model.best_iteration} "
             f"(best score: {model.best_score:.4f})"
         )
 
-        y_train_pred_scaled = model.predict(x_train)
-        y_train_pred = pd.DataFrame(
-            y_train_pred_scaled * y_std.values + y_mean.values,
-            columns=model_configs["targets"],
-            index=y_train.index,
+        del x_train
+        del x_eval
+        del y_train_scaled_array
+        del y_eval_scaled_array
+        del eval_set
+        utils.log_memory_checkpoint(f"{name}: after releasing fit arrays", enabled=memory_profile)
+
+        prediction_chunk_size = model_configs.get("prediction_chunk_size", 200000)
+        y_train_pred = _predict_unscaled_chunked(
+            model,
+            df,
+            train_idx,
+            x_cols,
+            y_mean,
+            y_std,
+            targets,
+            prediction_chunk_size,
+        )
+        utils.log_memory_checkpoint(
+            f"{name}: after training-set prediction",
+            enabled=memory_profile,
         )
 
         # Predict on scaled targets and inverse transform back to original scale
-        y_pred_scaled = model.predict(x_test)
-        y_pred = pd.DataFrame(
-            y_pred_scaled * y_std.values + y_mean.values,
-            columns=model_configs["targets"],
-            index=y_test.index,
+        y_pred = _predict_unscaled_chunked(
+            model,
+            df,
+            test_idx,
+            x_cols,
+            y_mean,
+            y_std,
+            targets,
+            prediction_chunk_size,
+        )
+        utils.log_memory_checkpoint(
+            f"{name}: after test-set prediction",
+            enabled=memory_profile,
         )
 
         generalization_metrics = diagnostic_utils.compute_generalization_metrics(
@@ -768,18 +864,27 @@ def train_regression(df, model_configs):
             y_train_pred,
             y_test,
             y_pred,
-            model_configs["targets"],
+            targets,
         )
 
         residual_normality_stats = diagnostic_utils.compute_residual_normality_stats(
             y_test,
             y_pred,
-            model_configs["targets"],
+            targets,
         )
 
-        shap_importance = evaluate_regression_model(
-            model, x_test, y_pred, y_test, df, x_cols, y_data, name
+        shap_idx = _sample_eval_indices(
+            test_idx,
+            1000,
+            model_configs.get("random_state", None),
         )
+        x_test_shap = df.iloc[shap_idx, df.columns.get_indexer(x_cols)]
+        utils.log_memory_checkpoint(f"{name}: before regression evaluation", enabled=memory_profile)
+        shap_importance = evaluate_regression_model(
+            model, x_test_shap, y_pred, y_test, df, x_cols, y_test, name
+        )
+        del x_test_shap
+        utils.log_memory_checkpoint(f"{name}: after regression evaluation", enabled=memory_profile)
         cfg["model"] = model
         cfg["features"] = x_cols  # Store feature names for later use
         cfg["generalization_metrics"] = generalization_metrics
@@ -864,15 +969,22 @@ def _log_energy_bin_counts(df):
                          for both energy and multiplicity)
         Returns None if E_residual not found.
     """
-    # Reconstruct MC true energy from residual + DispBDT baseline
     if "E_residual" not in df or "ErecS" not in df:
         _logger.warning("E_residual or ErecS not found; skipping energy-bin availability printout.")
         return None
 
+    return _log_energy_bin_counts_from_arrays(
+        df["ErecS"].to_numpy(),
+        df["E_residual"].to_numpy(),
+        df["DispNImages"].to_numpy(),
+    )
+
+
+def _log_energy_bin_counts_from_arrays(erec_s, e_residual, disp_nimages):
+    """Log counts and compute energy/multiplicity training weights from arrays."""
     # Handle ErecS with proper checks for valid values (> 0)
-    erec_s = df["ErecS"].values
     disp_erec_log = np.where(erec_s > 0, np.log10(erec_s), np.nan)
-    mc_e0 = df["E_residual"].values + disp_erec_log
+    mc_e0 = e_residual + disp_erec_log
 
     bins = np.linspace(_EVAL_LOG_E_MIN, _EVAL_LOG_E_MAX, _EVAL_LOG_E_BINS + 1)
     categories = pd.cut(mc_e0, bins=bins, include_lowest=True)
@@ -895,7 +1007,7 @@ def _log_energy_bin_counts(df):
         inverse_counts = inverse_counts / valid_weights.mean()
 
     # Assign weight to each event based on its energy bin
-    w_energy = np.ones(len(df), dtype=np.float32)
+    w_energy = np.ones(len(erec_s), dtype=np.float32)
     for i, inv_count in enumerate(inverse_counts):
         mask = bin_indices == i
         w_energy[mask] = inv_count
@@ -903,12 +1015,12 @@ def _log_energy_bin_counts(df):
     _logger.info(f"Energy bin weights (inverse-count, normalized): {inverse_counts}")
 
     # Calculate multiplicity weights (prioritize higher-multiplicity events)
-    mult_counts = df["DispNImages"].value_counts()
+    mult_counts = pd.Series(disp_nimages).value_counts()
     _logger.info("Training events per multiplicity:")
     for mult, count in mult_counts.items():
         _logger.info(f"  {int(mult)} telescopes: {int(count)}")
 
-    w_multiplicity = (df["DispNImages"] ** 2).to_numpy().astype(np.float32)
+    w_multiplicity = (disp_nimages**2).astype(np.float32)
     w_multiplicity /= np.mean(w_multiplicity)
 
     _logger.info(

@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
 
 from eventdisplay_ml import diagnostic_utils, models
 
@@ -227,6 +229,31 @@ class TestEnergyBinWeighting:
                 assert sample_weight is not None, "sample_weight should be passed to fit()"
                 assert len(sample_weight) == len(df) // 2  # Training set size
 
+    def test_eval_max_events_limits_xgboost_eval_set(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify only a bounded test subset is passed to XGBoost eval_set."""
+        df = regression_training_df
+        cfg = regression_model_config.copy()
+        cfg["eval_max_events"] = 10
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+            mock_model.predict.side_effect = lambda x_values: np.zeros(
+                (len(x_values), len(cfg["targets"]))
+            )
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model") as mock_eval:
+                mock_eval.return_value = {}
+                models.train_regression(df, cfg)
+
+        eval_set = mock_model.fit.call_args.kwargs["eval_set"]
+        assert len(eval_set[0][0]) == len(df) // 2
+        assert len(eval_set[1][0]) == 10
+
 
 class TestTrainRegressionIntegration:
     """Integration tests for train_regression() with standardization and weighting."""
@@ -370,3 +397,51 @@ class TestTrainRegressionIntegration:
                 config1["target_std"][target],
                 config2["target_std"][target],
             ), "target std should be identical with same random_state"
+
+    def test_memory_optimized_training_matches_reference_without_eval_cap(
+        self, regression_training_df, regression_model_config
+    ):
+        """The array/chunking path must preserve the previous XGBoost result."""
+        df = regression_training_df
+        cfg = regression_model_config
+        targets = cfg["targets"]
+        x_cols = [column for column in df.columns if column not in targets]
+        hyper_parameters = cfg["models"]["xgboost"]["hyper_parameters"]
+
+        x_train, x_test, y_train, y_test = train_test_split(
+            df[x_cols],
+            df[targets],
+            train_size=cfg["train_test_fraction"],
+            random_state=cfg["random_state"],
+        )
+        y_mean = y_train.mean()
+        y_std = y_train.std()
+        y_train_scaled = (y_train - y_mean) / y_std
+        y_test_scaled = (y_test - y_mean) / y_std
+        reference_weights = models._log_energy_bin_counts(df.loc[y_train.index])[2]
+
+        reference_model = xgb.XGBRegressor(**hyper_parameters)
+        reference_model.fit(
+            x_train,
+            y_train_scaled,
+            sample_weight=reference_weights,
+            eval_set=[(x_train, y_train_scaled), (x_test, y_test_scaled)],
+            verbose=False,
+        )
+
+        cfg["eval_max_events"] = 0
+        cfg["prediction_chunk_size"] = 13
+        with patch("eventdisplay_ml.models.evaluate_regression_model", return_value={}):
+            result = models.train_regression(df, cfg)
+        optimized_model = result["models"]["xgboost"]["model"]
+
+        np.testing.assert_allclose(
+            optimized_model.predict(df[x_cols].to_numpy(dtype=np.float32)),
+            reference_model.predict(df[x_cols]),
+            rtol=1e-6,
+            atol=1e-6,
+        )
+        assert optimized_model.best_iteration == reference_model.best_iteration
+        assert optimized_model.best_score == pytest.approx(reference_model.best_score, abs=1e-12)
+        assert result["target_mean"] == pytest.approx(y_mean.to_dict(), abs=0.0)
+        assert result["target_std"] == pytest.approx(y_std.to_dict(), abs=0.0)

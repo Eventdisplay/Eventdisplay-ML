@@ -767,6 +767,161 @@ def flatten_feature_data(
     return df_flat.drop(columns=excluded_columns, errors="ignore")
 
 
+def _flatten_training_chunk(
+    df,
+    model_configs,
+    analysis_type,
+    tel_config,
+    tmva_style,
+    chunk_label,
+):
+    """Flatten one already-cut awkward chunk and add training targets."""
+    memory_profile = model_configs.get("memory_profile", False)
+
+    # For TMVA-style classification, skip telescope flattening (use event-level features only)
+    if tmva_style and analysis_type == "classification":
+        _logger.info("Converting to pandas (no telescope flattening for TMVA style)")
+        # Build DataFrame directly to stay compatible across awkward versions
+        # (some versions do not provide ak.to_pandas).
+        df_flat = pd.DataFrame({name: _to_numpy_1d(df[name]) for name in df.fields})
+    else:
+        df_flat = flatten_telescope_data_vectorized(
+            df,
+            tel_config["max_tel_id"] + 1,
+            features_module.telescope_features(analysis_type),
+            analysis_type,
+            training=True,
+            tel_config=tel_config,
+            observatory=model_configs.get("observatory", "veritas"),
+            max_tel_per_type=model_configs.get("max_tel_per_type", None),
+            preview_rows=model_configs.get("preview_rows", 20),
+        )
+    utils.log_memory_checkpoint(
+        f"{chunk_label}: after flattening",
+        df_flat,
+        enabled=memory_profile,
+    )
+
+    # Filter out events with invalid energy reconstruction for stereo training
+    if analysis_type == "stereo_analysis":
+        n_before_erec_filter = len(df_flat)
+        valid_erec_mask = (df_flat["ErecS"] > 0) & np.isfinite(df_flat["ErecS"])
+        df_flat = df_flat[valid_erec_mask]
+        n_removed_erec = n_before_erec_filter - len(df_flat)
+        if n_removed_erec > 0:
+            _logger.info(
+                f"Removed {n_removed_erec} events with ErecS <= 0 or NaN "
+                f"(fraction removed: {n_removed_erec / n_before_erec_filter:.4f})"
+            )
+
+    if analysis_type == "stereo_analysis":
+        mc_xoff = _to_numpy_1d(df["MCxoff"], np.float32)[valid_erec_mask]
+        mc_yoff = _to_numpy_1d(df["MCyoff"], np.float32)[valid_erec_mask]
+        mc_e0 = _to_numpy_1d(df["MCe0"], np.float32)[valid_erec_mask]
+
+        disp_xoff = df_flat["Xoff_weighted_bdt"].values
+        disp_yoff = df_flat["Yoff_weighted_bdt"].values
+        disp_erec = df_flat["ErecS"].values
+
+        # Compute log energies (ErecS already filtered > 0)
+        mc_e0_log = np.where(mc_e0 > 0, np.log10(mc_e0), np.nan)
+        disp_erec_log = np.log10(disp_erec)  # Safe since already filtered > 0
+
+        new_cols = {
+            "Xoff_residual": mc_xoff - disp_xoff,
+            "Yoff_residual": mc_yoff - disp_yoff,
+            "E_residual": mc_e0_log - disp_erec_log,
+        }
+    elif analysis_type == "classification":
+        new_cols = {
+            "ze_bin": zenith_in_bins(
+                90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
+                model_configs.get("zenith_bins_deg", []),
+            )
+        }
+    for col_name, values in new_cols.items():
+        df_flat[col_name] = values
+
+    # For TMVA-style classification, keep pointing only as an intermediate
+    # to compute ze_bin, but do not expose raw pointing as ML features.
+    if tmva_style and analysis_type == "classification":
+        df_flat = df_flat.drop(
+            columns=["ArrayPointing_Elevation", "ArrayPointing_Azimuth"],
+            errors="ignore",
+        )
+
+    # Filter out events with NaN in residuals (can't train on these)
+    if analysis_type == "stereo_analysis":
+        n_before_nan_filter = len(df_flat)
+        valid_mask = (
+            np.isfinite(df_flat["Xoff_residual"])
+            & np.isfinite(df_flat["Yoff_residual"])
+            & np.isfinite(df_flat["E_residual"])
+        )
+        df_flat = df_flat[valid_mask]
+        n_removed = n_before_nan_filter - len(df_flat)
+        if n_removed > 0:
+            _logger.info(
+                f"Removed {n_removed} events with NaN residuals "
+                f"(fraction removed: {n_removed / n_before_nan_filter:.4f})"
+            )
+
+    return df_flat
+
+
+def _compact_awkward_reservoir(reservoir_chunks, priorities, max_rows):
+    """Compact selected awkward chunks to the lowest-priority rows."""
+    if not reservoir_chunks:
+        return [], priorities
+
+    candidates = (
+        reservoir_chunks[0] if len(reservoir_chunks) == 1 else ak.concatenate(reservoir_chunks)
+    )
+    if max_rows is not None and max_rows > 0 and len(candidates) > max_rows:
+        keep_indices = np.argpartition(priorities, max_rows - 1)[:max_rows]
+        candidates = candidates[keep_indices]
+        priorities = priorities[keep_indices]
+
+    return [candidates], priorities
+
+
+def _update_awkward_reservoir(reservoir_chunks, priorities, chunk, max_rows, rng):
+    """Keep a uniform random awkward-row sample up to max_rows using random priorities."""
+    if max_rows is None or max_rows <= 0:
+        reservoir_chunks = [] if reservoir_chunks is None else reservoir_chunks
+        reservoir_chunks.append(chunk)
+        return reservoir_chunks, None
+    if len(chunk) == 0:
+        return reservoir_chunks, priorities
+
+    chunk_priorities = rng.random(len(chunk))
+    reservoir_chunks = [] if reservoir_chunks is None else reservoir_chunks
+
+    if priorities is not None and len(priorities) >= max_rows:
+        # Priorities define an exact uniform sample. Once full, rows with a
+        # priority worse than the current reservoir maximum can never enter.
+        keep_chunk = chunk_priorities < priorities.max()
+        if not np.any(keep_chunk):
+            return reservoir_chunks, priorities
+        chunk = chunk[keep_chunk]
+        chunk_priorities = chunk_priorities[keep_chunk]
+
+    reservoir_chunks.append(chunk)
+    priorities = (
+        chunk_priorities if priorities is None else np.concatenate([priorities, chunk_priorities])
+    )
+
+    compact_limit = max_rows + max(10000, max_rows // 4)
+    if len(priorities) > compact_limit:
+        reservoir_chunks, priorities = _compact_awkward_reservoir(
+            reservoir_chunks,
+            priorities,
+            max_rows,
+        )
+
+    return reservoir_chunks, priorities
+
+
 def load_training_data(model_configs, file_list, analysis_type):
     """
     Load and flatten training data from the mscw file.
@@ -792,8 +947,10 @@ def load_training_data(model_configs, file_list, analysis_type):
     """
     max_events = model_configs.get("max_events", None)
     random_state = model_configs.get("random_state", None)
+    memory_profile = model_configs.get("memory_profile", False)
 
     _logger.info(f"--- Loading and Flattening Data for {analysis_type} ---")
+    utils.log_memory_checkpoint("load_training_data:start", enabled=memory_profile)
     _logger.info("Processing all events regardless of multiplicity")
     _logger.info(
         "Max events to process: "
@@ -852,122 +1009,134 @@ def load_training_data(model_configs, file_list, analysis_type):
                 _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
                 tree = root_file["data"]
                 resolved_branch_list, rename_map = _resolve_branch_aliases(tree, branch_list)
-                df = tree.arrays(
+                n_before = tree.num_entries
+                n_after_event_cut = 0
+                file_df = None
+                raw_reservoir_chunks = []
+                reservoir_priorities = None
+                file_dfs = []
+                rng = np.random.default_rng(random_state)
+                chunk_iterator = tree.iterate(
                     resolved_branch_list,
                     cut=model_configs.get("pre_cuts", None),
                     library="ak",
+                    step_size=model_configs.get("read_step_size", "100 MB"),
                     decompression_executor=executor,
                 )
-                if rename_map:
-                    rename_present = {k: v for k, v in rename_map.items() if k in df.fields}
-                    if rename_present:
-                        df = _rename_fields(df, rename_present)
-                df = _ensure_fpointing_fields(df)
-                if len(df) == 0:
+
+                for chunk_idx, df in enumerate(chunk_iterator, start=1):
+                    chunk_label = f"file {file_idx}/{total_files}, chunk {chunk_idx}"
+                    utils.log_memory_checkpoint(
+                        f"{chunk_label}: after tree.iterate",
+                        enabled=memory_profile,
+                    )
+                    if rename_map:
+                        rename_present = {k: v for k, v in rename_map.items() if k in df.fields}
+                        if rename_present:
+                            df = _rename_fields(df, rename_present)
+                    df = _ensure_fpointing_fields(df)
+                    if len(df) == 0:
+                        continue
+
+                    n_after_event_cut += len(df)
+                    if max_events_per_file:
+                        raw_reservoir_chunks, reservoir_priorities = _update_awkward_reservoir(
+                            raw_reservoir_chunks,
+                            reservoir_priorities,
+                            df,
+                            max_events_per_file,
+                            rng,
+                        )
+                        utils.log_memory_checkpoint(
+                            f"{chunk_label}: after raw event reservoir update",
+                            enabled=memory_profile,
+                        )
+                        del df
+                    else:
+                        df_flat = _flatten_training_chunk(
+                            df,
+                            model_configs,
+                            analysis_type,
+                            tel_config,
+                            tmva_style,
+                            chunk_label,
+                        )
+                        file_dfs.append(df_flat)
+                        utils.log_memory_checkpoint(
+                            f"{chunk_label}: after appending flattened chunk",
+                            df_flat,
+                            enabled=memory_profile,
+                        )
+                        del df
+                        del df_flat
+                    utils.log_memory_checkpoint(
+                        f"{chunk_label}: after deleting chunk arrays",
+                        enabled=memory_profile,
+                    )
+
+                if (
+                    max_events_per_file
+                    and reservoir_priorities is not None
+                    and len(reservoir_priorities) > 0
+                ):
+                    raw_reservoir_chunks, reservoir_priorities = _compact_awkward_reservoir(
+                        raw_reservoir_chunks,
+                        reservoir_priorities,
+                        max_events_per_file,
+                    )
+                    raw_reservoir = raw_reservoir_chunks[0]
+                    file_df = _flatten_training_chunk(
+                        raw_reservoir,
+                        model_configs,
+                        analysis_type,
+                        tel_config,
+                        tmva_style,
+                        f"file {file_idx}/{total_files}: sampled events",
+                    )
+                    del raw_reservoir
+                    del raw_reservoir_chunks
+                    del reservoir_priorities
+                elif file_dfs:
+                    file_df = pd.concat(file_dfs, ignore_index=True)
+                    del file_dfs
+
+                if file_df is None or file_df.empty:
                     continue
 
-                if max_events_per_file and len(df) > max_events_per_file:
-                    rng = np.random.default_rng(random_state)
-                    indices = rng.choice(len(df), max_events_per_file, replace=False)
-                    df = df[indices]
-
-                n_before = tree.num_entries
                 _logger.info(
-                    f"Number of events before / after event cut: {n_before} / {len(df)}"
-                    f" (fraction retained: {len(df) / n_before:.4f})"
+                    f"Number of events before / after event cut: {n_before} / "
+                    f"{n_after_event_cut} (fraction retained: {n_after_event_cut / n_before:.4f})"
                 )
-
-                # For TMVA-style classification, skip telescope flattening (use event-level features only)
-                if tmva_style and analysis_type == "classification":
-                    _logger.info("Converting to pandas (no telescope flattening for TMVA style)")
-                    # Build DataFrame directly to stay compatible across awkward versions
-                    # (some versions do not provide ak.to_pandas).
-                    df_flat = pd.DataFrame({name: _to_numpy_1d(df[name]) for name in df.fields})
-                else:
-                    df_flat = flatten_telescope_data_vectorized(
-                        df,
-                        tel_config["max_tel_id"] + 1,
-                        features_module.telescope_features(analysis_type),
-                        analysis_type,
-                        training=True,
-                        tel_config=tel_config,
-                        observatory=model_configs.get("observatory", "veritas"),
-                        max_tel_per_type=model_configs.get("max_tel_per_type", None),
-                        preview_rows=model_configs.get("preview_rows", 20),
+                if max_events_per_file and n_after_event_cut > len(file_df):
+                    _logger.info(
+                        f"Sampled {len(file_df)} events from {n_after_event_cut} "
+                        f"events passing pre-cuts in file {file_idx}/{total_files}"
                     )
 
-                # Filter out events with invalid energy reconstruction for stereo training
-                if analysis_type == "stereo_analysis":
-                    n_before_erec_filter = len(df_flat)
-                    valid_erec_mask = (df_flat["ErecS"] > 0) & np.isfinite(df_flat["ErecS"])
-                    df_flat = df_flat[valid_erec_mask]
-                    n_removed_erec = n_before_erec_filter - len(df_flat)
-                    if n_removed_erec > 0:
-                        _logger.info(
-                            f"Removed {n_removed_erec} events with ErecS <= 0 or NaN "
-                            f"(fraction removed: {n_removed_erec / n_before_erec_filter:.4f})"
-                        )
-
-                if analysis_type == "stereo_analysis":
-                    mc_xoff = _to_numpy_1d(df["MCxoff"], np.float32)[valid_erec_mask]
-                    mc_yoff = _to_numpy_1d(df["MCyoff"], np.float32)[valid_erec_mask]
-                    mc_e0 = _to_numpy_1d(df["MCe0"], np.float32)[valid_erec_mask]
-
-                    disp_xoff = df_flat["Xoff_weighted_bdt"].values
-                    disp_yoff = df_flat["Yoff_weighted_bdt"].values
-                    disp_erec = df_flat["ErecS"].values
-
-                    # Compute log energies (ErecS already filtered > 0)
-                    mc_e0_log = np.where(mc_e0 > 0, np.log10(mc_e0), np.nan)
-                    disp_erec_log = np.log10(disp_erec)  # Safe since already filtered > 0
-
-                    new_cols = {
-                        "Xoff_residual": mc_xoff - disp_xoff,
-                        "Yoff_residual": mc_yoff - disp_yoff,
-                        "E_residual": mc_e0_log - disp_erec_log,
-                    }
-                elif analysis_type == "classification":
-                    new_cols = {
-                        "ze_bin": zenith_in_bins(
-                            90.0 - _to_numpy_1d(df["ArrayPointing_Elevation"], np.float32),
-                            model_configs.get("zenith_bins_deg", []),
-                        )
-                    }
-                for col_name, values in new_cols.items():
-                    df_flat[col_name] = values
-
-                # For TMVA-style classification, keep pointing only as an intermediate
-                # to compute ze_bin, but do not expose raw pointing as ML features.
-                if tmva_style and analysis_type == "classification":
-                    df_flat = df_flat.drop(
-                        columns=["ArrayPointing_Elevation", "ArrayPointing_Azimuth"],
-                        errors="ignore",
-                    )
-
-                # Filter out events with NaN in residuals (can't train on these)
-                if analysis_type == "stereo_analysis":
-                    n_before_nan_filter = len(df_flat)
-                    valid_mask = (
-                        np.isfinite(df_flat["Xoff_residual"])
-                        & np.isfinite(df_flat["Yoff_residual"])
-                        & np.isfinite(df_flat["E_residual"])
-                    )
-                    df_flat = df_flat[valid_mask]
-                    n_removed = n_before_nan_filter - len(df_flat)
-                    if n_removed > 0:
-                        _logger.info(
-                            f"Removed {n_removed} events with NaN residuals "
-                            f"(fraction removed: {n_removed / n_before_nan_filter:.4f})"
-                        )
-
-                dfs.append(df_flat)
-
-                del df
+                dfs.append(file_df)
+                utils.log_memory_checkpoint(
+                    f"file {file_idx}/{total_files}: after append to dfs",
+                    file_df,
+                    enabled=memory_profile,
+                )
         except Exception as e:
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
     df_final = pd.concat(dfs, ignore_index=True)
-    df_final.dropna(axis=1, how="all", inplace=True)
+    del dfs
+    utils.log_memory_checkpoint("after final pandas concat", df_final, enabled=memory_profile)
+    all_nan_columns = [col for col in df_final.columns if df_final[col].isna().all()]
+    _logger.info(f"All-NaN columns detected after concat: {len(all_nan_columns)}")
+    if all_nan_columns:
+        _logger.info(f"Dropping all-NaN columns: {all_nan_columns}")
+        df_final.drop(columns=all_nan_columns, inplace=True)
+        utils.log_memory_checkpoint(
+            "after dropping all-NaN columns",
+            df_final,
+            enabled=memory_profile,
+        )
+    else:
+        utils.log_memory_checkpoint("skipped all-NaN column drop", df_final, enabled=memory_profile)
     _logger.info(f"Total events loaded: {len(df_final)}")
 
     # Log multiplicity distribution
@@ -985,6 +1154,7 @@ def load_training_data(model_configs, file_list, analysis_type):
         raise ValueError("No data loaded from input files.")
 
     print_variable_statistics(df_final)
+    utils.log_memory_checkpoint("load_training_data:end", df_final, enabled=memory_profile)
 
     return df_final
 

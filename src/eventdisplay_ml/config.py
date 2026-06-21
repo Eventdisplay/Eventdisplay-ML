@@ -104,6 +104,22 @@ def configure_training(analysis_type):
         ),
         default=20,
     )
+    parser.add_argument(
+        "--memory_profile",
+        action="store_true",
+        help="Log peak resident memory at major data-loading and training stages.",
+    )
+    parser.add_argument(
+        "--read_step_size",
+        default="250 MB",
+        help="Chunk size passed to uproot while reading training ROOT trees.",
+    )
+    parser.add_argument(
+        "--eval_max_events",
+        type=int,
+        default=100000,
+        help="Maximum number of test events used in XGBoost eval_set for early stopping.",
+    )
     if analysis_type == "stereo_analysis":
         parser.add_argument(
             "--min_images",
@@ -122,6 +138,9 @@ def configure_training(analysis_type):
     _logger.info(f"Max events: {model_configs['max_events']}")
     _logger.info(f"Max CPU cores: {model_configs['max_cores']}")
     _logger.info(f"Preview rows: {model_configs['preview_rows']}")
+    _logger.info(f"Memory profiling: {model_configs['memory_profile']}")
+    _logger.info(f"Read step size: {model_configs['read_step_size']}")
+    _logger.info(f"Max eval events: {model_configs['eval_max_events']}")
     if model_configs.get("max_tel_per_type") is not None:
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
     if analysis_type == "stereo_analysis":
