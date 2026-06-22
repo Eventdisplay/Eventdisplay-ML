@@ -77,12 +77,14 @@ def resolve_joblib_path(path_or_prefix):
 
 
 def load_joblib(path):
-    """Load a joblib payload while tolerating NumPy 2.5's legacy-pickle warning.
+    """Load a joblib payload while tolerating NumPy's array-shape deprecation warning.
 
-    Joblib restores persisted arrays by assigning their shape. NumPy 2.5
-    deprecates that implementation detail, but the serialized data and restored
-    array are unaffected. Keep the suppression local so other deprecations remain
-    visible (and fatal in the test suite).
+    Joblib unpickles persisted arrays by assigning their shape. NumPy 2.5 deprecates this
+    implementation detail, but the serialized data and restored array are unaffected.
+    Keep the suppression local so other deprecations remain visible (and fatal in the
+    test suite).
+
+    Note: joblib uses pickle; only load model files from trusted sources.
     """
     with warnings.catch_warnings():
         warnings.filterwarnings(
