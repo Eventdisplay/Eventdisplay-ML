@@ -27,7 +27,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import joblib
 import numpy as np
 import uproot
 from astropy.table import Table
@@ -109,7 +108,7 @@ def _load_multi_bin_roc(joblib_paths):
     for path in joblib_paths:
         try:
             resolved_path = utils.resolve_joblib_path(path)
-            data = joblib.load(resolved_path)
+            data = utils.load_joblib(resolved_path)
             ebins = data["energy_bins_log10_tev"]
             e_min = ebins["E_min"]
             e_max = ebins["E_max"]

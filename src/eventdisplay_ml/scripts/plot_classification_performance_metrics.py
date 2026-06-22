@@ -17,7 +17,6 @@ import logging
 import re
 from pathlib import Path
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import uproot
@@ -155,7 +154,7 @@ def load_efficiency_tmva(path, ebin, zebin=0):
 def load_xgb_model_data(path, ebin):
     """Load XGB joblib model payload for one energy bin."""
     model_file = utils.resolve_joblib_path(Path(path) / f"gammahadron_bdt_ebin{ebin}")
-    return joblib.load(model_file)
+    return utils.load_joblib(model_file)
 
 
 def load_efficiency_xgb(data_joblib, ebin, zebin=-1):

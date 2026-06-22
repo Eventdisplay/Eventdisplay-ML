@@ -17,7 +17,6 @@ import argparse
 import logging
 from pathlib import Path
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -30,7 +29,7 @@ _logger = logging.getLogger(__name__)
 def load_model_config(model_file):
     """Load model configuration with cached feature importances."""
     _logger.info(f"Loading model from {model_file}")
-    model_dict = joblib.load(utils.resolve_joblib_path(model_file))
+    model_dict = utils.load_joblib(utils.resolve_joblib_path(model_file))
 
     models = model_dict.get("models")
     if not isinstance(models, dict) or not models:

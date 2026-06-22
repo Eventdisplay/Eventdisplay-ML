@@ -22,7 +22,6 @@ import argparse
 import logging
 from pathlib import Path
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -162,7 +161,7 @@ def main():
         model_path = utils.resolve_joblib_path(args.model_file)
 
         _logger.info(f"Loading model from: {model_path}")
-        model_configs = joblib.load(model_path)
+        model_configs = utils.load_joblib(model_path)
 
         # Extract the XGBoost model and its evaluation results
         if "models" not in model_configs:
@@ -224,7 +223,7 @@ def main():
         for model_path in joblib_files:
             _logger.info(f"Loading model from: {model_path}")
             try:
-                model_configs = joblib.load(model_path)
+                model_configs = utils.load_joblib(model_path)
                 if "models" not in model_configs or "xgboost" not in model_configs["models"]:
                     _logger.error(f"Skipping {model_path}: missing 'models/xgboost' key.")
                     continue
