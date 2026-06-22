@@ -7,7 +7,6 @@ remaining compatible with older cache keys where possible.
 
 import logging
 
-import joblib
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -22,7 +21,7 @@ _logger = logging.getLogger(__name__)
 
 def _load_model_cfg(model_file):
     """Load full model dictionary and the first model configuration entry."""
-    model_dict = joblib.load(utils.resolve_joblib_path(model_file))
+    model_dict = utils.load_joblib(utils.resolve_joblib_path(model_file))
     models = model_dict.get("models", {})
     model_cfg = next(iter(models.values())) if models else None
     return model_dict, model_cfg
@@ -171,7 +170,11 @@ def compute_residual_normality_stats(y_test, y_test_pred, target_names):
         std = float(np.std(residuals_clean))
 
         # Normality tests
-        _, p_ks = stats.kstest(residuals_clean, "norm", args=(mean, std))
+        if std == 0:
+            p_ks = 0.0
+        else:
+            standardized_residuals = (residuals_clean - mean) / std
+            _, p_ks = stats.kstest(standardized_residuals, stats.norm.cdf)
         ad_result = stats.anderson(residuals_clean, dist="norm", method="interpolate")
         ad_stat = float(ad_result.statistic)
         # With method='interpolate', ad_result is SignificanceResult with pvalue

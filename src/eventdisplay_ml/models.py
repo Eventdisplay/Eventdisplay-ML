@@ -131,7 +131,7 @@ def load_classification_models(model_prefix, model_name):
             continue
         e_bin = int(match.group(1))
         _logger.info(f"Loading model for e_bin={e_bin}: {file}")
-        model_data = joblib.load(file)
+        model_data = utils.load_joblib(file)
         _check_bin(e_bin, model_data.get("energy_bin_number"))
         models.setdefault(e_bin, {})
         try:
@@ -280,7 +280,7 @@ def load_regression_models(model_prefix, model_name):
     model_path = utils.resolve_joblib_path(model_prefix)
     _logger.info(f"Loading regression model: {model_path}")
 
-    model_data = joblib.load(model_path)
+    model_data = utils.load_joblib(model_path)
     models = {
         model_name: {
             "model": model_data["models"][model_name]["model"],

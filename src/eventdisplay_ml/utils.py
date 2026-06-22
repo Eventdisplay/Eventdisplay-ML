@@ -6,7 +6,10 @@ import os
 import resource
 import sys
 import time
+import warnings
 from pathlib import Path
+
+import joblib
 
 _logger = logging.getLogger(__name__)
 _profile_start_time = None
@@ -71,6 +74,25 @@ def resolve_joblib_path(path_or_prefix):
             return candidate
 
     raise FileNotFoundError(f"Could not resolve model file from '{path_or_prefix}'.")
+
+
+def load_joblib(path):
+    """Load a joblib payload while tolerating NumPy's array-shape deprecation warning.
+
+    Joblib unpickles persisted arrays by assigning their shape. NumPy 2.5 deprecates this
+    implementation detail, but the serialized data and restored array are unaffected.
+    Keep the suppression local so other deprecations remain visible (and fatal in the
+    test suite).
+
+    Note: joblib uses pickle; only load model files from trusted sources.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Setting the shape on a NumPy array has been deprecated.*",
+            category=DeprecationWarning,
+        )
+        return joblib.load(path)
 
 
 def read_input_file_list(input_file_list):
