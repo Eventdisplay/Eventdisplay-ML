@@ -96,7 +96,10 @@ Tests: Feature importance
 Required inputs:
 
 - `--model_file`: trained stereo or classification model `.joblib`
+- `--model_dir`: directory with trained model `.joblib` or `.joblib.gz` files
 - `--output_dir`: directory for generated PNGs
+
+Use either `--model_file` or `--model_dir`.
 
 Run:
 
@@ -107,6 +110,10 @@ Run:
 
   eventdisplay-ml-diagnostic-shap-summary \
   --model_file models/classification_model_ebin0.joblib \
+  --output_dir diagnostics/
+
+  eventdisplay-ml-diagnostic-shap-summary \
+  --model_dir models/ \
   --output_dir diagnostics/
 ```
 
@@ -119,6 +126,9 @@ Outputs (stereo):
 Outputs (classification):
 
 - `diagnostics/shap_importance_label.png`
+
+With `--model_dir`, output plot names use the model filename as their base, for example
+`classification_model_ebin0_label.png`.
 
 Note: SHAP importances are cached during training. Existing model files trained before this feature was added will report a missing-cache error. Inference (`apply_xgb_classify`) does not require retraining, but running this diagnostic on a classification model does.
 

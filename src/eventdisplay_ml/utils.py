@@ -76,6 +76,33 @@ def resolve_joblib_path(path_or_prefix):
     raise FileNotFoundError(f"Could not resolve model file from '{path_or_prefix}'.")
 
 
+def joblib_basename(model_path):
+    """Return basename without .joblib/.joblib.gz suffixes."""
+    name = Path(model_path).name
+    return name.removesuffix(".joblib.gz").removesuffix(".joblib")
+
+
+def discover_joblib_files(model_dir):
+    """Return sorted joblib model files from a directory, preferring .joblib.gz."""
+    model_dir = Path(model_dir)
+    if not model_dir.exists() or not model_dir.is_dir():
+        raise FileNotFoundError(f"Model directory not found: {model_dir}")
+
+    discovered_files = sorted(set(model_dir.glob("*.joblib")).union(model_dir.glob("*.joblib.gz")))
+    files_by_name = {}
+    for model_path in discovered_files:
+        key = joblib_basename(model_path)
+        existing = files_by_name.get(key)
+        if existing is None or model_path.name.endswith(".joblib.gz"):
+            files_by_name[key] = model_path
+
+    joblib_files = [files_by_name[name] for name in sorted(files_by_name)]
+    if not joblib_files:
+        raise FileNotFoundError(f"No joblib files found in directory: {model_dir}")
+
+    return joblib_files
+
+
 def load_joblib(path):
     """Load a joblib payload while tolerating NumPy's array-shape deprecation warning.
 

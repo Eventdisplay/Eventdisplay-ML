@@ -11,6 +11,10 @@ Usage:
     python diagnostic_shap_summary.py \\
         --model_file stereo_or_classification_model.joblib \\
         --output_dir diagnostics/
+
+    python diagnostic_shap_summary.py \\
+        --model_dir models/ \\
+        --output_dir diagnostics/
 """
 
 import argparse
@@ -88,23 +92,9 @@ def plot_feature_importance(features, importances, target_name, output_dir, outp
         _logger.info(f"  {feat:35s}  {imp:.6f}")
 
 
-def main():
-    """Load cached SHAP importance from model file and create plots for each target."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model_file", required=True, help="Path to trained model joblib file")
-    parser.add_argument("--output_dir", default="diagnostics", help="Output directory for plots")
-    parser.add_argument(
-        "--output_file", default="shap_importance", help="Output file name for plots"
-    )
-
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-
-    _logger.info("=== SHAP Feature Importance Summary ===")
-
-    model_cfg, model_dict = load_model_config(args.model_file)
+def process_model_file(model_file, output_dir, output_file):
+    """Load cached SHAP importance from one model file and create plots for each target."""
+    model_cfg, model_dict = load_model_config(model_file)
 
     shap_importance = model_cfg.get("shap_importance")
     features = model_cfg.get("features")
@@ -113,13 +103,13 @@ def main():
         features = model_dict.get("features")
 
     if shap_importance is None:
-        _logger.error("ERROR: No cached SHAP importance found in model file!")
+        _logger.error(f"ERROR: No cached SHAP importance found in model file: {model_file}")
         _logger.error("Make sure the model was trained with the updated code.")
-        return
+        return False
 
     if features is None:
-        _logger.error("ERROR: No feature list found in model file!")
-        return
+        _logger.error(f"ERROR: No feature list found in model file: {model_file}")
+        return False
 
     _logger.info(f"Loaded {len(features)} features from cache")
     _logger.info(f"Found per-target SHAP importance for: {list(shap_importance.keys())}")
@@ -127,11 +117,50 @@ def main():
     # Create plots for each target using cached SHAP importance
     for target_name, importances in shap_importance.items():
         _logger.info(f"\nProcessing {target_name}...")
-        plot_feature_importance(
-            features, importances, target_name, args.output_dir, args.output_file
-        )
+        plot_feature_importance(features, importances, target_name, output_dir, output_file)
 
-    _logger.info(f"\nPlots saved to {args.output_dir}")
+    return True
+
+
+def main():
+    """Load cached SHAP importance from model file(s) and create plots for each target."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--model_file", help="Path to a single trained model joblib file")
+    group.add_argument(
+        "--model_dir",
+        help=(
+            "Directory containing joblib model files. "
+            "All *.joblib and *.joblib.gz files are processed."
+        ),
+    )
+    parser.add_argument("--output_dir", default="diagnostics", help="Output directory for plots")
+    parser.add_argument(
+        "--output_file",
+        default="shap_importance",
+        help="Output file name for plots. Only used with --model_file.",
+    )
+
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    _logger.info("=== SHAP Feature Importance Summary ===")
+
+    if args.model_file:
+        process_model_file(args.model_file, output_dir, args.output_file)
+    else:
+        for model_path in utils.discover_joblib_files(args.model_dir):
+            output_file = utils.joblib_basename(model_path)
+            try:
+                process_model_file(model_path, output_dir, output_file)
+            except Exception as e:
+                _logger.exception(f"Skipping {model_path}: failed to process model ({e})")
+                continue
+
+    _logger.info(f"\nPlots saved to {output_dir}")
 
 
 if __name__ == "__main__":
