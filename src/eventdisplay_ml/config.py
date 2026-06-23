@@ -86,6 +86,11 @@ def configure_training(analysis_type):
                 "distribution within the selected energy bin."
             ),
         )
+        parser.add_argument(
+            "--ignore_ze_bin",
+            action="store_true",
+            help="Remove ze_bin from gamma/hadron training features.",
+        )
     parser.add_argument(
         "--max_cores",
         type=int,
@@ -157,6 +162,7 @@ def configure_training(analysis_type):
         _logger.info(
             f"Balance class zenith weights: {model_configs.get('balance_class_zenith_weights')}"
         )
+        _logger.info(f"Ignore ze_bin feature: {model_configs.get('ignore_ze_bin')}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")

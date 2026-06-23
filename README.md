@@ -116,6 +116,22 @@ eventdisplay-ml-train-xgb-classify \
 
 With this option, the training split is weighted so gamma and background have the same `ze_bin` distribution in the selected energy bin. The feature `ze_bin` is still available to the classifier, so zenith-dependent shower morphology can still be learned. The weights only remove the simplest class-prior shortcut.
 
+**Optional training without `ze_bin`:**
+
+For a direct stress test of zenith-bin dependence, remove `ze_bin` from the classifier input:
+
+```bash
+eventdisplay-ml-train-xgb-classify \
+    --input_signal_file_list signal_files.txt \
+    --input_background_file_list background_files.txt \
+    --model_parameters model_parameters.json \
+    --energy_bin_number 0 \
+    --model_prefix models/gammahadron_bdt_nozebin \
+    --ignore_ze_bin
+```
+
+This keeps the same event selection but excludes `ze_bin` from the training features. It is intended for comparison against the default and `--balance_class_zenith_weights` trainings. Do not combine `--ignore_ze_bin` with `--balance_class_zenith_weights`.
+
 ### Gamma/Hadron Validation Checklist
 
 Use these diagnostics before trusting unusually good gamma/hadron performance:
@@ -129,7 +145,7 @@ Use these diagnostics before trusting unusually good gamma/hadron performance:
 
 Recommended high-value stress tests that are not fully automated yet:
 
-- Train without `ze_bin`, compare to the default and balanced trainings, and inspect per-zenith performance. The no-`ze_bin` model should be worse but not catastrophically different.
+- Train with `--ignore_ze_bin`, compare to the default and balanced trainings, and inspect per-zenith performance. The no-`ze_bin` model should be worse but not catastrophically different.
 - Reweight gamma and background to the same distributions in zenith, wobble offset, NSB/noise, multiplicity, and reconstructed energy before training or evaluation.
 - Hold out entire observing-condition groups instead of random events, for example a zenith band, wobble offset, NSB range, run period, or background file group. This detects shortcuts that random train/test splits hide.
 - Evaluate on independent real-data control regions. The background score distribution should be stable across OFF regions and across run conditions after accounting for energy and zenith.

@@ -915,6 +915,12 @@ def train_classification(df, model_configs):
     df[1]["label"] = 0
     full_df = pd.concat([df[0], df[1]], ignore_index=True)
     x_data = full_df.drop(columns=["label"])
+    if model_configs.get("ignore_ze_bin", False):
+        if model_configs.get("balance_class_zenith_weights", False):
+            raise ValueError("Cannot use ignore_ze_bin with balance_class_zenith_weights.")
+        if "ze_bin" in x_data.columns:
+            _logger.info("Removing ze_bin from classification training features.")
+            x_data = x_data.drop(columns=["ze_bin"])
     _logger.info(f"Features ({len(x_data.columns)}): {', '.join(x_data.columns)}")
     model_configs["features"] = list(x_data.columns)
     y_data = full_df["label"]
