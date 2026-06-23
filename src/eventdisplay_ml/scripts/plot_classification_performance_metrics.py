@@ -114,7 +114,24 @@ def plot_score_distributions(
 
 def load_efficiency_tmva(path, ebin, zebin=0):
     """Load efficiencies from TMVA root files."""
-    file_path = Path(path) / f"BDT_{ebin}_{zebin}.root"
+    root_dir = Path(path)
+    file_path = tmva_root_file(root_dir, ebin, zebin)
+    if file_path is None:
+        expected_file_name = (
+            f"BDT_{ebin}_{zebin}.root"
+            if tmva_plain_bdt_files_available(root_dir)
+            else f"TMVA.BDT_{ebin}_{zebin}.root"
+        )
+        _logger.warning(
+            "TMVA ROOT file unavailable in %s (ebin=%s, zebin=%s). "
+            "Expected %s. Plotting XGB only for this bin.",
+            path,
+            ebin,
+            zebin,
+            expected_file_name,
+        )
+        return None
+
     try:
         with uproot.open(file_path) as rf:
             base_path = "Method_BDT/BDT_0"
@@ -149,6 +166,23 @@ def load_efficiency_tmva(path, ebin, zebin=0):
         return None
 
     return x_root, y_effs, y_effb
+
+
+def tmva_root_file(path, ebin, zebin):
+    """Return a TMVA ROOT file path for supported filename conventions."""
+    root_dir = Path(path)
+    file_name = (
+        f"BDT_{ebin}_{zebin}.root"
+        if tmva_plain_bdt_files_available(root_dir)
+        else f"TMVA.BDT_{ebin}_{zebin}.root"
+    )
+    file_path = root_dir / file_name
+    return file_path if file_path.exists() else None
+
+
+def tmva_plain_bdt_files_available(path):
+    """Return True when the TMVA directory contains plain BDT ROOT outputs."""
+    return any(Path(path).glob("BDT_*_*.root"))
 
 
 def load_xgb_model_data(path, ebin):
@@ -201,24 +235,36 @@ def xgb_zenith_bins(data_joblib):
 
 
 def tmva_zenith_bins(path, ebin):
-    """Return available TMVA zenith bins from BDT_<ebin>_<zebin>.root filenames."""
+    """Return available TMVA zenith bins from supported ROOT filenames."""
     ze_bins = []
-    pattern = re.compile(rf"^BDT_{ebin}_(\d+)\.root$")
-    for file_path in Path(path).glob(f"BDT_{ebin}_*.root"):
+    root_dir = Path(path)
+    if tmva_plain_bdt_files_available(root_dir):
+        pattern = re.compile(rf"^BDT_{ebin}_(\d+)\.root$")
+        file_paths = root_dir.glob(f"BDT_{ebin}_*.root")
+    else:
+        pattern = re.compile(rf"^TMVA\.BDT_{ebin}_(\d+)\.root$")
+        file_paths = root_dir.glob(f"TMVA.BDT_{ebin}_*.root")
+
+    for file_path in file_paths:
         match = pattern.match(file_path.name)
         if match:
             ze_bins.append(int(match.group(1)))
     return sorted(set(ze_bins))
 
 
-def resolve_tmva_zebin(xgb_zebin, available_tmva_bins, fallback_tmva_bin):
+def resolve_tmva_zebin(xgb_zebin, available_tmva_bins, fallback_tmva_bin=None):
     """Resolve TMVA zenith bin aligned to XGB zenith bin where possible."""
+    if not available_tmva_bins:
+        return None
+    fallback_bin = fallback_tmva_bin
+    if fallback_bin is None:
+        fallback_bin = available_tmva_bins[0]
     if xgb_zebin < 0:
-        return fallback_tmva_bin if fallback_tmva_bin in available_tmva_bins else None
+        return fallback_bin if fallback_bin in available_tmva_bins else None
     if xgb_zebin in available_tmva_bins:
         return xgb_zebin
-    if fallback_tmva_bin in available_tmva_bins:
-        return fallback_tmva_bin
+    if fallback_bin in available_tmva_bins:
+        return fallback_bin
     return None
 
 
@@ -302,8 +348,11 @@ def main():
     parser.add_argument(
         "--zenith-bin-tmva",
         type=int,
-        default=0,
-        help="Zenith bin index for TMVA ROOT files (second digit in BDT_<ebin>_<zebin>.root). Default: 0.",
+        default=None,
+        help=(
+            "Zenith bin index for TMVA ROOT files (second digit in BDT_<ebin>_<zebin>.root). "
+            "If omitted, uses the first available TMVA zenith bin for overall or unmatched XGB bins."
+        ),
     )
     parser.add_argument(
         "--zenith-bin-xgb",

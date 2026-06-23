@@ -332,6 +332,54 @@ Output:
 
 - Figure with one panel per tracked metric (for example `rmse`), showing training and test curves.
 
+### Classification performance comparison
+
+Analysis type: gamma/hadron separation.
+
+- Compare XGBoost and optional TMVA BDT efficiency curves
+- Plot signal/background efficiency, Q-factor, ROC, and reconstructed score distributions
+- Produce one plot per energy bin and XGB zenith bin
+
+Required inputs:
+
+- `--xgb_dir`: directory with trained classification model files named `gammahadron_bdt_ebinN.joblib` or `.joblib.gz`
+- `--output_dir`: directory for generated plots
+
+Optional inputs:
+
+- `--tmva_dir`: directory with TMVA ROOT files named `BDT_<energy_bin>_<zenith_bin>.root` or, if no plain BDT files exist, `TMVA.BDT_<energy_bin>_<zenith_bin>.root`
+- `--energy-bin`: plot only one energy bin (`0`-`8`)
+- `--zenith-bin-xgb`: plot only one XGB zenith bin; omit to plot overall and all available XGB zenith bins
+- `--zenith-bin-tmva`: TMVA zenith bin used for overall or unmatched XGB bins; omit to use the first available TMVA zenith bin for each energy bin
+
+Run:
+
+```bash
+eventdisplay-ml-plot-classification-performance-metrics \
+  --tmva_dir tmva_models/ \
+  --xgb_dir xgb_models/ \
+  --output_dir diagnostics/
+```
+
+Equivalent source-tree invocation:
+
+```bash
+python src/eventdisplay_ml/scripts/plot_classification_performance_metrics.py \
+  --tmva_dir tmva_models/ \
+  --xgb_dir xgb_models/ \
+  --output_dir diagnostics/
+```
+
+Output:
+
+- `diagnostics/plot_performance_metrics_ebinN_overall.png`
+- `diagnostics/plot_performance_metrics_ebinN_zeM.png`
+
+Notes:
+
+- If `--tmva_dir` is omitted or no matching TMVA ROOT file exists for a bin, the corresponding plot is generated with XGB curves only.
+- When plain `BDT_*_*.root` files are present, they define the TMVA file set; `TMVA.BDT_*_*.root` files are only used as a fallback convention when no plain BDT files exist.
+
 ## Generative AI disclosure
 
 Generative AI tools (including Claude, ChatGPT, and Gemini) were used to assist with code development, debugging, and documentation drafting. All AI-assisted outputs were reviewed, validated, and, where necessary, modified by the authors to ensure accuracy and reliability.
