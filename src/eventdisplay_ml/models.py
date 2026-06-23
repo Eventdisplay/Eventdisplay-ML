@@ -928,12 +928,23 @@ def train_classification(df, model_configs):
     )
 
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    weights_train = None
+    if model_configs.get("balance_class_zenith_weights", False):
+        weights_train = _class_zenith_balance_weights(x_train, y_train)
+        _logger.info(
+            "Using class/zenith sample weights "
+            f"(mean={weights_train.mean():.3f}, std={weights_train.std():.3f}, "
+            f"min={weights_train.min():.3f}, max={weights_train.max():.3f})"
+        )
     eval_set = [(x_train, y_train), (x_test, y_test)]
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
-        model.fit(x_train, y_train, eval_set=eval_set, verbose=True)
+        fit_kwargs = {"eval_set": eval_set, "verbose": True}
+        if weights_train is not None:
+            fit_kwargs["sample_weight"] = weights_train
+        model.fit(x_train, y_train, **fit_kwargs)
 
         shap_importance = evaluate_classification_model(
             model,
@@ -954,6 +965,64 @@ def train_classification(df, model_configs):
         cfg["shap_importance"] = shap_importance
 
     return model_configs
+
+
+def _class_zenith_balance_weights(x_train, y_train):
+    """Compute sample weights that equalize class distributions over ze_bin."""
+    if "ze_bin" not in x_train.columns:
+        raise ValueError(
+            "Cannot apply class/zenith balancing because training features do not include ze_bin."
+        )
+
+    labels = pd.Series(y_train, index=x_train.index, name="label")
+    ze_bins = pd.Series(x_train["ze_bin"], index=x_train.index, name="ze_bin")
+    valid = labels.notna() & ze_bins.notna()
+    if not valid.all():
+        n_invalid = int((~valid).sum())
+        _logger.warning(
+            "Found %d training events with missing label or ze_bin; assigning unit weight.",
+            n_invalid,
+        )
+
+    labels_valid = labels[valid]
+    ze_valid = ze_bins[valid]
+    total_valid = len(labels_valid)
+    if total_valid == 0:
+        raise ValueError("Cannot apply class/zenith balancing with no valid training events.")
+
+    target_fraction = ze_valid.value_counts(normalize=True).sort_index()
+    weights = pd.Series(1.0, index=x_train.index, dtype=np.float64)
+
+    _logger.info("Class/zenith balancing target distribution:")
+    for ze_bin, frac in target_fraction.items():
+        _logger.info(f"  ze_bin={ze_bin}: target_fraction={frac:.6f}")
+
+    for label in sorted(labels_valid.unique()):
+        class_mask = labels_valid == label
+        class_ze = ze_valid[class_mask]
+        observed_fraction = class_ze.value_counts(normalize=True).sort_index()
+        _logger.info(f"Class/zenith balancing weights for label={label}:")
+
+        for ze_bin, target_frac in target_fraction.items():
+            obs_frac = observed_fraction.get(ze_bin, 0.0)
+            if obs_frac <= 0:
+                _logger.info(f"  ze_bin={ze_bin}: no events for this class; no weight assigned")
+                continue
+
+            weight = target_frac / obs_frac
+            mask = valid & (labels == label) & (ze_bins == ze_bin)
+            weights.loc[mask] = weight
+            _logger.info(
+                f"  ze_bin={ze_bin}: observed_fraction={obs_frac:.6f}, "
+                f"weight={weight:.6f}, events={int(mask.sum())}"
+            )
+
+    weight_values = weights.to_numpy(dtype=np.float32)
+    mean_weight = weight_values.mean()
+    if mean_weight > 0:
+        weight_values /= mean_weight
+
+    return weight_values
 
 
 def _log_energy_bin_counts(df):

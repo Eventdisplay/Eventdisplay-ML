@@ -102,6 +102,7 @@ def test_configure_training_classification_parses_tmva_style(monkeypatch, model_
             "0",
             "--max_cores",
             "2",
+            "--balance_class_zenith_weights",
         ],
     )
     monkeypatch.setattr(
@@ -116,6 +117,7 @@ def test_configure_training_classification_parses_tmva_style(monkeypatch, model_
     assert result["pre_cuts"][0] == pytest.approx(0.1)
     assert result["pre_cuts"][1] == pytest.approx(10.0)
     assert result["energy_bins_log10_tev"]["E_min"] == pytest.approx(-1.0)
+    assert result["balance_class_zenith_weights"] is True
     assert result["models"]["xgboost"]["hyper_parameters"]["n_jobs"] == 2
 
 
