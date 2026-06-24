@@ -13,6 +13,7 @@ Notes the differences between TMVA and XGB implementations:
 """
 
 import argparse
+import csv
 import logging
 import re
 from pathlib import Path
@@ -234,6 +235,101 @@ def xgb_zenith_bins(data_joblib):
     return sorted(set(ze_bins))
 
 
+def efficiency_at_signal_efficiency(
+    signal_efficiency, background_efficiency, target_signal_efficiency
+):
+    """Return background efficiency at the closest available signal efficiency."""
+    signal_efficiency = np.asarray(signal_efficiency, dtype=float)
+    background_efficiency = np.asarray(background_efficiency, dtype=float)
+    valid = np.isfinite(signal_efficiency) & np.isfinite(background_efficiency)
+    if not np.any(valid):
+        return np.nan, np.nan
+
+    index = np.argmin(np.abs(signal_efficiency[valid] - target_signal_efficiency))
+    return signal_efficiency[valid][index], background_efficiency[valid][index]
+
+
+def zenith_uniformity_summary(data_joblib, ebin, target_signal_efficiency=0.8):
+    """Summarize zenith stability using background efficiency at fixed signal efficiency."""
+    available_ze_bins = xgb_zenith_bins(data_joblib)
+    if not available_ze_bins:
+        return None
+
+    _, y_effs_overall, y_effb_overall = load_efficiency_xgb(data_joblib, ebin, -1)
+    overall_signal_efficiency, overall_background_efficiency = efficiency_at_signal_efficiency(
+        y_effs_overall, y_effb_overall, target_signal_efficiency
+    )
+
+    ze_background_efficiencies = []
+    ze_signal_efficiencies = []
+    for ze_bin in available_ze_bins:
+        _, y_effs_ze, y_effb_ze = load_efficiency_xgb(data_joblib, ebin, ze_bin)
+        ze_signal_efficiency, ze_background_efficiency = efficiency_at_signal_efficiency(
+            y_effs_ze, y_effb_ze, target_signal_efficiency
+        )
+        ze_signal_efficiencies.append(ze_signal_efficiency)
+        ze_background_efficiencies.append(ze_background_efficiency)
+
+    ze_background_efficiencies = np.asarray(ze_background_efficiencies, dtype=float)
+    finite_background = ze_background_efficiencies[np.isfinite(ze_background_efficiencies)]
+    if finite_background.size == 0:
+        return None
+
+    best_background_efficiency = np.min(finite_background)
+    worst_background_efficiency = np.max(finite_background)
+    mean_background_efficiency = np.mean(finite_background)
+    std_background_efficiency = np.std(finite_background)
+
+    worst_bin_index = int(np.nanargmax(ze_background_efficiencies))
+    worst_ze_bin = available_ze_bins[worst_bin_index]
+    best_bin_index = int(np.nanargmin(ze_background_efficiencies))
+    best_ze_bin = available_ze_bins[best_bin_index]
+
+    if best_background_efficiency > 0:
+        worst_to_best_ratio = worst_background_efficiency / best_background_efficiency
+    else:
+        worst_to_best_ratio = np.inf
+    if overall_background_efficiency > 0:
+        worst_to_overall_ratio = worst_background_efficiency / overall_background_efficiency
+    else:
+        worst_to_overall_ratio = np.inf
+    if mean_background_efficiency > 0:
+        relative_std = std_background_efficiency / mean_background_efficiency
+    else:
+        relative_std = np.inf
+
+    return {
+        "energy_bin": ebin,
+        "target_signal_efficiency": target_signal_efficiency,
+        "overall_signal_efficiency": overall_signal_efficiency,
+        "overall_background_efficiency": overall_background_efficiency,
+        "n_zenith_bins": len(available_ze_bins),
+        "best_zenith_bin": best_ze_bin,
+        "best_zenith_background_efficiency": best_background_efficiency,
+        "worst_zenith_bin": worst_ze_bin,
+        "worst_zenith_background_efficiency": worst_background_efficiency,
+        "mean_zenith_background_efficiency": mean_background_efficiency,
+        "std_zenith_background_efficiency": std_background_efficiency,
+        "relative_std_zenith_background_efficiency": relative_std,
+        "worst_to_best_background_efficiency_ratio": worst_to_best_ratio,
+        "worst_to_overall_background_efficiency_ratio": worst_to_overall_ratio,
+    }
+
+
+def write_zenith_uniformity_summary(summary_rows, output_path):
+    """Write zenith-uniformity metric rows to CSV."""
+    if not summary_rows:
+        _logger.warning("No zenith-uniformity summary rows available.")
+        return
+
+    fieldnames = list(summary_rows[0])
+    with Path(output_path).open("w", newline="") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(summary_rows)
+    _logger.info("Wrote zenith-uniformity summary to %s", output_path)
+
+
 def tmva_zenith_bins(path, ebin):
     """Return available TMVA zenith bins from supported ROOT filenames."""
     ze_bins = []
@@ -363,16 +459,38 @@ def main():
             "Use -1 for overall or >=0 for efficiency_zeN."
         ),
     )
+    parser.add_argument(
+        "--summary-file",
+        type=str,
+        default=None,
+        help=(
+            "CSV file for zenith-uniformity metrics. If omitted, writes "
+            "zenith_uniformity_summary.csv in the output directory."
+        ),
+    )
+    parser.add_argument(
+        "--summary-signal-efficiency",
+        type=float,
+        default=0.8,
+        help="Signal efficiency used for zenith-uniformity metrics (default: 0.8).",
+    )
     args = parser.parse_args()
     root_dir = args.tmva_dir
     joblib_dir = args.xgb_dir
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_rows = []
 
     # assume energy binning is identical in XGB and TMVA files.
     energy_bins = [args.energy_bin] if args.energy_bin is not None else range(9)
     for ebin in energy_bins:
         xgb_model_data = load_xgb_model_data(joblib_dir, ebin)
+        summary_row = zenith_uniformity_summary(
+            xgb_model_data, ebin, args.summary_signal_efficiency
+        )
+        if summary_row is not None:
+            summary_rows.append(summary_row)
+
         available_xgb_bins = xgb_zenith_bins(xgb_model_data)
         available_tmva_bins = tmva_zenith_bins(root_dir, ebin) if root_dir else []
         xgb_bins_to_plot = selected_xgb_bins(args.zenith_bin_xgb, available_xgb_bins)
@@ -393,6 +511,13 @@ def main():
             output_path = output_dir / f"plot_performance_metrics_ebin{ebin}_{ze_label}.png"
             plt.savefig(output_path, dpi=300, bbox_inches="tight")
             plt.close(fig)
+
+    summary_file = (
+        Path(args.summary_file)
+        if args.summary_file is not None
+        else output_dir / "zenith_uniformity_summary.csv"
+    )
+    write_zenith_uniformity_summary(summary_rows, summary_file)
 
 
 if __name__ == "__main__":

@@ -422,6 +422,8 @@ Optional inputs:
 - `--energy-bin`: plot only one energy bin (`0`-`8`)
 - `--zenith-bin-xgb`: plot only one XGB zenith bin; omit to plot overall and all available XGB zenith bins
 - `--zenith-bin-tmva`: TMVA zenith bin used for overall or unmatched XGB bins; omit to use the first available TMVA zenith bin for each energy bin
+- `--summary-file`: CSV file for zenith-uniformity metrics; omit to write `zenith_uniformity_summary.csv` in the output directory
+- `--summary-signal-efficiency`: gamma efficiency used for zenith-uniformity metrics; default is `0.8`
 
 Run:
 
@@ -445,12 +447,14 @@ Output:
 
 - `diagnostics/plot_performance_metrics_ebinN_overall.png`
 - `diagnostics/plot_performance_metrics_ebinN_zeM.png`
+- `diagnostics/zenith_uniformity_summary.csv`
 
 Notes:
 
 - If `--tmva_dir` is omitted or no matching TMVA ROOT file exists for a bin, the corresponding plot is generated with XGB curves only.
 - When plain `BDT_*_*.root` files are present, they define the TMVA file set; `TMVA.BDT_*_*.root` files are only used as a fallback convention when no plain BDT files exist.
 - For leakage checks, inspect both `overall` and every `zeM` plot. Good inclusive performance is not sufficient if one zenith bin or one score edge dominates the result.
+- The zenith-uniformity CSV reports background efficiency at fixed gamma efficiency for each energy bin. Prefer models with low `worst_to_best_background_efficiency_ratio`, low `worst_to_overall_background_efficiency_ratio`, and acceptable `worst_zenith_background_efficiency`; these metrics are more relevant for zenith stability than the inclusive AUC alone.
 
 ### Gamma-efficiency containment on applied MC
 
