@@ -166,6 +166,24 @@ def test_evaluation_efficiency_missing_ze_bin_returns_all_df(mock_classifier, bi
     assert result_by_ze == {}
 
 
+def test_evaluation_efficiency_accepts_external_zenith_bins(mock_classifier, binary_labels):
+    x_test = pd.DataFrame({"f1": range(200)})
+    y_test = pd.Series(binary_labels)
+    ze_bins = pd.Series(np.repeat([0, 1], 100))
+
+    result_all, result_by_ze = evaluation_efficiency(
+        "test",
+        mock_classifier,
+        x_test,
+        y_test,
+        return_by_zenith=True,
+        ze_bins=ze_bins,
+    )
+
+    assert isinstance(result_all, pd.DataFrame)
+    assert sorted(result_by_ze) == [0, 1]
+
+
 # ---------------------------------------------------------------------------
 # feature_importance (logging only; validate no crash)
 # ---------------------------------------------------------------------------

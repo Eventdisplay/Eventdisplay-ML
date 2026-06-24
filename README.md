@@ -130,7 +130,7 @@ eventdisplay-ml-train-xgb-classify \
     --ignore_ze_bin
 ```
 
-This keeps the same event selection but excludes `ze_bin` from the training features. It is intended for comparison against the default and `--balance_class_zenith_weights` trainings. Do not combine `--ignore_ze_bin` with `--balance_class_zenith_weights`.
+This keeps the same event selection but excludes `ze_bin` from the training features. The held-out `ze_bin` values are still used as evaluation metadata, so per-zenith efficiency tables and plots remain available. It is intended for comparison against the default and `--balance_class_zenith_weights` trainings. Do not combine `--ignore_ze_bin` with `--balance_class_zenith_weights`.
 
 ### Gamma/Hadron Validation Checklist
 

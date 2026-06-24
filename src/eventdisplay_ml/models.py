@@ -914,6 +914,7 @@ def train_classification(df, model_configs):
     df[0]["label"] = 1
     df[1]["label"] = 0
     full_df = pd.concat([df[0], df[1]], ignore_index=True)
+    ze_data = full_df["ze_bin"] if "ze_bin" in full_df.columns else None
     x_data = full_df.drop(columns=["label"])
     if model_configs.get("ignore_ze_bin", False):
         if model_configs.get("balance_class_zenith_weights", False):
@@ -925,13 +926,21 @@ def train_classification(df, model_configs):
     model_configs["features"] = list(x_data.columns)
     y_data = full_df["label"]
 
-    x_train, x_test, y_train, y_test = train_test_split(
-        x_data,
-        y_data,
+    split_inputs = [x_data, y_data]
+    if ze_data is not None:
+        split_inputs.append(ze_data)
+
+    split_result = train_test_split(
+        *split_inputs,
         train_size=model_configs.get("train_test_fraction", 0.5),
         random_state=model_configs.get("random_state", None),
         stratify=y_data,
     )
+    if ze_data is None:
+        x_train, x_test, y_train, y_test = split_result
+        ze_test = None
+    else:
+        x_train, x_test, y_train, y_test, _, ze_test = split_result
 
     _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
     weights_train = None
@@ -963,7 +972,7 @@ def train_classification(df, model_configs):
         cfg["model"] = model
         cfg["features"] = x_data.columns.tolist()  # Store feature names for diagnostics
         efficiency_all, efficiencies_by_zenith = evaluation_efficiency(
-            name, model, x_test, y_test, return_by_zenith=True
+            name, model, x_test, y_test, return_by_zenith=True, ze_bins=ze_test
         )
         cfg["efficiency"] = efficiency_all
         for ze_bin, ze_efficiency in efficiencies_by_zenith.items():

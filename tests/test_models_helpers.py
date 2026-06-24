@@ -335,7 +335,7 @@ def test_train_classification_can_ignore_ze_bin(monkeypatch):
     result = models.train_classification([signal, background], config)
 
     assert result["models"]["test"]["features"] == ["f1"]
-    assert "efficiency_ze0" not in result["models"]["test"]
+    assert "efficiency_ze0" in result["models"]["test"]
 
 
 def test_process_file_chunked_uses_tmva_style_features_when_flag_set():
