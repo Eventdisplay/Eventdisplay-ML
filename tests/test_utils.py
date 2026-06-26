@@ -5,6 +5,8 @@ import json
 import pytest
 
 from eventdisplay_ml.utils import (
+    discover_joblib_files,
+    joblib_basename,
     load_energy_range,
     load_model_parameters,
     output_file_name,
@@ -57,6 +59,47 @@ def test_resolve_gz_suffix_tries_plain_fallback(tmp_path):
     plain.touch()
     result = resolve_joblib_path(tmp_path / "model.joblib.gz")
     assert result == plain
+
+
+# ---------------------------------------------------------------------------
+# joblib file helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("model.joblib.gz", "model"),
+        ("model.joblib", "model"),
+        ("model", "model"),
+    ],
+)
+def test_joblib_basename(path, expected):
+    assert joblib_basename(path) == expected
+
+
+def test_discover_joblib_files_returns_sorted_files_and_prefers_gz(tmp_path):
+    (tmp_path / "b_model.joblib").touch()
+    (tmp_path / "a_model.joblib").touch()
+    (tmp_path / "a_model.joblib.gz").touch()
+    (tmp_path / "notes.txt").touch()
+
+    result = discover_joblib_files(tmp_path)
+
+    assert result == [
+        tmp_path / "a_model.joblib.gz",
+        tmp_path / "b_model.joblib",
+    ]
+
+
+def test_discover_joblib_files_missing_dir_raises(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Model directory not found"):
+        discover_joblib_files(tmp_path / "missing")
+
+
+def test_discover_joblib_files_empty_dir_raises(tmp_path):
+    with pytest.raises(FileNotFoundError, match="No joblib files"):
+        discover_joblib_files(tmp_path)
 
 
 # ---------------------------------------------------------------------------

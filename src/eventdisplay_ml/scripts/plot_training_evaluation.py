@@ -31,12 +31,6 @@ logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
 
-def _joblib_basename(model_path):
-    """Return basename without .joblib/.joblib.gz suffixes."""
-    name = Path(model_path).name
-    return name.removesuffix(".joblib.gz").removesuffix(".joblib")
-
-
 def plot_training_curves(evals_result, output_file=None):
     """
     Plot training and validation curves from XGBoost evaluation results.
@@ -191,34 +185,19 @@ def main():
 
         output_file = args.output_file
         if output_file is None:
-            output_file = f"training_evaluation_{_joblib_basename(model_path)}.png"
+            output_file = f"training_evaluation_{utils.joblib_basename(model_path)}.png"
             _logger.info(f"No --output_file given. Saving to {output_file}")
 
         plot_training_curves(evals_result, output_file)
         _logger.info("Plotting completed successfully.")
 
     elif args.model_dir:
-        model_dir = Path(args.model_dir)
-        if not model_dir.exists() or not model_dir.is_dir():
-            raise FileNotFoundError(f"Model directory not found: {model_dir}")
-
         if not args.output_dir:
             raise ValueError("--output_dir must be specified when using --model_dir.")
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        discovered_files = sorted(
-            set(model_dir.glob("*.joblib")).union(model_dir.glob("*.joblib.gz"))
-        )
-        files_by_name = {}
-        for model_path in discovered_files:
-            key = _joblib_basename(model_path)
-            existing = files_by_name.get(key)
-            if existing is None or model_path.name.endswith(".joblib.gz"):
-                files_by_name[key] = model_path
-        joblib_files = [files_by_name[name] for name in sorted(files_by_name)]
-        if not joblib_files:
-            raise FileNotFoundError(f"No joblib files found in directory: {model_dir}")
+        joblib_files = utils.discover_joblib_files(args.model_dir)
 
         for model_path in joblib_files:
             _logger.info(f"Loading model from: {model_path}")
@@ -234,7 +213,9 @@ def main():
                     continue
 
                 evals_result = xgb_model.evals_result()
-                output_file = output_dir / f"training_evaluation_{_joblib_basename(model_path)}.png"
+                output_file = (
+                    output_dir / f"training_evaluation_{utils.joblib_basename(model_path)}.png"
+                )
                 plot_training_curves(evals_result, output_file)
                 _logger.info(f"Saved plot for {model_path.name} to {output_file}")
             except Exception as e:

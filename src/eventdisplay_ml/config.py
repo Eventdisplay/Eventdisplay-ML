@@ -78,6 +78,19 @@ def configure_training(analysis_type):
             help="Energy bin number for selection (optional).",
             default=0,
         )
+        parser.add_argument(
+            "--balance_class_zenith_weights",
+            action="store_true",
+            help=(
+                "Apply training event weights so signal and background have the same ze_bin "
+                "distribution within the selected energy bin."
+            ),
+        )
+        parser.add_argument(
+            "--ignore_ze_bin",
+            action="store_true",
+            help="Remove ze_bin from gamma/hadron training features.",
+        )
     parser.add_argument(
         "--max_cores",
         type=int,
@@ -145,6 +158,11 @@ def configure_training(analysis_type):
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
     if analysis_type == "stereo_analysis":
         _logger.info(f"Minimum images (DispNImages): {model_configs.get('min_images')}")
+    if analysis_type == "classification":
+        _logger.info(
+            f"Balance class zenith weights: {model_configs.get('balance_class_zenith_weights')}"
+        )
+        _logger.info(f"Ignore ze_bin feature: {model_configs.get('ignore_ze_bin')}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")

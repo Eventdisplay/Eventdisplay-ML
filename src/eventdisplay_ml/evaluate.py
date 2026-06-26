@@ -47,7 +47,7 @@ def _efficiency_dataframe(name, y_pred_proba, y_test, thresholds, context_label=
     )
 
 
-def evaluation_efficiency(name, model, x_test, y_test, return_by_zenith=False):
+def evaluation_efficiency(name, model, x_test, y_test, return_by_zenith=False, ze_bins=None):
     """Calculate signal/background efficiency for all events and optionally by zenith bin."""
     y_pred_proba = model.predict_proba(x_test)[:, 1]
     thresholds = np.linspace(0, 1, 101)
@@ -57,14 +57,14 @@ def evaluation_efficiency(name, model, x_test, y_test, return_by_zenith=False):
         return efficiency_all
 
     efficiencies_by_zenith = {}
-    if "ze_bin" not in x_test.columns:
+    if ze_bins is None and "ze_bin" not in x_test.columns:
         _logger.warning("Column 'ze_bin' missing in x_test; per-zenith efficiencies not computed.")
         return efficiency_all, efficiencies_by_zenith
 
-    ze_bins = pd.Series(x_test["ze_bin"]).dropna().unique().tolist()
-    ze_bins = sorted(ze_bins)
-    for ze_bin in ze_bins:
-        mask = x_test["ze_bin"] == ze_bin
+    ze_values = pd.Series(x_test["ze_bin"] if ze_bins is None else ze_bins, index=x_test.index)
+    unique_ze_bins = sorted(ze_values.dropna().unique().tolist())
+    for ze_bin in unique_ze_bins:
+        mask = ze_values == ze_bin
         if not np.any(mask):
             continue
         try:

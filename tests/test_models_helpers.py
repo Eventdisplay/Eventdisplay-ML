@@ -298,6 +298,46 @@ def test_train_classification_handles_empty_and_zenith_efficiencies(monkeypatch)
     assert result["models"]["test"]["features"] == ["f1", "f2", "ze_bin"]
 
 
+def test_train_classification_can_ignore_ze_bin(monkeypatch):
+    rng = np.random.default_rng(8)
+    signal = pd.DataFrame(
+        {
+            "f1": rng.standard_normal(20),
+            "ze_bin": np.repeat([0, 1], 10),
+        }
+    )
+    background = pd.DataFrame(
+        {
+            "f1": rng.standard_normal(20),
+            "ze_bin": np.repeat([0, 1], 10),
+        }
+    )
+    config = {
+        "train_test_fraction": 0.5,
+        "random_state": 42,
+        "ignore_ze_bin": True,
+        "models": {
+            "test": {
+                "hyper_parameters": {
+                    "n_estimators": 5,
+                    "max_depth": 2,
+                    "learning_rate": 0.1,
+                    "random_state": 42,
+                    "eval_metric": "logloss",
+                }
+            }
+        },
+    }
+    monkeypatch.setattr(
+        models, "evaluate_classification_model", lambda *args: {"label": np.array([0.1])}
+    )
+
+    result = models.train_classification([signal, background], config)
+
+    assert result["models"]["test"]["features"] == ["f1"]
+    assert "efficiency_ze0" in result["models"]["test"]
+
+
 def test_process_file_chunked_uses_tmva_style_features_when_flag_set():
     """Regression test for E5: classification with tmva_style=True must use features_tmva_style."""
     tmva_features = features.features_tmva_style("classification", training=False)

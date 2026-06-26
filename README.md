@@ -80,6 +80,77 @@ The zenith angle dependence is accounted for by including the zenith angle as a 
 
 Output is a single ROOT tree called `Classification` with the same number of events as the input tree. It contains the classification prediction (`Gamma_Prediction`) and boolean flags (e.g. `Is_Gamma_75` for 75% signal efficiency cut).
 
+### Training Gamma/Hadron Separation Models
+
+Gamma/hadron training uses gamma-ray simulations as signal and observed background data as background. This is a powerful setup, but it requires additional validation because the classifier can learn simulation-vs-data differences that are not physical gamma/hadron separation.
+
+**Training command:**
+
+```bash
+eventdisplay-ml-train-xgb-classify \
+    --input_signal_file_list signal_files.txt \
+    --input_background_file_list background_files.txt \
+    --model_parameters model_parameters.json \
+    --energy_bin_number 0 \
+    --model_prefix models/gammahadron_bdt \
+    --max_events 5000000 \
+    --train_test_fraction 0.5 \
+    --max_cores 8
+```
+
+Repeat the command for all configured energy bins. The output files are named automatically with an energy-bin suffix, for example `gammahadron_bdt_ebin0.joblib.gz`.
+
+**Optional zenith-distribution balancing:**
+
+Gamma-ray simulations are often produced at fixed zenith angles, while observed background data have continuous zenith distributions. The model uses `ze_bin` as a coarse zenith-conditioning feature. To reduce the chance that `ze_bin` becomes a signal/background prior instead of a conditioning variable, enable class/zenith weights:
+
+```bash
+eventdisplay-ml-train-xgb-classify \
+    --input_signal_file_list signal_files.txt \
+    --input_background_file_list background_files.txt \
+    --model_parameters model_parameters.json \
+    --energy_bin_number 0 \
+    --model_prefix models/gammahadron_bdt \
+    --balance_class_zenith_weights
+```
+
+With this option, the training split is weighted so gamma and background have the same `ze_bin` distribution in the selected energy bin. The feature `ze_bin` is still available to the classifier, so zenith-dependent shower morphology can still be learned. The weights only remove the simplest class-prior shortcut.
+
+**Optional training without `ze_bin`:**
+
+For a direct stress test of zenith-bin dependence, remove `ze_bin` from the classifier input:
+
+```bash
+eventdisplay-ml-train-xgb-classify \
+    --input_signal_file_list signal_files.txt \
+    --input_background_file_list background_files.txt \
+    --model_parameters model_parameters.json \
+    --energy_bin_number 0 \
+    --model_prefix models/gammahadron_bdt_nozebin \
+    --ignore_ze_bin
+```
+
+This keeps the same event selection but excludes `ze_bin` from the training features. The held-out `ze_bin` values are still used as evaluation metadata, so per-zenith efficiency tables and plots remain available. It is intended for comparison against the default and `--balance_class_zenith_weights` trainings. Do not combine `--ignore_ze_bin` with `--balance_class_zenith_weights`.
+
+### Gamma/Hadron Validation Checklist
+
+Use these diagnostics before trusting unusually good gamma/hadron performance:
+
+1. Check training curves with `eventdisplay-ml-plot-training-evaluation`. Training and validation AUC/logloss should be close. A very large train/test gap indicates overfitting, but a small gap does not rule out simulation-vs-data leakage if train and test are split from the same mixed samples.
+2. Check SHAP importances with `eventdisplay-ml-diagnostic-shap-summary`. Expected high-ranking features are `MSCW`, `MSCL`, `EmissionHeight`, image widths/lengths, timing gradients, and core-distance terms. Treat dominant `ze_bin`, run-condition, pointing, missing-value, or file-production features as audit triggers.
+3. Check per-energy and per-zenith ROC/Q-factor plots with `eventdisplay-ml-plot-classification-performance-metrics`. Compare `overall` plots to each `zeM` plot. Suspicious signs are one zenith bin carrying most of the inclusive performance, very sharp score separation in only one bin, or high performance only where gamma/background statistics differ strongly.
+4. Apply the model to independent gamma MC and plot containment levels with `eventdisplay-ml-plot-classification-gamma-efficiency`. Gamma score percentiles should vary smoothly with zenith angle, wobble offset, NSB, and energy. Discontinuous behavior at training bin boundaries is a warning sign.
+5. Compare standard training to `--balance_class_zenith_weights`. If inclusive performance drops modestly but per-zenith behavior becomes smoother, the balanced model is usually the safer production choice. A large performance drop means the original model was using zenith composition strongly.
+6. Validate final cuts with `optimize_classification.py` and `plot_optimize_classification.py`. The optimized gamma efficiency, background efficiency, and significance surfaces should be smooth in energy and zenith unless there is a known rate feature.
+
+Recommended high-value stress tests that are not fully automated yet:
+
+- Train with `--ignore_ze_bin`, compare to the default and balanced trainings, and inspect per-zenith performance. The no-`ze_bin` model should be worse but not catastrophically different.
+- Reweight gamma and background to the same distributions in zenith, wobble offset, NSB/noise, multiplicity, and reconstructed energy before training or evaluation.
+- Hold out entire observing-condition groups instead of random events, for example a zenith band, wobble offset, NSB range, run period, or background file group. This detects shortcuts that random train/test splits hide.
+- Evaluate on independent real-data control regions. The background score distribution should be stable across OFF regions and across run conditions after accounting for energy and zenith.
+- Compare feature distributions for gamma MC and background data inside each energy and zenith bin before training. Variables that separate classes before shower morphology is considered are possible domain-shift handles.
+
 ## Diagnostic Tools
 
 ### SHAP feature-importance summary
@@ -96,7 +167,10 @@ Tests: Feature importance
 Required inputs:
 
 - `--model_file`: trained stereo or classification model `.joblib`
+- `--model_dir`: directory with trained model `.joblib` or `.joblib.gz` files
 - `--output_dir`: directory for generated PNGs
+
+Use either `--model_file` or `--model_dir`.
 
 Run:
 
@@ -107,6 +181,10 @@ Run:
 
   eventdisplay-ml-diagnostic-shap-summary \
   --model_file models/classification_model_ebin0.joblib \
+  --output_dir diagnostics/
+
+  eventdisplay-ml-diagnostic-shap-summary \
+  --model_dir models/ \
   --output_dir diagnostics/
 ```
 
@@ -119,6 +197,9 @@ Outputs (stereo):
 Outputs (classification):
 
 - `diagnostics/shap_importance_label.png`
+
+With `--model_dir`, output plot names use the model filename as their base, for example
+`classification_model_ebin0_label.png`.
 
 Note: SHAP importances are cached during training. Existing model files trained before this feature was added will report a missing-cache error. Inference (`apply_xgb_classify`) does not require retraining, but running this diagnostic on a classification model does.
 
@@ -321,6 +402,143 @@ eventdisplay-ml-plot-training-evaluation \
 Output:
 
 - Figure with one panel per tracked metric (for example `rmse`), showing training and test curves.
+
+### Classification performance comparison
+
+Analysis type: gamma/hadron separation.
+
+- Compare XGBoost and optional TMVA BDT efficiency curves
+- Plot signal/background efficiency, Q-factor, ROC, and reconstructed score distributions
+- Produce one plot per energy bin and XGB zenith bin
+
+Required inputs:
+
+- `--xgb_dir`: one or more directories with trained classification model files named `gammahadron_bdt_ebinN.joblib` or `.joblib.gz`
+- `--output_dir`: directory for generated plots
+
+Optional inputs:
+
+- `--tmva_dir`: directory with TMVA ROOT files named `BDT_<energy_bin>_<zenith_bin>.root` or, if no plain BDT files exist, `TMVA.BDT_<energy_bin>_<zenith_bin>.root`
+- `--xgb-label`: optional labels for the `--xgb_dir` entries; the number of labels must match the number of directories
+- `--energy-bin`: plot only one energy bin (`0`-`8`)
+- `--zenith-bin-xgb`: plot only one XGB zenith bin; omit to plot overall and all available XGB zenith bins
+- `--zenith-bin-tmva`: TMVA zenith bin used for overall or unmatched XGB bins; omit to use the first available TMVA zenith bin for each energy bin
+- `--summary-file`: CSV file for zenith-uniformity metrics; omit to write `zenith_uniformity_summary.csv` in the output directory
+- `--summary-signal-efficiency`: gamma efficiency used for zenith-uniformity metrics; default is `0.8`
+
+Run:
+
+```bash
+eventdisplay-ml-plot-classification-performance-metrics \
+  --tmva_dir tmva_models/ \
+  --xgb_dir xgb_models/ \
+  --output_dir diagnostics/
+```
+
+Compare several XGB trainings in the same plots:
+
+```bash
+eventdisplay-ml-plot-classification-performance-metrics \
+  --xgb_dir tmp_testing_vts/gh/v2_2606_ZeWeights tmp_testing_vts/gh/v2_2606_NoZebin \
+  --xgb-label ZeWeights NoZebin \
+  --output_dir diagnostics_compare/
+```
+
+Equivalent source-tree invocation:
+
+```bash
+python src/eventdisplay_ml/scripts/plot_classification_performance_metrics.py \
+  --tmva_dir tmva_models/ \
+  --xgb_dir xgb_models/ \
+  --output_dir diagnostics/
+```
+
+Output:
+
+- `diagnostics/plot_performance_metrics_ebinN_overall.png`
+- `diagnostics/plot_performance_metrics_ebinN_zeM.png`
+- `diagnostics/zenith_uniformity_summary.csv`
+- `diagnostics/zenith_uniformity_vs_energy.png`
+- `diagnostics/zenith_background_efficiency_heatmap_<xgb-label>.png`
+
+Notes:
+
+- If `--tmva_dir` is omitted or no matching TMVA ROOT file exists for a bin, the corresponding plot is generated with XGB curves only.
+- When plain `BDT_*_*.root` files are present, they define the TMVA file set; `TMVA.BDT_*_*.root` files are only used as a fallback convention when no plain BDT files exist.
+- For leakage checks, inspect both `overall` and every `zeM` plot. Good inclusive performance is not sufficient if one zenith bin or one score edge dominates the result.
+- The zenith-uniformity CSV reports background efficiency at fixed gamma efficiency for each energy bin. Prefer models with low `worst_to_best_background_efficiency_ratio`, low `worst_to_overall_background_efficiency_ratio`, and acceptable `worst_zenith_background_efficiency`; these metrics are more relevant for zenith stability than the inclusive AUC alone.
+- `zenith_uniformity_vs_energy.png` is the model-selection plot: the upper panel compares overall and worst-bin background efficiency, and the lower panel shows how optimistic the inclusive curve is. The heatmap locates which zenith bins drive the worst-bin behavior.
+
+### Gamma-efficiency containment on applied MC
+
+Analysis type: gamma/hadron separation applied to gamma-ray simulations.
+
+- Read applied `.xgb_gh.root` files containing the `Classification/Gamma_Prediction` branch
+- Extract 70% and 95% gamma-score containment levels
+- Plot containment versus air mass and wobble offset, split by NSB/noise level
+
+Required input:
+
+- Directory containing files named like `50deg_1.25wob_NOISE600.mscw.xgb_gh.root`
+
+Run:
+
+```bash
+eventdisplay-ml-plot-classification-gamma-efficiency applied_gamma_mc/
+```
+
+Outputs:
+
+- `containment_vs_airmass.png`
+- `containment_vs_wob.png`
+
+Notes:
+
+- Use this on gamma MC samples not used for training whenever possible.
+- The containment curves should be smooth in air mass, wobble offset, and NSB. Sharp discontinuities can indicate that the classifier learned production conditions or binning artifacts.
+- This plot checks gamma acceptance stability; it does not measure background leakage by itself.
+
+### Classification cut optimization
+
+Analysis type: final gamma/hadron cut selection.
+
+- `optimize_classification.py` combines trained ROC curves with ON/background rate surfaces
+- It finds gamma-efficiency cuts that maximize Li & Ma significance for a requested source strength
+- `plot_optimize_classification.py` visualizes the resulting energy/zenith surfaces
+
+Required inputs:
+
+- ROOT file containing `gONRate` and `gBGRate` `TGraph2D` or `TGraph2DErrors` objects
+- Trained classification model files for all energy bins
+- Source strength as a fraction of the Crab flux
+
+Run:
+
+```bash
+python src/eventdisplay_ml/scripts/optimize_classification.py \
+  rates.root \
+  models/gammahadron_bdt_ebin*.joblib.gz \
+  0.1 \
+  --output diagnostics/optimized_cuts.ecsv
+
+python src/eventdisplay_ml/scripts/plot_optimize_classification.py \
+  diagnostics/optimized_cuts.ecsv \
+  --output-dir diagnostics/
+```
+
+Outputs include:
+
+- `signal_efficiency_vs_energy.png`
+- `background_efficiency_vs_energy.png`
+- `significance_vs_energy.png`
+- `signal_efficiency_colz.png`
+- `background_efficiency_colz.png`
+- `significance_colz.png`
+
+Notes:
+
+- Smooth optimized-cut surfaces are expected. Isolated spikes, checkerboard structures, or abrupt zenith-bin jumps usually mean the ROC curves, rate surfaces, or interpolation inputs need inspection.
+- This optimization inherits any bias in the trained classifier. Run the leakage checks above before interpreting high significances as physics performance.
 
 ## Generative AI disclosure
 
