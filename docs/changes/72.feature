@@ -1,1 +1,1 @@
-Add gamma/hadron classification training options to balance signal/background zenith-bin distributions and to omit `ze_bin` as a stress-test feature. Add zenith-uniformity summary metrics for gamma/hadron performance diagnostics.
+Add gamma/hadron classification training options to balance signal/background zenith-bin distributions and to omit `ze_bin` as a stress-test feature. Add zenith-uniformity summary metrics and multi-training comparison plots for gamma/hadron performance diagnostics.

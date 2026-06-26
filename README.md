@@ -413,12 +413,13 @@ Analysis type: gamma/hadron separation.
 
 Required inputs:
 
-- `--xgb_dir`: directory with trained classification model files named `gammahadron_bdt_ebinN.joblib` or `.joblib.gz`
+- `--xgb_dir`: one or more directories with trained classification model files named `gammahadron_bdt_ebinN.joblib` or `.joblib.gz`
 - `--output_dir`: directory for generated plots
 
 Optional inputs:
 
 - `--tmva_dir`: directory with TMVA ROOT files named `BDT_<energy_bin>_<zenith_bin>.root` or, if no plain BDT files exist, `TMVA.BDT_<energy_bin>_<zenith_bin>.root`
+- `--xgb-label`: optional labels for the `--xgb_dir` entries; the number of labels must match the number of directories
 - `--energy-bin`: plot only one energy bin (`0`-`8`)
 - `--zenith-bin-xgb`: plot only one XGB zenith bin; omit to plot overall and all available XGB zenith bins
 - `--zenith-bin-tmva`: TMVA zenith bin used for overall or unmatched XGB bins; omit to use the first available TMVA zenith bin for each energy bin
@@ -432,6 +433,15 @@ eventdisplay-ml-plot-classification-performance-metrics \
   --tmva_dir tmva_models/ \
   --xgb_dir xgb_models/ \
   --output_dir diagnostics/
+```
+
+Compare several XGB trainings in the same plots:
+
+```bash
+eventdisplay-ml-plot-classification-performance-metrics \
+  --xgb_dir tmp_testing_vts/gh/v2_2606_ZeWeights tmp_testing_vts/gh/v2_2606_NoZebin \
+  --xgb-label ZeWeights NoZebin \
+  --output_dir diagnostics_compare/
 ```
 
 Equivalent source-tree invocation:
@@ -448,6 +458,8 @@ Output:
 - `diagnostics/plot_performance_metrics_ebinN_overall.png`
 - `diagnostics/plot_performance_metrics_ebinN_zeM.png`
 - `diagnostics/zenith_uniformity_summary.csv`
+- `diagnostics/zenith_uniformity_vs_energy.png`
+- `diagnostics/zenith_background_efficiency_heatmap_<xgb-label>.png`
 
 Notes:
 
@@ -455,6 +467,7 @@ Notes:
 - When plain `BDT_*_*.root` files are present, they define the TMVA file set; `TMVA.BDT_*_*.root` files are only used as a fallback convention when no plain BDT files exist.
 - For leakage checks, inspect both `overall` and every `zeM` plot. Good inclusive performance is not sufficient if one zenith bin or one score edge dominates the result.
 - The zenith-uniformity CSV reports background efficiency at fixed gamma efficiency for each energy bin. Prefer models with low `worst_to_best_background_efficiency_ratio`, low `worst_to_overall_background_efficiency_ratio`, and acceptable `worst_zenith_background_efficiency`; these metrics are more relevant for zenith stability than the inclusive AUC alone.
+- `zenith_uniformity_vs_energy.png` is the model-selection plot: the upper panel compares overall and worst-bin background efficiency, and the lower panel shows how optimistic the inclusive curve is. The heatmap locates which zenith bins drive the worst-bin behavior.
 
 ### Gamma-efficiency containment on applied MC
 
