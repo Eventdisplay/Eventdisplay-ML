@@ -992,10 +992,8 @@ def _class_zenith_balance_weights(x_train, y_train):
     labels = pd.Series(y_train, index=x_train.index, name="label")
     ze_bins = pd.Series(x_train["ze_bin"], index=x_train.index, name="ze_bin")
     valid = labels.notna() & ze_bins.notna()
-    if not valid.all():
-        n_invalid = int((~valid).sum())
         _logger.warning(
-            "Found %d training events with missing label or ze_bin; assigning unit weight.",
+            "Found %d training events with missing label or ze_bin; using default weight=1.0 before normalization.",
             n_invalid,
         )
 
