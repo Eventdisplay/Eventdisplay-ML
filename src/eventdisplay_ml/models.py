@@ -302,8 +302,8 @@ def apply_regression_models(df, model_configs):
     """
     Apply trained XGBoost model for stereo analysis to all events.
 
-    All events are processed with a single model trained on all multiplicities.
-    Features are created for all telescopes with DEFAULT_FILL_VALUE defaults for missing telescopes.
+    By default, all events are processed with a single model. If a high-multiplicity
+    model is configured, it is used for events with more than two images.
 
     Parameters
     ----------
@@ -336,41 +336,53 @@ def apply_regression_models(df, model_configs):
         preview_rows=model_configs.get("preview_rows", 20),
     )
 
-    models = model_configs["models"]
-    model_data = next(iter(models.values()))
-    flatten_data = flatten_data.reindex(columns=model_data["features"])
-    data_processing.print_variable_statistics(flatten_data)
+    def predict(models, target_mean_cfg, target_std_cfg, mask=None):
+        model_data = next(iter(models.values()))
+        model_input = flatten_data.reindex(columns=model_data["features"])
+        if mask is not None:
+            model_input = model_input.loc[mask]
+        data_processing.print_variable_statistics(model_input)
 
-    model = model_data["model"]
-    preds_scaled = model.predict(flatten_data)
-
-    # Inverse transform predictions from standardized space back to original scale
-    # Model was trained on standardized targets (mean=0, std=1)
-    target_mean_cfg = model_configs.get("target_mean")
-    target_std_cfg = model_configs.get("target_std")
-    if not target_mean_cfg or not target_std_cfg:
-        raise ValueError(
-            "Missing target standardization parameters (target_mean/target_std). "
-            "Regenerate the regression model or load a model file that includes them."
+        if not target_mean_cfg or not target_std_cfg:
+            raise ValueError(
+                "Missing target standardization parameters (target_mean/target_std). "
+                "Regenerate the regression model or load a model file that includes them."
+            )
+        target_mean = np.array(
+            [target_mean_cfg[key] for key in ("Xoff_residual", "Yoff_residual", "E_residual")]
         )
+        target_std = np.array(
+            [target_std_cfg[key] for key in ("Xoff_residual", "Yoff_residual", "E_residual")]
+        )
+        return model_data["model"].predict(model_input) * target_std + target_mean
 
-    target_mean = np.array(
-        [
-            target_mean_cfg["Xoff_residual"],
-            target_mean_cfg["Yoff_residual"],
-            target_mean_cfg["E_residual"],
-        ]
-    )
-    target_std = np.array(
-        [
-            target_std_cfg["Xoff_residual"],
-            target_std_cfg["Yoff_residual"],
-            target_std_cfg["E_residual"],
-        ]
-    )
+    high_models = model_configs.get("models_high_multiplicity")
+    if high_models is None:
+        preds = predict(
+            model_configs["models"],
+            model_configs.get("target_mean"),
+            model_configs.get("target_std"),
+        )
+    else:
+        high_mask = df["DispNImages"].to_numpy() > 2
+        preds = np.empty((len(df), 3), dtype=np.float64)
+        if np.any(~high_mask):
+            preds[~high_mask] = predict(
+                model_configs["models"],
+                model_configs.get("target_mean"),
+                model_configs.get("target_std"),
+                ~high_mask,
+            )
+        if np.any(high_mask):
+            preds[high_mask] = predict(
+                high_models,
+                model_configs.get("target_mean_high_multiplicity"),
+                model_configs.get("target_std_high_multiplicity"),
+                high_mask,
+            )
 
-    # Inverse standardization: y = y_scaled * std + mean
-    preds = preds_scaled * target_std + target_mean
+    model_data = next(iter(model_configs["models"].values()))
+    flatten_data = flatten_data.reindex(columns=model_data["features"])
 
     # Model predicts residuals, so add them to DispBDT baseline
     # Extract DispBDT predictions from the flattened data

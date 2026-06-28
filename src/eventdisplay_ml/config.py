@@ -232,6 +232,12 @@ def configure_apply(analysis_type):
         metavar="MODEL_PREFIX",
         help=("Path to directory containing XGBoost models (without energy bin suffix)."),
     )
+    if analysis_type == "stereo_analysis":
+        parser.add_argument(
+            "--model_prefix_high_multiplicity",
+            metavar="MODEL_PREFIX",
+            help="Optional model prefix for events with DispNImages > 2.",
+        )
     parser.add_argument(
         "--model_name",
         default="xgboost",
@@ -293,6 +299,11 @@ def configure_apply(analysis_type):
     _logger.info(f"Observatory: {model_configs.get('observatory')}")
     _logger.info(f"Input file: {model_configs.get('input_file')}")
     _logger.info(f"Model prefix: {model_configs.get('model_prefix')}")
+    if model_configs.get("model_prefix_high_multiplicity"):
+        _logger.info(
+            "High-multiplicity model prefix: %s",
+            model_configs["model_prefix_high_multiplicity"],
+        )
     _logger.info(f"Output file: {model_configs.get('output_file')}")
     _logger.info(f"Image selection: {model_configs.get('image_selection')}")
     _logger.info(f"Max events: {model_configs.get('max_events')}")
@@ -307,5 +318,13 @@ def configure_apply(analysis_type):
     if analysis_type == "stereo_analysis":
         model_configs["target_mean"] = par.get("target_mean")
         model_configs["target_std"] = par.get("target_std")
+        if model_configs.get("model_prefix_high_multiplicity"):
+            model_configs["models_high_multiplicity"], high_par = load_models(
+                analysis_type,
+                model_configs["model_prefix_high_multiplicity"],
+                model_configs["model_name"],
+            )
+            model_configs["target_mean_high_multiplicity"] = high_par.get("target_mean")
+            model_configs["target_std_high_multiplicity"] = high_par.get("target_std")
 
     return model_configs
