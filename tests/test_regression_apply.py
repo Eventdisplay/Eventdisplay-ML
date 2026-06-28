@@ -95,9 +95,9 @@ class TestApplyRegressionStandardizationInversion:
         """Test model selection by multiplicity."""
         df_flat = pd.DataFrame(
             {
-                "Xoff_weighted_bdt": [10.0, 20.0, 30.0],
-                "Yoff_weighted_bdt": [10.0, 20.0, 30.0],
-                "ErecS": [1.0, 1.0, 1.0],
+                "Xoff_weighted_bdt": [5.0, 10.0, 20.0, 30.0],
+                "Yoff_weighted_bdt": [5.0, 10.0, 20.0, 30.0],
+                "ErecS": [1.0, 1.0, 1.0, 1.0],
             }
         )
         unit_scaler = {
@@ -128,10 +128,10 @@ class TestApplyRegressionStandardizationInversion:
         monkeypatch.setattr(models.data_processing, "print_variable_statistics", lambda *_: None)
 
         pred_xoff, _, _ = models.apply_regression_models(
-            pd.DataFrame({"DispNImages": [2, 3, 4]}), model_configs
+            pd.DataFrame({"DispNImages": [1, 2, 3, 4]}), model_configs
         )
 
-        np.testing.assert_allclose(pred_xoff, [12.0, 23.0, 34.0])
+        np.testing.assert_allclose(pred_xoff, [np.nan, 12.0, 23.0, 34.0], equal_nan=True)
 
     def test_apply_regression_missing_standardization_params(self, monkeypatch):
         """Verify that missing target_mean/target_std raises clear error."""

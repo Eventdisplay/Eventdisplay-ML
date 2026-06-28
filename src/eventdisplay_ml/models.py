@@ -364,14 +364,16 @@ def apply_regression_models(df, model_configs):
             model_configs.get("target_std"),
         )
     else:
-        high_mask = df["DispNImages"].to_numpy() > 2
-        preds = np.empty((len(df), 3), dtype=np.float64)
-        if np.any(~high_mask):
-            preds[~high_mask] = predict(
+        multiplicity = df["DispNImages"].to_numpy()
+        low_mask = multiplicity == 2
+        high_mask = multiplicity > 2
+        preds = np.full((len(df), 3), np.nan, dtype=np.float64)
+        if np.any(low_mask):
+            preds[low_mask] = predict(
                 model_configs["models"],
                 model_configs.get("target_mean"),
                 model_configs.get("target_std"),
-                ~high_mask,
+                low_mask,
             )
         if np.any(high_mask):
             preds[high_mask] = predict(
