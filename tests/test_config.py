@@ -197,6 +197,36 @@ def test_configure_apply_stereo_loads_scalers(monkeypatch):
     assert result["target_std"]["Xoff_residual"] == pytest.approx(1.0)
 
 
+def test_configure_apply_stereo_loads_high_multiplicity_model(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "--input_file",
+            "input.root",
+            "--model_prefix",
+            "model_two",
+            "--model_prefix_high_multiplicity",
+            "model_high",
+            "--output_file",
+            "output.root",
+        ],
+    )
+    load_models = MagicMock(
+        side_effect=[
+            ({"xgboost": {"model": "two"}}, {"target_mean": {}, "target_std": {}}),
+            ({"xgboost": {"model": "high"}}, {"target_mean": {}, "target_std": {}}),
+        ]
+    )
+    monkeypatch.setattr(config, "load_models", load_models)
+
+    result = config.configure_apply("stereo_analysis")
+
+    assert load_models.call_args_list[1].args == ("stereo_analysis", "model_high", "xgboost")
+    assert result["models_high_multiplicity"]["xgboost"]["model"] == "high"
+
+
 def test_configure_apply_classification_omits_regression_scalers(monkeypatch):
     monkeypatch.setattr(
         sys,
