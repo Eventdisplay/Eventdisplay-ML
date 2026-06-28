@@ -2,9 +2,12 @@
 
 import argparse
 import logging
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 import numpy as np
 
+from eventdisplay_ml import models as models_module
 from eventdisplay_ml import utils
 from eventdisplay_ml.features import target_features
 from eventdisplay_ml.hyper_parameters import (
@@ -15,6 +18,16 @@ from eventdisplay_ml.hyper_parameters import (
 from eventdisplay_ml.models import load_models
 
 _logger = logging.getLogger(__name__)
+
+
+def _log_runtime_provenance():
+    """Log the installed version and imported model source path."""
+    try:
+        package_version = version("eventdisplay-ml")
+    except PackageNotFoundError:
+        package_version = "not-installed"
+    _logger.info("eventdisplay-ml runtime version: %s", package_version)
+    _logger.info("eventdisplay-ml models source: %s", Path(models_module.__file__).resolve())
 
 
 def configure_training(analysis_type):
@@ -152,6 +165,7 @@ def configure_training(analysis_type):
 
     model_configs = vars(parser.parse_args())
 
+    _log_runtime_provenance()
     _logger.info(f"--- XGBoost {analysis_type} training ---")
     _logger.info(f"Observatory: {model_configs.get('observatory')}")
     _logger.info(f"Model output prefix: {model_configs.get('model_prefix')}")
@@ -168,6 +182,13 @@ def configure_training(analysis_type):
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
     if analysis_type == "stereo_analysis":
         _logger.info(f"Minimum images (DispNImages): {model_configs.get('min_images')}")
+        _logger.info(
+            "Regression weighting: energy=inverse-sqrt(count), min_bin_events=%d, "
+            "multiplicity=DispNImages**2, max_combined_weight=%.1f, "
+            "validation_weights=training-derived",
+            models_module._MIN_WEIGHTED_ENERGY_BIN_EVENTS,
+            models_module._MAX_REGRESSION_SAMPLE_WEIGHT,
+        )
     if analysis_type == "classification":
         _logger.info(
             f"Balance class zenith weights: {model_configs.get('balance_class_zenith_weights')}"
@@ -305,6 +326,7 @@ def configure_apply(analysis_type):
 
     model_configs = vars(parser.parse_args())
 
+    _log_runtime_provenance()
     _logger.info(f"--- XGBoost {analysis_type} evaluation ---")
     _logger.info(f"Observatory: {model_configs.get('observatory')}")
     _logger.info(f"Input file: {model_configs.get('input_file')}")
