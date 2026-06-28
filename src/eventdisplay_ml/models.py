@@ -341,7 +341,6 @@ def apply_regression_models(df, model_configs):
         model_input = flatten_data.reindex(columns=model_data["features"])
         if mask is not None:
             model_input = model_input.loc[mask]
-        data_processing.print_variable_statistics(model_input)
 
         if not target_mean_cfg or not target_std_cfg:
             raise ValueError(
@@ -355,6 +354,10 @@ def apply_regression_models(df, model_configs):
             [target_std_cfg[key] for key in ("Xoff_residual", "Yoff_residual", "E_residual")]
         )
         return model_data["model"].predict(model_input) * target_std + target_mean
+
+    model_data = next(iter(model_configs["models"].values()))
+    primary_model_input = flatten_data.reindex(columns=model_data["features"])
+    data_processing.print_variable_statistics(primary_model_input)
 
     high_models = model_configs.get("models_high_multiplicity")
     if high_models is None:
@@ -383,8 +386,7 @@ def apply_regression_models(df, model_configs):
                 high_mask,
             )
 
-    model_data = next(iter(model_configs["models"].values()))
-    flatten_data = flatten_data.reindex(columns=model_data["features"])
+    flatten_data = primary_model_input
 
     # Model predicts residuals, so add them to DispBDT baseline
     # Extract DispBDT predictions from the flattened data
