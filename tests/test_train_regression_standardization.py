@@ -273,10 +273,63 @@ class TestEnergyBinWeighting:
 
         eval_set = mock_model.fit.call_args.kwargs["eval_set"]
         eval_weights = mock_model.fit.call_args.kwargs["sample_weight_eval_set"]
-        assert len(eval_set[0][0]) == len(df) // 2
-        assert len(eval_set[1][0]) == 10
-        assert len(eval_weights[0]) == len(df) // 2
-        assert len(eval_weights[1]) == 10
+        assert len(eval_set) == 1
+        assert len(eval_set[0][0]) == 10
+        assert len(eval_weights) == 1
+        assert len(eval_weights[0]) == 10
+
+    def test_early_stopping_callback_keeps_only_best_model(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify configured early stopping uses a save-best callback."""
+        df = regression_training_df
+        cfg = regression_model_config
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+            mock_model.predict.side_effect = lambda x_values: np.zeros(
+                (len(x_values), len(cfg["targets"]))
+            )
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model", return_value={}):
+                models.train_regression(df, cfg)
+
+        constructor_kwargs = mock_xgb.call_args.kwargs
+        assert "early_stopping_rounds" not in constructor_kwargs
+        assert len(constructor_kwargs["callbacks"]) == 1
+        callback = constructor_kwargs["callbacks"][0]
+        assert callback.rounds == 2
+        assert callback.save_best is True
+
+    def test_diagnostic_max_events_limits_training_predictions(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify generalization diagnostics predict only a bounded training sample."""
+        df = regression_training_df
+        cfg = regression_model_config.copy()
+        cfg["diagnostic_max_events"] = 10
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+            prediction_lengths = []
+
+            def _predict(x_values):
+                prediction_lengths.append(len(x_values))
+                return np.zeros((len(x_values), len(cfg["targets"])))
+
+            mock_model.predict.side_effect = _predict
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model", return_value={}):
+                models.train_regression(df, cfg)
+
+        assert prediction_lengths[0] == 10
+        assert sum(prediction_lengths[1:]) == len(df) // 2
 
 
 class TestTrainRegressionIntegration:
@@ -461,8 +514,8 @@ class TestTrainRegressionIntegration:
             x_train,
             y_train_scaled,
             sample_weight=reference_weights,
-            sample_weight_eval_set=[reference_weights, reference_eval_weights],
-            eval_set=[(x_train, y_train_scaled), (x_test, y_test_scaled)],
+            sample_weight_eval_set=[reference_eval_weights],
+            eval_set=[(x_test, y_test_scaled)],
             verbose=False,
         )
 

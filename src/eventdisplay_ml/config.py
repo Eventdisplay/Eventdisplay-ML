@@ -133,6 +133,15 @@ def configure_training(analysis_type):
         default=100000,
         help="Maximum number of test events used in XGBoost eval_set for early stopping.",
     )
+    parser.add_argument(
+        "--diagnostic_max_events",
+        type=int,
+        default=100000,
+        help=(
+            "Maximum number of training events used for post-training generalization "
+            "diagnostics (set to 0 to use all training events)."
+        ),
+    )
     if analysis_type == "stereo_analysis":
         parser.add_argument(
             "--min_images",
@@ -154,6 +163,7 @@ def configure_training(analysis_type):
     _logger.info(f"Memory profiling: {model_configs['memory_profile']}")
     _logger.info(f"Read step size: {model_configs['read_step_size']}")
     _logger.info(f"Max eval events: {model_configs['eval_max_events']}")
+    _logger.info(f"Max diagnostic events: {model_configs['diagnostic_max_events']}")
     if model_configs.get("max_tel_per_type") is not None:
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
     if analysis_type == "stereo_analysis":

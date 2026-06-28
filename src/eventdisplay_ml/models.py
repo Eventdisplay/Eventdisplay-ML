@@ -836,17 +836,26 @@ def train_regression(df, model_configs):
         y_eval_scaled_array = ((df.iloc[eval_idx, target_indices] - y_mean) / y_std).to_numpy(
             dtype=np.float32, copy=True
         )
-        eval_set = [(x_train, y_train_scaled_array), (x_eval, y_eval_scaled_array)]
+        eval_set = [(x_eval, y_eval_scaled_array)]
         utils.log_memory_checkpoint("after building XGBoost fit arrays", enabled=memory_profile)
 
         utils.log_memory_checkpoint(f"{name}: before XGBRegressor init", enabled=memory_profile)
-        model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
+        hyper_parameters = dict(cfg.get("hyper_parameters", {}))
+        early_stopping_rounds = hyper_parameters.pop("early_stopping_rounds", None)
+        if early_stopping_rounds is not None:
+            hyper_parameters["callbacks"] = [
+                xgb.callback.EarlyStopping(
+                    rounds=early_stopping_rounds,
+                    save_best=True,
+                )
+            ]
+        model = xgb.XGBRegressor(**hyper_parameters)
         utils.log_memory_checkpoint(f"{name}: before model.fit", enabled=memory_profile)
         model.fit(
             x_train,
             y_train_scaled_array,
             sample_weight=weights_train,
-            sample_weight_eval_set=[weights_train, weights_eval],
+            sample_weight_eval_set=[weights_eval],
             eval_set=eval_set,
             verbose=False,
         )
@@ -864,10 +873,24 @@ def train_regression(df, model_configs):
         utils.log_memory_checkpoint(f"{name}: after releasing fit arrays", enabled=memory_profile)
 
         prediction_chunk_size = model_configs.get("prediction_chunk_size", 200000)
+        diagnostic_train_idx = _sample_eval_indices(
+            train_idx,
+            model_configs.get("diagnostic_max_events", 100000),
+            model_configs.get("random_state", None),
+        )
+        y_train_diagnostic = (
+            y_train
+            if diagnostic_train_idx is train_idx
+            else df.iloc[diagnostic_train_idx, target_indices]
+        )
+        _logger.info(
+            "Post-training diagnostic training events: %d",
+            len(diagnostic_train_idx),
+        )
         y_train_pred = _predict_unscaled_chunked(
             model,
             df,
-            train_idx,
+            diagnostic_train_idx,
             x_cols,
             y_mean,
             y_std,
@@ -896,7 +919,7 @@ def train_regression(df, model_configs):
         )
 
         generalization_metrics = diagnostic_utils.compute_generalization_metrics(
-            y_train,
+            y_train_diagnostic,
             y_train_pred,
             y_test,
             y_pred,
