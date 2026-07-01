@@ -7,6 +7,20 @@ This changelog is generated using [Towncrier](https://towncrier.readthedocs.io/)
 
 <!-- towncrier release notes start -->
 
+## [v3.2.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v3.2.0) - 2026-07-01
+
+### New Features
+
+- Add gamma/hadron classification training options to balance signal/background zenith-bin distributions and to omit `ze_bin` as a stress-test feature. Add zenith-uniformity summary metrics and multi-training comparison plots for gamma/hadron performance diagnostics. ([#72](https://github.com/Eventdisplay/Eventdisplay-ML/pull/72))
+- Introduce `--model_prefix_high_multiplicity` parameter for stereo analyse to use different models for 2-tel and >2-tel multiplicity events. ([#73](https://github.com/Eventdisplay/Eventdisplay-ML/pull/73))
+- Change training weights for stereo reconstruction, to avoid extreme weights leading to early training abortion. ([#74](https://github.com/Eventdisplay/Eventdisplay-ML/pull/74))
+
+### Maintenance
+
+- Reduce peak memory usage during chunked data loading and regression training. ([#70](https://github.com/Eventdisplay/Eventdisplay-ML/pull/70))
+- Address numpy deprecation warnings. ([#71](https://github.com/Eventdisplay/Eventdisplay-ML/pull/71))
+
+
 ## [v3.1.0](https://github.com/Eventdisplay/Eventdisplay-ML/releases/tag/v3.1.0) - 2026-06-10
 
 ### Bugfixes
