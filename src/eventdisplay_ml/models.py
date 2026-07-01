@@ -1140,10 +1140,11 @@ def _regression_sample_weights(
     mc_e0[valid_erec] = e_residual[valid_erec] + np.log10(erec_s[valid_erec])
     bin_indices = pd.cut(mc_e0, bins=bins, include_lowest=True, labels=False)
 
-    w_energy = np.zeros(len(erec_s), dtype=np.float64)
-    for i, weight in enumerate(energy_bin_weights):
-        w_energy[bin_indices == i] = weight
-    w_multiplicity = np.square(disp_nimages, dtype=np.float64) / multiplicity_mean_square
+w_energy = np.ones(len(erec_s), dtype=np.float64)
+w_energy[~valid_erec] = 0.0
+for i, weight in enumerate(energy_bin_weights):
+    w_energy[bin_indices == i] = weight
+w_multiplicity = np.square(disp_nimages, dtype=np.float64) / multiplicity_mean_square
     raw_weights = w_energy * w_multiplicity
 
     if normalization_scale is None:
