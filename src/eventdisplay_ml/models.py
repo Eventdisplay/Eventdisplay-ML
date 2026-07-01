@@ -29,6 +29,8 @@ from eventdisplay_ml.evaluate import (
 _EVAL_LOG_E_MIN = -2
 _EVAL_LOG_E_MAX = 2.5
 _EVAL_LOG_E_BINS = 9
+_MIN_WEIGHTED_ENERGY_BIN_EVENTS = 100
+_MAX_REGRESSION_SAMPLE_WEIGHT = 50.0
 
 _logger = logging.getLogger(__name__)
 
@@ -770,8 +772,10 @@ def train_regression(df, model_configs):
         train_erec_s,
         train_e_residual,
         train_disp_nimages,
+        return_weight_config=True,
     )
     weights_train = bin_result[2] if bin_result else None
+    weight_config = bin_result[3] if bin_result else None
     del train_erec_s
     del train_e_residual
     del train_disp_nimages
@@ -807,6 +811,21 @@ def train_regression(df, model_configs):
         model_configs.get("eval_max_events", 200000),
         model_configs.get("random_state", None),
     )
+    weights_eval = None
+    if weight_config is not None:
+        weights_eval, _ = _regression_sample_weights(
+            df["ErecS"].to_numpy()[eval_idx],
+            df["E_residual"].to_numpy()[eval_idx],
+            df["DispNImages"].to_numpy()[eval_idx],
+            **weight_config,
+        )
+        _logger.info(
+            "Validation sample weights: mean=%.3f, std=%.3f, min=%.3f, max=%.3f",
+            weights_eval.mean(),
+            weights_eval.std(),
+            weights_eval.min(),
+            weights_eval.max(),
+        )
     _logger.info(f"XGBoost eval_set test events: {len(eval_idx)}")
 
     for name, cfg in model_configs.get("models", {}).items():
@@ -817,16 +836,26 @@ def train_regression(df, model_configs):
         y_eval_scaled_array = ((df.iloc[eval_idx, target_indices] - y_mean) / y_std).to_numpy(
             dtype=np.float32, copy=True
         )
-        eval_set = [(x_train, y_train_scaled_array), (x_eval, y_eval_scaled_array)]
+        eval_set = [(x_eval, y_eval_scaled_array)]
         utils.log_memory_checkpoint("after building XGBoost fit arrays", enabled=memory_profile)
 
         utils.log_memory_checkpoint(f"{name}: before XGBRegressor init", enabled=memory_profile)
-        model = xgb.XGBRegressor(**cfg.get("hyper_parameters", {}))
+        hyper_parameters = dict(cfg.get("hyper_parameters", {}))
+        early_stopping_rounds = hyper_parameters.pop("early_stopping_rounds", None)
+        if early_stopping_rounds is not None:
+            hyper_parameters["callbacks"] = [
+                xgb.callback.EarlyStopping(
+                    rounds=early_stopping_rounds,
+                    save_best=True,
+                )
+            ]
+        model = xgb.XGBRegressor(**hyper_parameters)
         utils.log_memory_checkpoint(f"{name}: before model.fit", enabled=memory_profile)
         model.fit(
             x_train,
             y_train_scaled_array,
             sample_weight=weights_train,
+            sample_weight_eval_set=[weights_eval],
             eval_set=eval_set,
             verbose=False,
         )
@@ -844,10 +873,24 @@ def train_regression(df, model_configs):
         utils.log_memory_checkpoint(f"{name}: after releasing fit arrays", enabled=memory_profile)
 
         prediction_chunk_size = model_configs.get("prediction_chunk_size", 200000)
+        diagnostic_train_idx = _sample_eval_indices(
+            train_idx,
+            model_configs.get("diagnostic_max_events", 100000),
+            model_configs.get("random_state", None),
+        )
+        y_train_diagnostic = (
+            y_train
+            if diagnostic_train_idx is train_idx
+            else df.iloc[diagnostic_train_idx, target_indices]
+        )
+        _logger.info(
+            "Post-training diagnostic training events: %d",
+            len(diagnostic_train_idx),
+        )
         y_train_pred = _predict_unscaled_chunked(
             model,
             df,
-            train_idx,
+            diagnostic_train_idx,
             x_cols,
             y_mean,
             y_std,
@@ -876,7 +919,7 @@ def train_regression(df, model_configs):
         )
 
         generalization_metrics = diagnostic_utils.compute_generalization_metrics(
-            y_train,
+            y_train_diagnostic,
             y_train_pred,
             y_test,
             y_pred,
@@ -1065,8 +1108,8 @@ def _log_energy_bin_counts(df):
         (bin_edges, counts_dict, weights_array) where:
         - bin_edges: np.ndarray of bin boundaries
         - counts_dict: dict mapping intervals to event counts
-        - weights_array: np.ndarray of inverse-count weights for each event (normalized
-                         for both energy and multiplicity)
+        - weights_array: np.ndarray of capped inverse-square-root energy weights combined
+                         with multiplicity weights
         Returns None if E_residual not found.
     """
     if "E_residual" not in df or "ErecS" not in df:
@@ -1080,7 +1123,57 @@ def _log_energy_bin_counts(df):
     )
 
 
-def _log_energy_bin_counts_from_arrays(erec_s, e_residual, disp_nimages):
+def _regression_sample_weights(
+    erec_s,
+    e_residual,
+    disp_nimages,
+    *,
+    bins,
+    energy_bin_weights,
+    multiplicity_mean_square,
+    max_weight,
+    normalization_scale=None,
+):
+    """Calculate capped regression weights using parameters derived from training data."""
+    valid_erec = (erec_s > 0) & np.isfinite(erec_s)
+    mc_e0 = np.full(len(erec_s), np.nan, dtype=np.float64)
+    mc_e0[valid_erec] = e_residual[valid_erec] + np.log10(erec_s[valid_erec])
+    bin_indices = pd.cut(mc_e0, bins=bins, include_lowest=True, labels=False)
+
+    w_energy = np.ones(len(erec_s), dtype=np.float64)
+    w_energy[~valid_erec] = 0.0
+    for i, weight in enumerate(energy_bin_weights):
+        w_energy[bin_indices == i] = weight
+    w_multiplicity = np.square(disp_nimages, dtype=np.float64) / multiplicity_mean_square
+    raw_weights = w_energy * w_multiplicity
+
+    if normalization_scale is None:
+        if not np.any(raw_weights > 0):
+            raise ValueError("No regression events remain after energy-bin weighting.")
+        if np.count_nonzero(raw_weights) * max_weight < len(raw_weights):
+            raise ValueError("Too few weighted regression events to normalize within max_weight.")
+
+        low, high = 0.0, 1.0 / raw_weights.mean()
+        while np.minimum(raw_weights * high, max_weight).mean() < 1.0:
+            high *= 2.0
+        for _ in range(60):
+            middle = 0.5 * (low + high)
+            if np.minimum(raw_weights * middle, max_weight).mean() < 1.0:
+                low = middle
+            else:
+                high = middle
+        normalization_scale = high
+
+    weights = np.minimum(raw_weights * normalization_scale, max_weight).astype(np.float32)
+    return weights, normalization_scale
+
+
+def _log_energy_bin_counts_from_arrays(
+    erec_s,
+    e_residual,
+    disp_nimages,
+    return_weight_config=False,
+):
     """Log counts and compute energy/multiplicity training weights from arrays."""
     # Handle ErecS with proper checks for valid values (> 0)
     disp_erec_log = np.where(erec_s > 0, np.log10(erec_s), np.nan)
@@ -1093,26 +1186,25 @@ def _log_energy_bin_counts_from_arrays(erec_s, e_residual, disp_nimages):
     for interval, count in counts.items():
         _logger.info(f"  {interval.left:.2f} to {interval.right:.2f} : {int(count)}")
 
-    # Calculate inverse-count weights for balancing (events in low-count bins get higher weight)
-    # Bins with fewer than 10 events get zero weight (excluded from training)
-    bin_indices = pd.cut(mc_e0, bins=bins, include_lowest=True, labels=False)
+    # Use inverse-square-root balancing. Sparse bins are excluded and the final
+    # energy-times-multiplicity event weights are capped.
     count_per_bin = counts.values
-    # Only invert counts >= 10 to avoid divide-by-zero warning
-    inverse_counts = np.zeros_like(count_per_bin, dtype=np.float64)
-    mask = count_per_bin >= 10
-    inverse_counts[mask] = 1.0 / count_per_bin[mask]
-    # Normalize by mean of non-zero weights only
-    valid_weights = inverse_counts[inverse_counts > 0]
-    if len(valid_weights) > 0:
-        inverse_counts = inverse_counts / valid_weights.mean()
+    eligible = count_per_bin >= _MIN_WEIGHTED_ENERGY_BIN_EVENTS
+    if not np.any(eligible):
+        _logger.warning(
+            "No energy bin has at least %d events; disabling min-bin exclusion and weighting all populated bins.",
+            _MIN_WEIGHTED_ENERGY_BIN_EVENTS,
+        )
+        eligible = count_per_bin > 0
+    reference_count = np.median(count_per_bin[eligible])
+    energy_bin_weights = np.zeros_like(count_per_bin, dtype=np.float64)
+    energy_bin_weights[eligible] = np.sqrt(reference_count / count_per_bin[eligible])
 
-    # Assign weight to each event based on its energy bin
-    w_energy = np.ones(len(erec_s), dtype=np.float32)
-    for i, inv_count in enumerate(inverse_counts):
-        mask = bin_indices == i
-        w_energy[mask] = inv_count
-
-    _logger.info(f"Energy bin weights (inverse-count, normalized): {inverse_counts}")
+    _logger.info(
+        "Energy bin weights (inverse-sqrt count; bins with <%d events excluded): %s",
+        _MIN_WEIGHTED_ENERGY_BIN_EVENTS,
+        energy_bin_weights,
+    )
 
     # Calculate multiplicity weights (prioritize higher-multiplicity events)
     mult_counts = pd.Series(disp_nimages).value_counts()
@@ -1120,29 +1212,41 @@ def _log_energy_bin_counts_from_arrays(erec_s, e_residual, disp_nimages):
     for mult, count in mult_counts.items():
         _logger.info(f"  {int(mult)} telescopes: {int(count)}")
 
-    w_multiplicity = (disp_nimages**2).astype(np.float32)
-    w_multiplicity /= np.mean(w_multiplicity)
+    multiplicity_mean_square = np.mean(np.square(disp_nimages, dtype=np.float64))
+    w_multiplicity = np.square(disp_nimages, dtype=np.float64) / multiplicity_mean_square
 
     _logger.info(
-        "Multiplicity weights (inverse-frequency, normalized): "
+        "Multiplicity weights (quadratic, normalized): "
         f"mean={w_multiplicity.mean():.3f}, "
         f"std={w_multiplicity.std():.3f}, "
         f"min={w_multiplicity.min():.3f}, "
         f"max={w_multiplicity.max():.3f}"
     )
 
-    # Combine energy and multiplicity weights
-    combined_weights = w_energy * w_multiplicity
-
-    # Normalize combined weights so mean is 1.0 to keep learning rate effective
-    combined_weights = combined_weights / np.mean(combined_weights)
+    weight_config = {
+        "bins": bins,
+        "energy_bin_weights": energy_bin_weights,
+        "multiplicity_mean_square": multiplicity_mean_square,
+        "max_weight": _MAX_REGRESSION_SAMPLE_WEIGHT,
+    }
+    combined_weights, normalization_scale = _regression_sample_weights(
+        erec_s,
+        e_residual,
+        disp_nimages,
+        **weight_config,
+    )
+    weight_config["normalization_scale"] = normalization_scale
 
     _logger.info(
         f"Combined weights (energy x multiplicity): "
         f"mean={combined_weights.mean():.3f}, "
         f"std={combined_weights.std():.3f}, "
         f"min={combined_weights.min():.3f}, "
-        f"max={combined_weights.max():.3f}"
+        f"max={combined_weights.max():.3f} "
+        f"(cap={_MAX_REGRESSION_SAMPLE_WEIGHT:.1f})"
     )
 
-    return bins, dict(counts.items()), combined_weights
+    result = (bins, dict(counts.items()), combined_weights)
+    if return_weight_config:
+        return (*result, weight_config)
+    return result

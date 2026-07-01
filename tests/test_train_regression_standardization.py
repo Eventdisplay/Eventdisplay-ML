@@ -140,21 +140,18 @@ class TestEnergyBinWeighting:
         assert len(weights) == len(df), "weights array length should match dataframe rows"
 
     def test_log_energy_bin_counts_zeroes_low_count_bins(self):
-        """Verify bins with < 10 events get zero weight."""
-        # Create minimal dataframe with specific energy distribution
-        rng = np.random.default_rng(42)
-        n_rows = 30
+        """Verify bins below the minimum population get zero weight."""
+        n_rows = 140
         df = pd.DataFrame(
             {
                 "ErecS": np.concatenate(
                     [
-                        np.full(15, 100.0),
-                        np.full(10, 10.0),
-                        np.full(5, 1000.0),
+                        np.full(120, 0.1),
+                        np.full(20, 10.0),
                     ]
                 ),
                 "E_residual": np.zeros(n_rows),
-                "DispNImages": rng.choice([2, 3], n_rows),
+                "DispNImages": np.full(n_rows, 3),
             }
         )
 
@@ -163,15 +160,39 @@ class TestEnergyBinWeighting:
 
         _, counts_dict, weights = result
 
-        # Find which bins have < 10 events
-        low_count_bins = {interval: count for interval, count in counts_dict.items() if count < 10}
+        assert any(
+            0 < count < models._MIN_WEIGHTED_ENERGY_BIN_EVENTS for count in counts_dict.values()
+        )
+        assert np.all(weights[-20:] == 0)
 
-        # Events in low-count bins should have zero energy weight
-        # (multiplicity weight might still apply, but energy weight should be 0)
-        if low_count_bins:
-            zero_weights = weights[weights == 0]
-            if len(zero_weights) > 0:
-                assert len(zero_weights) > 0, "Expected some zero weights for low-count bins"
+    def test_energy_bin_weights_use_inverse_square_root(self):
+        """A four-times smaller energy bin should get twice the per-event weight."""
+        df = pd.DataFrame(
+            {
+                "ErecS": np.concatenate([np.full(400, 0.1), np.full(100, 10.0)]),
+                "E_residual": np.zeros(500),
+                "DispNImages": np.full(500, 3),
+            }
+        )
+
+        weights = models._log_energy_bin_counts(df)[2]
+
+        assert weights[400] / weights[0] == pytest.approx(2.0)
+
+    def test_regression_weights_are_capped_and_normalized(self):
+        """Combined weights must retain mean one without exceeding the configured cap."""
+        weights, _ = models._regression_sample_weights(
+            np.concatenate([np.full(10, 0.1), np.full(90, 10.0)]),
+            np.zeros(100),
+            np.full(100, 3),
+            bins=np.array([-2.0, 0.0, 2.0]),
+            energy_bin_weights=np.array([1000.0, 1.0]),
+            multiplicity_mean_square=9.0,
+            max_weight=50.0,
+        )
+
+        assert weights.max() <= 50.0
+        assert weights.mean() == pytest.approx(1.0)
 
     def test_log_energy_bin_counts_weight_normalization(self, regression_training_df):
         """Verify combined weights are normalized to mean ~1.0."""
@@ -251,8 +272,64 @@ class TestEnergyBinWeighting:
                 models.train_regression(df, cfg)
 
         eval_set = mock_model.fit.call_args.kwargs["eval_set"]
-        assert len(eval_set[0][0]) == len(df) // 2
-        assert len(eval_set[1][0]) == 10
+        eval_weights = mock_model.fit.call_args.kwargs["sample_weight_eval_set"]
+        assert len(eval_set) == 1
+        assert len(eval_set[0][0]) == 10
+        assert len(eval_weights) == 1
+        assert len(eval_weights[0]) == 10
+
+    def test_early_stopping_callback_keeps_only_best_model(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify configured early stopping uses a save-best callback."""
+        df = regression_training_df
+        cfg = regression_model_config
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+            mock_model.predict.side_effect = lambda x_values: np.zeros(
+                (len(x_values), len(cfg["targets"]))
+            )
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model", return_value={}):
+                models.train_regression(df, cfg)
+
+        constructor_kwargs = mock_xgb.call_args.kwargs
+        assert "early_stopping_rounds" not in constructor_kwargs
+        assert len(constructor_kwargs["callbacks"]) == 1
+        callback = constructor_kwargs["callbacks"][0]
+        assert callback.rounds == 2
+        assert callback.save_best is True
+
+    def test_diagnostic_max_events_limits_training_predictions(
+        self, regression_training_df, regression_model_config
+    ):
+        """Verify generalization diagnostics predict only a bounded training sample."""
+        df = regression_training_df
+        cfg = regression_model_config.copy()
+        cfg["diagnostic_max_events"] = 10
+
+        with patch("xgboost.XGBRegressor") as mock_xgb:
+            mock_model = MagicMock()
+            mock_model.best_iteration = 5
+            mock_model.best_score = 0.1
+            prediction_lengths = []
+
+            def _predict(x_values):
+                prediction_lengths.append(len(x_values))
+                return np.zeros((len(x_values), len(cfg["targets"])))
+
+            mock_model.predict.side_effect = _predict
+            mock_xgb.return_value = mock_model
+
+            with patch("eventdisplay_ml.models.evaluate_regression_model", return_value={}):
+                models.train_regression(df, cfg)
+
+        assert prediction_lengths[0] == 10
+        assert sum(prediction_lengths[1:]) == len(df) // 2
 
 
 class TestTrainRegressionIntegration:
@@ -418,14 +495,27 @@ class TestTrainRegressionIntegration:
         y_std = y_train.std()
         y_train_scaled = (y_train - y_mean) / y_std
         y_test_scaled = (y_test - y_mean) / y_std
-        reference_weights = models._log_energy_bin_counts(df.loc[y_train.index])[2]
+        train_weight_result = models._log_energy_bin_counts_from_arrays(
+            df.loc[y_train.index, "ErecS"].to_numpy(),
+            df.loc[y_train.index, "E_residual"].to_numpy(),
+            df.loc[y_train.index, "DispNImages"].to_numpy(),
+            return_weight_config=True,
+        )
+        reference_weights = train_weight_result[2]
+        reference_eval_weights, _ = models._regression_sample_weights(
+            df.loc[y_test.index, "ErecS"].to_numpy(),
+            df.loc[y_test.index, "E_residual"].to_numpy(),
+            df.loc[y_test.index, "DispNImages"].to_numpy(),
+            **train_weight_result[3],
+        )
 
         reference_model = xgb.XGBRegressor(**hyper_parameters)
         reference_model.fit(
             x_train,
             y_train_scaled,
             sample_weight=reference_weights,
-            eval_set=[(x_train, y_train_scaled), (x_test, y_test_scaled)],
+            sample_weight_eval_set=[reference_eval_weights],
+            eval_set=[(x_test, y_test_scaled)],
             verbose=False,
         )
 

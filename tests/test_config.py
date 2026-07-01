@@ -24,7 +24,8 @@ def model_parameters_file(tmp_path):
     return path
 
 
-def test_configure_training_stereo_updates_models(monkeypatch):
+def test_configure_training_stereo_updates_models(monkeypatch, caplog):
+    caplog.set_level("INFO")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -56,6 +57,11 @@ def test_configure_training_stereo_updates_models(monkeypatch):
     assert result["pre_cuts"] == "cut_4"
     assert result["targets"] == ["target_a"]
     assert result["memory_profile"] is False
+    assert "eventdisplay-ml runtime version:" in caplog.text
+    assert "eventdisplay-ml models source:" in caplog.text
+    assert "energy=inverse-sqrt(count), min_bin_events=100" in caplog.text
+    assert "max_combined_weight=50.0" in caplog.text
+    assert "validation_weights=training-derived" in caplog.text
 
 
 def test_configure_training_stereo_enables_memory_profile(monkeypatch):
