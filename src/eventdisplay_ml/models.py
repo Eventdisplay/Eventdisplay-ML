@@ -1191,7 +1191,7 @@ def _log_energy_bin_counts_from_arrays(
     eligible = count_per_bin >= _MIN_WEIGHTED_ENERGY_BIN_EVENTS
     if not np.any(eligible):
         _logger.warning(
-            "No energy bin has at least %d events; weighting all populated bins.",
+            "No energy bin has at least %d events; disabling min-bin exclusion and weighting all populated bins.",
             _MIN_WEIGHTED_ENERGY_BIN_EVENTS,
         )
         eligible = count_per_bin > 0
