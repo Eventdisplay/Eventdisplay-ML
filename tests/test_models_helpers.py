@@ -50,9 +50,27 @@ def classification_prefix(tmp_path):
 
 
 def test_save_models_writes_expected_joblib(tmp_path):
-    model_configs = {"model_prefix": str(tmp_path / "saved"), "models": {"xgboost": {}}}
+    model_configs = {
+        "model_prefix": str(tmp_path / "saved"),
+        "models": {"xgboost": {"model": "trained-model"}},
+    }
     models.save_models(model_configs)
     assert (tmp_path / "saved.joblib.gz").exists()
+
+
+def test_save_models_rejects_model_that_fails_validation(tmp_path, monkeypatch):
+    model_configs = {
+        "model_prefix": str(tmp_path / "invalid"),
+        "models": {"xgboost": {"model": "trained-model"}},
+    }
+    failed_validation = MagicMock(returncode=1, stderr="validation error", stdout="")
+    monkeypatch.setattr(models.subprocess, "run", lambda *args, **kwargs: failed_validation)
+
+    with pytest.raises(RuntimeError, match="validation error"):
+        models.save_models(model_configs)
+
+    assert not (tmp_path / "invalid.joblib.gz").exists()
+    assert not list(tmp_path.glob(".invalid.*.joblib.gz"))
 
 
 def test_load_models_dispatches_and_rejects_unknown(monkeypatch):
