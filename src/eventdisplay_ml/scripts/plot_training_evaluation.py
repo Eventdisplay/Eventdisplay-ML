@@ -131,7 +131,7 @@ def main():
         type=str,
         help=(
             "Directory containing multiple joblib model files. "
-            "All *.joblib files will be processed.",
+            "All *.joblib files will be processed."
         ),
     )
     parser.add_argument(
@@ -218,8 +218,8 @@ def main():
                 )
                 plot_training_curves(evals_result, output_file)
                 _logger.info(f"Saved plot for {model_path.name} to {output_file}")
-            except Exception as e:
-                _logger.exception(f"Skipping {model_path}: failed to process model ({e})")
+            except Exception:
+                _logger.exception(f"Skipping {model_path}: failed to process model")
                 continue
 
         _logger.info("Batch plotting completed.")

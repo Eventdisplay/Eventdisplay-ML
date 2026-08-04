@@ -142,7 +142,7 @@ def _extract_tgraph2d(graph):
     try:
         x, y, z = graph.values()
         return np.asarray(x), np.asarray(y), np.asarray(z)
-    except Exception:
+    except (AttributeError, ValueError, TypeError):
         x = np.asarray(graph.member("fX"))
         y = np.asarray(graph.member("fY"))
         z = np.asarray(graph.member("fZ"))
