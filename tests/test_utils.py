@@ -1,9 +1,14 @@
 """Unit tests for utils.py."""
 
 import json
+import logging
+from types import SimpleNamespace
 
+import joblib
+import pandas as pd
 import pytest
 
+from eventdisplay_ml import utils
 from eventdisplay_ml.utils import (
     discover_joblib_files,
     joblib_basename,
@@ -102,6 +107,14 @@ def test_discover_joblib_files_empty_dir_raises(tmp_path):
         discover_joblib_files(tmp_path)
 
 
+def test_discover_joblib_files_ignores_directories_with_model_suffixes(tmp_path):
+    """A directory named like a model must never be returned as a model file."""
+    (tmp_path / "not_a_model.joblib").mkdir()
+    (tmp_path / "model.joblib.gz").touch()
+
+    assert discover_joblib_files(tmp_path) == [tmp_path / "model.joblib.gz"]
+
+
 # ---------------------------------------------------------------------------
 # read_input_file_list
 # ---------------------------------------------------------------------------
@@ -170,6 +183,12 @@ def test_parse_image_selection_invalid_raises():
         parse_image_selection("abc")
 
 
+def test_parse_image_selection_malformed_comma_list_falls_through_to_clear_error():
+    """Partially numeric comma lists must not be silently accepted."""
+    with pytest.raises(ValueError, match="Invalid image_selection"):
+        parse_image_selection("1,invalid")
+
+
 # ---------------------------------------------------------------------------
 # load_model_parameters
 # ---------------------------------------------------------------------------
@@ -211,6 +230,21 @@ def test_load_model_parameters_invalid_bin_raises(model_params_file):
 def test_load_model_parameters_missing_file_raises():
     with pytest.raises(FileNotFoundError):
         load_model_parameters("/nonexistent/path.json")
+
+
+def test_load_model_parameters_none_path_has_same_clear_error():
+    """Argparse omissions should not leak a TypeError from open()."""
+    with pytest.raises(FileNotFoundError, match="Model parameters file not found: None"):
+        load_model_parameters(None)
+
+
+def test_load_model_parameters_missing_energy_bins_raises_value_error(tmp_path):
+    """Selecting a bin requires the energy-bin metadata to exist."""
+    params_file = tmp_path / "missing_bins.json"
+    params_file.write_text(json.dumps({"zenith_bins_deg": []}))
+
+    with pytest.raises(ValueError, match="Invalid energy bin number 0"):
+        load_model_parameters(params_file, energy_bin_number=0)
 
 
 # ---------------------------------------------------------------------------
@@ -265,3 +299,75 @@ def test_output_file_name_creates_parent_directory(tmp_path):
 def test_output_file_name_returns_string(tmp_path):
     result = output_file_name(tmp_path / "model")
     assert isinstance(result, str)
+
+
+def test_output_file_name_combines_multiplicity_and_energy_bin(tmp_path):
+    """Keep the naming contract unique when both suffixes are supplied."""
+    result = output_file_name(tmp_path / "model", n_tel=3, energy_bin_number=4)
+    assert result.endswith("model_ntel3_ebin4.joblib.gz")
+
+
+# ---------------------------------------------------------------------------
+# memory profiling and joblib loading
+# ---------------------------------------------------------------------------
+
+
+def test_max_rss_uses_platform_specific_units(monkeypatch):
+    """MacOS reports bytes while Linux reports KiB; normalize both to GB."""
+    usage = SimpleNamespace(ru_maxrss=1024**3)
+    monkeypatch.setattr(utils.resource, "getrusage", lambda *_args: usage)
+    monkeypatch.setattr(utils.sys, "platform", "darwin")
+    assert utils._max_rss_gb() == pytest.approx(1.0)
+
+    monkeypatch.setattr(utils.sys, "platform", "linux")
+    assert utils._max_rss_gb() == pytest.approx(1024.0)
+
+
+def test_current_rss_reads_proc_statm_when_available(monkeypatch, tmp_path):
+    """Current RSS uses resident pages rather than the peak when /proc exists."""
+    statm = tmp_path / "statm"
+    statm.write_text("100 512 0 0 0 0 0")
+    monkeypatch.setattr(utils, "Path", lambda _path: statm)
+    monkeypatch.setattr(utils.os, "sysconf", lambda _name: 4096)
+
+    assert utils._current_rss_gb() == pytest.approx(512 * 4096 / 1024**3)
+
+
+def test_current_rss_falls_back_to_peak_when_proc_is_unavailable(monkeypatch, tmp_path):
+    """macOS-like environments without /proc retain a meaningful RSS value."""
+    missing_statm = tmp_path / "missing"
+    monkeypatch.setattr(utils, "Path", lambda _path: missing_statm)
+    monkeypatch.setattr(utils, "_max_rss_gb", lambda: 1.25)
+
+    assert utils._current_rss_gb() == pytest.approx(1.25)
+
+
+def test_log_memory_checkpoint_is_disabled_without_side_effects(monkeypatch):
+    """The profiling helper must be a no-op unless explicitly enabled."""
+    monkeypatch.setattr(utils, "_current_rss_gb", lambda: pytest.fail("should not be called"))
+    utils.log_memory_checkpoint("disabled", enabled=False)
+
+
+def test_log_memory_checkpoint_logs_timing_rss_and_dataframe_memory(monkeypatch, caplog):
+    """Enabled profiling reports both process and DataFrame memory details."""
+    utils._profile_start_time = None
+    utils._profile_last_time = None
+    monkeypatch.setattr(utils.time, "perf_counter", lambda: 10.0)
+    monkeypatch.setattr(utils, "_current_rss_gb", lambda: 1.5)
+    monkeypatch.setattr(utils, "_max_rss_gb", lambda: 2.5)
+
+    with caplog.at_level(logging.INFO):
+        utils.log_memory_checkpoint("after flattening", pd.DataFrame({"x": [1, 2]}), enabled=True)
+
+    assert "Memory checkpoint [after flattening]" in caplog.text
+    assert "rss=1.50 GB" in caplog.text
+    assert "max_rss=2.50 GB" in caplog.text
+    assert "shape=(2, 1)" in caplog.text
+
+
+def test_load_joblib_returns_payload_and_suppresses_only_shape_warning(monkeypatch):
+    """Model loading tolerates NumPy's known pickle warning without hiding failures."""
+    payload = {"model": "trusted-test-payload"}
+    monkeypatch.setattr(joblib, "load", lambda _path: payload)
+
+    assert utils.load_joblib("model.joblib.gz") is payload

@@ -70,7 +70,7 @@ def get_containment_data(directory):
                 _logger.info(f"Percentiles p70: {p70}, p95: {p95}")
             else:
                 _logger.warning("Nan percentiles")
-        except Exception as e:
+        except (OSError, ValueError, KeyError) as e:
             _logger.error(f"Failed reading {filename}: {e}")
 
     return pd.DataFrame(results)

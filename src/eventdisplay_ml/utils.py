@@ -88,7 +88,11 @@ def discover_joblib_files(model_dir):
     if not model_dir.exists() or not model_dir.is_dir():
         raise FileNotFoundError(f"Model directory not found: {model_dir}")
 
-    discovered_files = sorted(set(model_dir.glob("*.joblib")).union(model_dir.glob("*.joblib.gz")))
+    discovered_files = sorted(
+        path
+        for path in set(model_dir.glob("*.joblib")).union(model_dir.glob("*.joblib.gz"))
+        if path.is_file()
+    )
     files_by_name = {}
     for model_path in discovered_files:
         key = joblib_basename(model_path)

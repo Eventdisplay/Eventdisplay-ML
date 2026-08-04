@@ -311,7 +311,7 @@ def _validate_energy_bin_metadata(energy_bin, model_file):
         Validated metadata containing ``E_min`` and ``E_max`` keys.
     """
     if not isinstance(energy_bin, dict):
-        raise ValueError(
+        raise TypeError(
             "Classification model file "
             f"'{model_file}' has invalid 'energy_bins_log10_tev' metadata: "
             "expected a dict with keys 'E_min' and 'E_max'."
@@ -738,7 +738,7 @@ def process_file_chunked(analysis_type, model_configs):
             {
                 eff
                 for e_bin_models in model_configs["models"].values()
-                for eff in (e_bin_models.get("thresholds") or {}).keys()
+                for eff in (e_bin_models.get("thresholds") or {})
             }
         )
 

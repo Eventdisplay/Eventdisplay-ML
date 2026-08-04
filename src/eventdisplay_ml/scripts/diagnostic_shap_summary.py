@@ -156,8 +156,8 @@ def main():
             output_file = utils.joblib_basename(model_path)
             try:
                 process_model_file(model_path, output_dir, output_file)
-            except Exception as e:
-                _logger.exception(f"Skipping {model_path}: failed to process model ({e})")
+            except Exception:
+                _logger.exception(f"Skipping {model_path}: failed to process model")
                 continue
 
     _logger.info(f"\nPlots saved to {output_dir}")
