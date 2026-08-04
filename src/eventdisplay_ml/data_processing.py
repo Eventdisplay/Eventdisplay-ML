@@ -995,20 +995,19 @@ def load_training_data(model_configs, file_list, analysis_type):
     else:
         branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
-    if classification_mode and max_events is not None and max_events > 0:
-        # Reserve a bounded quota per file, then perform one deterministic
-        # final sample below.  Integer floor division used to turn a small
-        # global cap into zero (which silently disabled sampling).
-        max_events_per_file = max(1, int(np.ceil(max_events / len(input_files))))
+    if max_events is not None and max_events > 0:
+        max_events_per_file = max_events // len(input_files)
     else:
-        if max_events is not None and max_events > 0:
-            # Preserve the historical regression quota behavior.
-            max_events_per_file = max_events // len(input_files)
-        else:
-            max_events_per_file = None
+        max_events_per_file = None
+    if classification_mode and max_events is not None and max_events > 0:
+        # Integer floor division can turn a small cap into zero, which means
+        # unlimited sampling. Classification applies an exact final cap below.
+        max_events_per_file = max(1, int(np.ceil(max_events / len(input_files))))
     _logger.info(f"Max events per file: {max_events_per_file}")
 
-    tel_config = model_configs.get("tel_config") if classification_mode else None
+    tel_config = None  # Will be read from first file
+    if classification_mode:
+        tel_config = model_configs.get("tel_config")
     dfs = []
     executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
     total_files = len(input_files)
@@ -1019,11 +1018,12 @@ def load_training_data(model_configs, file_list, analysis_type):
                     _logger.warning(f"File: {f} does not contain a 'data' tree.")
                     continue
 
-                current_tel_config = read_telescope_config(root_file)
                 if tel_config is None:
-                    tel_config = current_tel_config
+                    tel_config = read_telescope_config(root_file)
                     model_configs["tel_config"] = tel_config
                 else:
+                    # Check if current file has a larger max_tel_id and update if needed
+                    current_tel_config = read_telescope_config(root_file)
                     if classification_mode:
                         if _telescope_config_signature(
                             current_tel_config
@@ -1033,6 +1033,12 @@ def load_training_data(model_configs, file_list, analysis_type):
                                 f"telescope configurations: {f}."
                             )
                     elif current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
+                        _logger.info(
+                            f"Updating telescope configuration: max_tel_id from "
+                            f"{tel_config['max_tel_id']} to {current_tel_config['max_tel_id']} "
+                            f"(file: {f})"
+                        )
+                        # Replace the full telescope configuration to keep all fields consistent
                         tel_config = current_tel_config
                         model_configs["tel_config"] = tel_config
 
