@@ -68,6 +68,21 @@ def test_grouped_split_keeps_source_groups_disjoint_when_supported():
     assert set(groups.iloc[validation]).isdisjoint(groups.iloc[test])
 
 
+def test_grouped_split_uses_global_assignment_for_overlapping_group_ids():
+    y = pd.Series(np.repeat([0, 1], 60))
+    groups = pd.Series(np.concatenate([np.tile(np.arange(6), 10), np.tile(np.arange(2, 8), 10)]))
+    train, validation, test, metadata = models._classification_split_indices(
+        y, groups, train_fraction=0.5, random_state=7, grouped=True
+    )
+    assert metadata["groups_overlap_labels"] is True
+    train_groups = set(groups.iloc[train])
+    validation_groups = set(groups.iloc[validation])
+    test_groups = set(groups.iloc[test])
+    assert train_groups.isdisjoint(validation_groups)
+    assert train_groups.isdisjoint(test_groups)
+    assert validation_groups.isdisjoint(test_groups)
+
+
 def test_event_split_reports_insufficient_holdout_events():
     y = pd.Series([0, 0, 1, 1])
     with pytest.raises(ValueError, match="holdout events"):

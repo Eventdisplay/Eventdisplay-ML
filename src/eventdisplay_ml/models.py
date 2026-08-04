@@ -1362,43 +1362,110 @@ def _classification_split_indices(y_data, groups, train_fraction, random_state, 
     if groups is not None and not isinstance(groups, pd.Series):
         groups = pd.Series(groups, index=y_data.index)
     use_groups = grouped and groups is not None and groups.notna().all()
+    groups_overlap_labels = False
     if use_groups:
         use_groups = all(groups[y_data == label].nunique() >= 6 for label in y_data.unique())
 
-    train, validation, test = [], [], []
+    def stable_group_key(value):
+        return (type(value).__name__, repr(value))
+
+    label_groups_by_label = {}
     if use_groups:
+        group_labels = {}
         for label in sorted(y_data.unique()):
             label_mask = y_data.to_numpy() == label
-            label_groups = np.asarray(groups[label_mask].unique())
-            n_train_groups = int(np.ceil(len(label_groups) * train_fraction))
-            n_hold_groups = len(label_groups) - n_train_groups
+            label_groups = np.asarray(
+                sorted(groups[label_mask].unique().tolist(), key=stable_group_key)
+            )
+            label_groups_by_label[label] = label_groups
+            for group in label_groups.tolist():
+                group_labels.setdefault(group, set()).add(label)
+        groups_overlap_labels = any(len(labels) > 1 for labels in group_labels.values())
+
+    train, validation, test = [], [], []
+    if use_groups:
+        if groups_overlap_labels:
+            # A group shared by signal and background must be assigned once
+            # globally; independent per-class splits could otherwise leak the
+            # same source into different partitions.
+            all_groups = np.asarray(
+                sorted(
+                    {
+                        group
+                        for label_groups in label_groups_by_label.values()
+                        for group in label_groups
+                    },
+                    key=stable_group_key,
+                )
+            )
+            n_train_groups = int(np.ceil(len(all_groups) * train_fraction))
+            n_hold_groups = len(all_groups) - n_train_groups
             if n_train_groups < 1 or n_hold_groups < 2:
                 raise ValueError(
                     "Grouped classification split cannot create separate validation "
-                    "and test groups for label="
-                    f"{label}: train_test_fraction={train_fraction} leaves "
-                    f"{n_hold_groups} holdout groups. Reduce train_test_fraction or "
-                    "provide more source groups."
+                    "and test groups: "
+                    f"train_test_fraction={train_fraction} leaves {n_hold_groups} "
+                    "holdout groups. Reduce train_test_fraction or provide more "
+                    "source groups."
                 )
             g_train, g_hold = train_test_split(
-                label_groups,
+                all_groups,
                 train_size=train_fraction,
                 random_state=rng,
             )
-            if len(g_hold) < 2:
-                raise ValueError(
-                    "Grouped classification split cannot create separate validation "
-                    f"and test groups for label={label}: only {len(g_hold)} holdout "
-                    "groups remain after the training split."
-                )
             g_validation, g_test = train_test_split(
                 g_hold,
                 train_size=0.5,
                 random_state=rng,
             )
-            train.extend(np.flatnonzero(label_mask & groups.isin(g_train).to_numpy()))
-            validation.extend(np.flatnonzero(label_mask & groups.isin(g_validation).to_numpy()))
-            test.extend(np.flatnonzero(label_mask & groups.isin(g_test).to_numpy()))
+            split_groups = (g_train, g_validation, g_test)
+            for label in sorted(y_data.unique()):
+                label_mask = y_data.to_numpy() == label
+                split_indices = [
+                    np.flatnonzero(label_mask & groups.isin(group_set).to_numpy())
+                    for group_set in split_groups
+                ]
+                if any(len(indices) == 0 for indices in split_indices):
+                    raise ValueError(
+                        "Grouped classification split cannot preserve all classes in "
+                        f"each partition for label={label} with overlapping group IDs."
+                    )
+                train.extend(split_indices[0])
+                validation.extend(split_indices[1])
+                test.extend(split_indices[2])
+        else:
+            for label in sorted(y_data.unique()):
+                label_mask = y_data.to_numpy() == label
+                label_groups = label_groups_by_label[label]
+                n_train_groups = int(np.ceil(len(label_groups) * train_fraction))
+                n_hold_groups = len(label_groups) - n_train_groups
+                if n_train_groups < 1 or n_hold_groups < 2:
+                    raise ValueError(
+                        "Grouped classification split cannot create separate validation "
+                        "and test groups for label="
+                        f"{label}: train_test_fraction={train_fraction} leaves "
+                        f"{n_hold_groups} holdout groups. Reduce train_test_fraction or "
+                        "provide more source groups."
+                    )
+                g_train, g_hold = train_test_split(
+                    label_groups,
+                    train_size=train_fraction,
+                    random_state=rng,
+                )
+                if len(g_hold) < 2:
+                    raise ValueError(
+                        "Grouped classification split cannot create separate validation "
+                        f"and test groups for label={label}: only {len(g_hold)} holdout "
+                        "groups remain after the training split."
+                    )
+                g_validation, g_test = train_test_split(
+                    g_hold,
+                    train_size=0.5,
+                    random_state=rng,
+                )
+                train.extend(np.flatnonzero(label_mask & groups.isin(g_train).to_numpy()))
+                validation.extend(np.flatnonzero(label_mask & groups.isin(g_validation).to_numpy()))
+                test.extend(np.flatnonzero(label_mask & groups.isin(g_test).to_numpy()))
         method = "grouped_source_file"
     else:
         for label in sorted(y_data.unique()):
@@ -1442,6 +1509,7 @@ def _classification_split_indices(y_data, groups, train_fraction, random_state, 
             "method": method,
             "grouped_requested": bool(grouped),
             "source_groups_available": bool(use_groups),
+            "groups_overlap_labels": bool(groups_overlap_labels),
         },
     )
 

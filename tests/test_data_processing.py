@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from eventdisplay_ml.data_processing import energy_interpolation_bins, zenith_in_bins
 
@@ -30,6 +31,24 @@ def test_zenith_in_bins_dict_bins_matches_numeric_definition():
 
     np.testing.assert_array_equal(result, np.array([-1, 0, 0, 1, 1, 2, -1], dtype=np.int32))
     assert result.dtype == np.int32
+
+
+def test_zenith_in_bins_rejects_noncontiguous_dict_bins():
+    bins = [
+        {"Ze_min": 0.0, "Ze_max": 10.0},
+        {"Ze_min": 12.0, "Ze_max": 20.0},
+    ]
+    with pytest.raises(ValueError, match="ordered and contiguous"):
+        zenith_in_bins([5.0], bins)
+
+
+def test_zenith_in_bins_rejects_invalid_dict_bin_bounds():
+    bins = [
+        {"Ze_min": 10.0, "Ze_max": 0.0},
+        {"Ze_min": 0.0, "Ze_max": 20.0},
+    ]
+    with pytest.raises(ValueError, match="finite Ze_min < Ze_max"):
+        zenith_in_bins([5.0], bins)
 
 
 def test_energy_interpolation_bins_interpolates_and_clamps_with_invalid_events():

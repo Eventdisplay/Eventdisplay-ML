@@ -1564,10 +1564,38 @@ def zenith_in_bins(zenith_angles, bins):
     """
     if bins is None or len(bins) < 2:
         raise ValueError("At least two zenith-bin edges are required.")
-    if isinstance(bins[0], dict):
-        if any("Ze_min" not in b or "Ze_max" not in b for b in bins):
-            raise ValueError("Zenith-bin dictionaries require Ze_min and Ze_max.")
-        bins = [b["Ze_min"] for b in bins] + [bins[-1]["Ze_max"]]
+    if any(isinstance(value, dict) for value in bins):
+        if not all(isinstance(value, dict) for value in bins):
+            raise ValueError("Zenith-bin definitions must be all numeric or all dictionaries.")
+        parsed_bins = []
+        for index, definition in enumerate(bins):
+            if "Ze_min" not in definition or "Ze_max" not in definition:
+                raise ValueError("Zenith-bin dictionaries require Ze_min and Ze_max.")
+            try:
+                ze_min = float(definition["Ze_min"])
+                ze_max = float(definition["Ze_max"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Zenith-bin {index} has non-numeric Ze_min/Ze_max values."
+                ) from exc
+            if not np.isfinite(ze_min) or not np.isfinite(ze_max) or ze_min >= ze_max:
+                raise ValueError(
+                    f"Zenith-bin {index} must have finite Ze_min < Ze_max; "
+                    f"got ({ze_min}, {ze_max})."
+                )
+            if parsed_bins and not np.isclose(
+                ze_min,
+                parsed_bins[-1][1],
+                rtol=1e-9,
+                atol=1e-9,
+            ):
+                raise ValueError(
+                    "Zenith-bin dictionaries must be ordered and contiguous: "
+                    f"bin {index - 1} ends at {parsed_bins[-1][1]}, "
+                    f"but bin {index} starts at {ze_min}."
+                )
+            parsed_bins.append((ze_min, ze_max))
+        bins = [parsed_bins[0][0]] + [ze_max for _, ze_max in parsed_bins]
     bins = np.asarray(bins, dtype=float)
     if bins.ndim != 1 or len(bins) < 2 or not np.all(np.isfinite(bins)):
         raise ValueError("Zenith-bin edges must be a finite one-dimensional sequence.")
