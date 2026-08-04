@@ -347,8 +347,6 @@ def square_tel_config():
 
 
 def test_calculate_array_footprint_two_tel_returns_distance():
-    # _calculate_array_footprint builds lookup_x[0..max_id] from tel_list_matrix values,
-    # so tel_config must not contain IDs beyond max(tel_list_matrix values).
     tel_config = {
         "tel_ids": np.array([0, 1]),
         "tel_x": np.array([-100.0, 100.0]),
@@ -357,6 +355,14 @@ def test_calculate_array_footprint_two_tel_returns_distance():
     tel_list_matrix = np.array([[0.0, 1.0]])
     result = _calculate_array_footprint(tel_config, tel_list_matrix)
     assert result[0] == pytest.approx(200.0)
+
+
+def test_calculate_array_footprint_allows_configured_telescope_absent_from_events(
+    square_tel_config,
+):
+    tel_list_matrix = np.array([[0.0, 1.0, 2.0, np.nan]])
+    result = _calculate_array_footprint(square_tel_config, tel_list_matrix)
+    assert result[0] == pytest.approx(20000.0)
 
 
 def test_calculate_array_footprint_three_tel_returns_positive():

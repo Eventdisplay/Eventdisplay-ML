@@ -2,6 +2,9 @@
 
 import logging
 import re
+import subprocess
+import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -31,8 +34,41 @@ _EVAL_LOG_E_MAX = 2.5
 _EVAL_LOG_E_BINS = 9
 _MIN_WEIGHTED_ENERGY_BIN_EVENTS = 100
 _MAX_REGRESSION_SAMPLE_WEIGHT = 50.0
+_MODEL_VALIDATION_MEMORY_BYTES = 4 * 1024**3
+_MODEL_VALIDATION_TIMEOUT_SECONDS = 120
 
 _logger = logging.getLogger(__name__)
+
+
+def _validate_saved_model(model_path):
+    """Validate a saved model in a memory-limited subprocess."""
+    command = [
+        sys.executable,
+        "-m",
+        "eventdisplay_ml._model_validation",
+        str(model_path),
+        str(_MODEL_VALIDATION_MEMORY_BYTES),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=_MODEL_VALIDATION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Saved model validation timed out after "
+            f"{_MODEL_VALIDATION_TIMEOUT_SECONDS} seconds: {model_path}"
+        ) from exc
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+        raise RuntimeError(
+            f"Saved model validation failed with exit code {result.returncode}: "
+            f"{model_path}\n{detail}"
+        )
 
 
 def save_models(model_configs):
@@ -46,7 +82,25 @@ def save_models(model_configs):
         model_configs.get("model_prefix"),
         energy_bin_number=model_configs.get("energy_bin_number"),
     )
-    joblib.dump(model_configs, output_file)
+    output_path = Path(output_file)
+    with tempfile.NamedTemporaryFile(
+        dir=output_path.parent,
+        prefix=f".{output_path.stem}.",
+        suffix=".joblib.gz",
+        delete=False,
+    ) as temporary_file:
+        temporary_path = Path(temporary_file.name)
+
+    try:
+        joblib.dump(model_configs, temporary_path)
+        _logger.info("Validating saved model: %s", temporary_path)
+        _validate_saved_model(temporary_path)
+        temporary_path.replace(output_path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+    _logger.info("Saved and validated model: %s", output_path)
     utils.log_memory_checkpoint("save_models:end", enabled=memory_profile)
 
 

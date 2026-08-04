@@ -1304,8 +1304,9 @@ def _calculate_array_footprint(tel_config, tel_list_matrix):
     n_evt = len(tel_list_matrix)
     footprints = np.full(n_evt, -1.0, dtype=np.float32)
 
-    # Pre-map all telescope positions to a dense array aligned with tel_list_matrix IDs
-    max_id = int(np.nanmax(tel_list_matrix)) if np.any(~np.isnan(tel_list_matrix)) else 0
+    # Size the lookup from the configuration so configured telescopes that are absent
+    # from this event chunk still have a valid slot.
+    max_id = int(np.max(tel_config["tel_ids"]))
     lookup_x = np.zeros(max_id + 1)
     lookup_y = np.zeros(max_id + 1)
     for tid, tx, ty in zip(tel_config["tel_ids"], tel_config["tel_x"], tel_config["tel_y"]):
