@@ -79,12 +79,19 @@ def read_telescope_config(root_file):
     }
 
 
-def _telescope_config_signature(config):
-    """Return fields that determine the flattened classification schema."""
-    return tuple(
-        tuple(np.asarray(config[key]).tolist())
-        for key in ("tel_ids", "mirror_area", "tel_x", "tel_y")
-    )
+def _telescope_configs_match(first, second):
+    """Compare telescope configurations, tolerating float serialization noise."""
+    for key in ("tel_ids", "mirror_area", "tel_x", "tel_y"):
+        first_values = np.asarray(first[key])
+        second_values = np.asarray(second[key])
+        if first_values.shape != second_values.shape:
+            return False
+        if key == "tel_ids":
+            if not np.array_equal(first_values, second_values):
+                return False
+        elif not np.allclose(first_values, second_values, rtol=1e-7, atol=1e-7, equal_nan=True):
+            return False
+    return True
 
 
 def _resolve_branch_aliases(tree, branch_list):
@@ -1025,9 +1032,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     # Check if current file has a larger max_tel_id and update if needed
                     current_tel_config = read_telescope_config(root_file)
                     if classification_mode:
-                        if _telescope_config_signature(
-                            current_tel_config
-                        ) != _telescope_config_signature(tel_config):
+                        if not _telescope_configs_match(current_tel_config, tel_config):
                             raise ValueError(
                                 "Classification/training input files have incompatible "
                                 f"telescope configurations: {f}."

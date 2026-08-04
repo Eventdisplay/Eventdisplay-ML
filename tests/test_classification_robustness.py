@@ -3,7 +3,24 @@
 import numpy as np
 import pandas as pd
 
-from eventdisplay_ml import features, models
+from eventdisplay_ml import data_processing, features, models
+
+
+def test_telescope_config_comparison_tolerates_float_noise_and_nan():
+    first = {
+        "tel_ids": np.array([1, 2]),
+        "mirror_area": np.array([100.0, np.nan]),
+        "tel_x": np.array([0.0, 10.0]),
+        "tel_y": np.array([1.0, 2.0]),
+    }
+    second = {
+        "tel_ids": np.array([1, 2]),
+        "mirror_area": np.array([100.0 + 1e-8, np.nan]),
+        "tel_x": np.array([0.0, 10.0 + 1e-8]),
+        "tel_y": np.array([1.0, 2.0]),
+    }
+
+    assert data_processing._telescope_configs_match(first, second)
 
 
 def test_robust_profile_excludes_routing_and_activity_columns():
