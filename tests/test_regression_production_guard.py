@@ -1426,8 +1426,8 @@ class TestProcessFileChunkedStereo:
 
 
 class TestRegressionEndToEnd:
-    """Train a tiny real XGBoost model, save it, load it, and verify predictions
-    round-trip correctly through the full production stack.
+    """Train a tiny stand-in regressor (via a patched ``xgboost.XGBRegressor``), save it,
+    load it, and verify predictions round-trip correctly through the production stack.
     """
 
     def test_full_round_trip_prediction_shape_and_dtype(self, tmp_path, monkeypatch):
