@@ -104,6 +104,23 @@ def configure_training(analysis_type):
             action="store_true",
             help="Remove ze_bin from gamma/hadron training features.",
         )
+        parser.add_argument(
+            "--feature_profile",
+            choices=("robust", "extended"),
+            default="robust",
+            help=(
+                "Classification feature set. 'robust' uses stable image/stereo variables "
+                "available in existing data; 'extended' retains the historical feature set."
+            ),
+        )
+        parser.add_argument(
+            "--grouped_split",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help=(
+                "Keep events from the same source file in one split when provenance is available."
+            ),
+        )
     parser.add_argument(
         "--max_cores",
         type=int,
@@ -194,6 +211,8 @@ def configure_training(analysis_type):
             f"Balance class zenith weights: {model_configs.get('balance_class_zenith_weights')}"
         )
         _logger.info(f"Ignore ze_bin feature: {model_configs.get('ignore_ze_bin')}")
+        _logger.info(f"Classification feature profile: {model_configs.get('feature_profile')}")
+        _logger.info(f"Grouped classification split: {model_configs.get('grouped_split')}")
 
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")

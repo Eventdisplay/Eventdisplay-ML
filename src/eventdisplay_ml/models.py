@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import uproot
 import xgboost as xgb
+from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
 from eventdisplay_ml import data_processing, diagnostic_utils, features, utils
@@ -23,6 +24,7 @@ from eventdisplay_ml.data_processing import (
     zenith_in_bins,
 )
 from eventdisplay_ml.evaluate import (
+    classification_thresholds_from_signal,
     evaluate_classification_model,
     evaluate_regression_model,
     evaluation_efficiency,
@@ -196,9 +198,11 @@ def load_classification_models(model_prefix, model_name):
             raise KeyError(f"Model name '{model_name}' not found in file: {file}")
         models[e_bin]["features"] = model_data.get("features", [])
         models[e_bin]["efficiency"] = model_data["models"][model_name].get("efficiency")
+        calibration = model_data["models"][model_name].get("signal_threshold_calibration")
         models[e_bin]["thresholds"] = _calculate_classification_thresholds(
-            models[e_bin]["efficiency"]
+            models[e_bin]["efficiency"], calibration=calibration
         )
+        models[e_bin]["support"] = model_data["models"][model_name].get("support", {})
         energy_bin_metadata = _validate_energy_bin_metadata(
             model_data.get("energy_bins_log10_tev"),
             file,
@@ -223,7 +227,7 @@ def load_classification_models(model_prefix, model_name):
     return models, par
 
 
-def _calculate_classification_thresholds(efficiency, min_efficiency=0.2, steps=5):
+def _calculate_classification_thresholds(efficiency, min_efficiency=0.2, steps=5, calibration=None):
     """
     Calculate classification thresholds for given signal efficiencies.
 
@@ -243,7 +247,21 @@ def _calculate_classification_thresholds(efficiency, min_efficiency=0.2, steps=5
     dict[int, float]
         Mapping from efficiency (percent) to classification threshold.
     """
+    if efficiency is None or len(efficiency) == 0:
+        raise ValueError("Classification efficiency diagnostics are missing from the model file.")
     df = efficiency.copy()
+    if calibration is not None:
+        calibrated = pd.DataFrame(calibration)
+        if {"signal_efficiency_target", "threshold"}.issubset(calibrated.columns):
+            df = pd.concat(
+                [
+                    df[["signal_efficiency", "threshold"]],
+                    calibrated[["signal_efficiency_target", "threshold"]].rename(
+                        columns={"signal_efficiency_target": "signal_efficiency"}
+                    ),
+                ],
+                ignore_index=True,
+            ).drop_duplicates(subset=["signal_efficiency"], keep="last")
     df = df.sort_values("signal_efficiency")
     eff_targets = np.arange(min_efficiency * 100, 100, steps) / 100.0
     thresholds = np.interp(
@@ -524,10 +542,19 @@ def apply_classification_models(df, model_configs, threshold_keys):
             observatory=model_configs.get("observatory", "veritas"),
             preview_rows=model_configs.get("preview_rows", 20),
         )
-        model_lo = models[e_bin_lo]["model"]
-        model_hi = models[e_bin_hi]["model"]
-        flatten_lo = flatten_data.reindex(columns=models[e_bin_lo]["features"])
-        flatten_hi = flatten_data.reindex(columns=models[e_bin_hi]["features"])
+        resolved_lo = _resolve_classification_bin(models, e_bin_lo)
+        resolved_hi = _resolve_classification_bin(models, e_bin_hi)
+        model_lo = models[resolved_lo]["model"]
+        model_hi = models[resolved_hi]["model"]
+        missing_lo = sorted(set(models[resolved_lo]["features"]) - set(flatten_data.columns))
+        missing_hi = sorted(set(models[resolved_hi]["features"]) - set(flatten_data.columns))
+        if missing_lo or missing_hi:
+            raise ValueError(
+                "Classification model/input feature schema mismatch: "
+                f"low-bin missing={missing_lo}, high-bin missing={missing_hi}."
+            )
+        flatten_lo = flatten_data.loc[:, models[resolved_lo]["features"]]
+        flatten_hi = flatten_data.loc[:, models[resolved_hi]["features"]]
 
         class_probs_lo = model_lo.predict_proba(flatten_lo)[:, 1]
         if e_bin_lo == e_bin_hi:
@@ -538,8 +565,8 @@ def apply_classification_models(df, model_configs, threshold_keys):
             class_probs = (1.0 - alpha) * class_probs_lo + alpha * class_probs_hi
         class_probability[group_df.index] = class_probs
 
-        thresholds_lo = models[e_bin_lo].get("thresholds", {})
-        thresholds_hi = models[e_bin_hi].get("thresholds", {})
+        thresholds_lo = models[resolved_lo].get("thresholds", {})
+        thresholds_hi = models[resolved_hi].get("thresholds", {})
         for eff in threshold_keys:
             if eff in is_gamma:
                 thr_lo = thresholds_lo.get(eff)
@@ -556,6 +583,22 @@ def apply_classification_models(df, model_configs, threshold_keys):
                 is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
 
     return class_probability, is_gamma
+
+
+def _resolve_classification_bin(models, requested_bin):
+    """Resolve a missing energy-bin model to the nearest available model."""
+    if requested_bin in models:
+        return requested_bin
+    available = sorted(models)
+    if not available:
+        raise ValueError("No classification models are available for application.")
+    nearest = min(available, key=lambda candidate: abs(candidate - requested_bin))
+    _logger.warning(
+        "No classification model for energy bin %d; borrowing nearest bin %d.",
+        requested_bin,
+        nearest,
+    )
+    return nearest
 
 
 def process_file_chunked(analysis_type, model_configs):
@@ -1024,47 +1067,123 @@ def train_classification(df, model_configs):
             f"signal_events={len(df[0])}, background_events={len(df[1])}."
         )
 
-    df[0]["label"] = 1
-    df[1]["label"] = 0
-    full_df = pd.concat([df[0], df[1]], ignore_index=True)
+    left_columns = set(df[0].columns)
+    right_columns = set(df[1].columns)
+    if left_columns != right_columns:
+        raise ValueError(
+            "Signal/background classification schemas differ. "
+            f"Only signal: {sorted(left_columns - right_columns)}; "
+            f"only background: {sorted(right_columns - left_columns)}"
+        )
+
+    signal = df[0].copy()
+    background = df[1].copy()
+    signal["label"] = 1
+    background["label"] = 0
+    full_df = pd.concat([signal, background], ignore_index=True)
     ze_data = full_df["ze_bin"] if "ze_bin" in full_df.columns else None
-    x_data = full_df.drop(columns=["label"])
-    if model_configs.get("ignore_ze_bin", False):
-        if model_configs.get("balance_class_zenith_weights", False):
-            raise ValueError("Cannot use ignore_ze_bin with balance_class_zenith_weights.")
-        if "ze_bin" in x_data.columns:
-            _logger.info("Removing ze_bin from classification training features.")
-            x_data = x_data.drop(columns=["ze_bin"])
+    if model_configs.get("balance_class_zenith_weights", False) and ze_data is None:
+        raise ValueError("Class/zenith balancing requires the derived ze_bin column.")
+
+    profile = model_configs.get("feature_profile", "robust")
+    feature_columns = features.classification_feature_columns(
+        full_df.columns,
+        profile=profile,
+        ignore_ze_bin=model_configs.get("ignore_ze_bin", False),
+    )
+    for column in feature_columns:
+        signal_all_nan = bool(signal[column].isna().all())
+        background_all_nan = bool(background[column].isna().all())
+        if signal_all_nan != background_all_nan:
+            raise ValueError(f"Classification feature '{column}' is all-NaN in only one class.")
+        if signal_all_nan:
+            raise ValueError(f"Classification feature '{column}' is all-NaN in both classes.")
+    x_data = full_df.loc[:, feature_columns]
     _logger.info(f"Features ({len(x_data.columns)}): {', '.join(x_data.columns)}")
     model_configs["features"] = list(x_data.columns)
     y_data = full_df["label"]
 
-    split_inputs = [x_data, y_data]
-    if ze_data is not None:
-        split_inputs.append(ze_data)
-
-    split_result = train_test_split(
-        *split_inputs,
-        train_size=model_configs.get("train_test_fraction", 0.5),
-        random_state=model_configs.get("random_state", None),
-        stratify=y_data,
+    train_idx, validation_idx, test_idx, split_metadata = _classification_split_indices(
+        y_data,
+        full_df.get("__source_file"),
+        train_fraction=model_configs.get("train_test_fraction", 0.5),
+        random_state=model_configs.get("random_state"),
+        grouped=model_configs.get("grouped_split", True),
     )
-    if ze_data is None:
-        x_train, x_test, y_train, y_test = split_result
-        ze_test = None
-    else:
-        x_train, x_test, y_train, y_test, _, ze_test = split_result
-
-    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    # Keep a small, explicitly reserved gamma subset for score-threshold
+    # calibration.  It is never used for fitting or assessment metrics.
+    test_signal_idx = test_idx[y_data.iloc[test_idx].to_numpy() == 1]
+    calibration_idx = np.asarray([], dtype=int)
+    test_signal_groups = (
+        full_df.iloc[test_signal_idx]["__source_file"]
+        if "__source_file" in full_df.columns
+        else None
+    )
+    if test_signal_groups is not None and test_signal_groups.nunique() >= 2:
+        calibration_groups, _assessment_groups = train_test_split(
+            test_signal_groups.unique(),
+            test_size=0.5,
+            random_state=model_configs.get("random_state"),
+        )
+        calibration_idx = test_signal_idx[test_signal_groups.isin(calibration_groups).to_numpy()]
+    elif len(test_signal_idx) >= 2:
+        calibration_idx, _assessment_signal_idx = train_test_split(
+            test_signal_idx, test_size=0.5, random_state=model_configs.get("random_state")
+        )
+    if len(calibration_idx):
+        test_idx = np.asarray(
+            sorted(set(test_idx) - set(calibration_idx)),
+            dtype=int,
+        )
+    x_train, x_validation, x_test = (
+        x_data.iloc[idx] for idx in (train_idx, validation_idx, test_idx)
+    )
+    y_train, y_validation, y_test = (
+        y_data.iloc[idx] for idx in (train_idx, validation_idx, test_idx)
+    )
+    ze_test = ze_data.iloc[test_idx] if ze_data is not None else None
+    _logger.info(
+        "Classification split: train=%d validation=%d test=%d (%s)",
+        len(x_train),
+        len(x_validation),
+        len(x_test),
+        split_metadata["method"],
+    )
+    model_configs["classification_split"] = split_metadata
+    model_configs["classification_split"]["n_signal_calibration"] = len(calibration_idx)
+    model_configs["classification_split"]["calibration_grouped"] = bool(
+        test_signal_groups is not None and test_signal_groups.nunique() >= 2
+    )
+    model_configs["classification_feature_profile"] = profile
+    model_configs["nuisance_diagnostics"] = _classification_nuisance_diagnostics(full_df, y_data)
     weights_train = None
+    weights_validation = None
     if model_configs.get("balance_class_zenith_weights", False):
-        weights_train = _class_zenith_balance_weights(x_train, y_train)
+        weights_train = _class_zenith_balance_weights(full_df.iloc[train_idx], y_train)
+        weights_validation = _class_zenith_balance_weights(
+            full_df.iloc[validation_idx], y_validation
+        )
         _logger.info(
             "Using class/zenith sample weights "
             f"(mean={weights_train.mean():.3f}, std={weights_train.std():.3f}, "
             f"min={weights_train.min():.3f}, max={weights_train.max():.3f})"
         )
-    eval_set = [(x_train, y_train), (x_test, y_test)]
+    eval_x, eval_y = x_validation, y_validation
+    eval_weights = weights_validation
+    eval_max_events = model_configs.get("eval_max_events", 0)
+    if eval_max_events and eval_max_events > 0 and len(eval_x) > eval_max_events:
+        eval_indices = eval_x.sample(
+            n=eval_max_events,
+            random_state=model_configs.get("random_state"),
+        ).index
+        eval_x = eval_x.loc[eval_indices]
+        eval_y = eval_y.loc[eval_indices]
+        if eval_weights is not None:
+            eval_weights = (
+                pd.Series(weights_validation, index=x_validation.index).loc[eval_indices].to_numpy()
+            )
+        _logger.info("Limited XGBoost validation set to %d events", eval_max_events)
+    eval_set = [(x_train, y_train), (eval_x, eval_y)]
 
     for name, cfg in model_configs.get("models", {}).items():
         _logger.info(f"Training {name}")
@@ -1072,6 +1191,7 @@ def train_classification(df, model_configs):
         fit_kwargs = {"eval_set": eval_set, "verbose": True}
         if weights_train is not None:
             fit_kwargs["sample_weight"] = weights_train
+            fit_kwargs["sample_weight_eval_set"] = [weights_train, eval_weights]
         model.fit(x_train, y_train, **fit_kwargs)
 
         shap_importance = evaluate_classification_model(
@@ -1091,12 +1211,138 @@ def train_classification(df, model_configs):
         for ze_bin, ze_efficiency in efficiencies_by_zenith.items():
             cfg[f"efficiency_ze{ze_bin}"] = ze_efficiency
         cfg["shap_importance"] = shap_importance
+        try:
+            calibration_frame = x_data.iloc[calibration_idx]
+            if calibration_frame.empty:
+                raise ValueError("no reserved gamma calibration events")
+            test_signal_scores = model.predict_proba(calibration_frame)[:, 1]
+            cfg["signal_threshold_calibration"] = classification_thresholds_from_signal(
+                test_signal_scores
+            )
+        except (TypeError, ValueError, IndexError) as exc:
+            # Lightweight mocks/legacy estimators may not expose probabilities;
+            # keep the model usable but make the missing calibration explicit.
+            _logger.warning("Could not compute held-out signal thresholds for %s: %s", name, exc)
+            cfg["signal_threshold_calibration"] = None
+        cfg["support"] = {
+            "n_train": len(x_train),
+            "n_validation": len(x_validation),
+            "n_test": len(x_test),
+            "n_signal_test": int((y_test == 1).sum()),
+            "n_background_test": int((y_test == 0).sum()),
+            "n_signal_calibration": len(calibration_idx),
+            "fallback_policy": "held_out_model_only; inspect support before applying",
+        }
 
     return model_configs
 
 
-def _class_zenith_balance_weights(x_train, y_train):
-    """Compute sample weights that equalize class distributions over ze_bin."""
+def _classification_split_indices(y_data, groups, train_fraction, random_state, grouped=True):
+    """Create class-stratified train/validation/test indices.
+
+    Grouping is attempted only when every class has at least six source
+    groups.  Sparse VERITAS lists commonly contain one file per class, so the
+    deterministic event-level fallback is intentional and recorded in model
+    metadata rather than pretending that grouping was achieved.
+    """
+    if not isinstance(y_data, pd.Series):
+        y_data = pd.Series(y_data)
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError("train_test_fraction must be between zero and one.")
+    rng = random_state
+    if groups is not None and not isinstance(groups, pd.Series):
+        groups = pd.Series(groups, index=y_data.index)
+    use_groups = grouped and groups is not None and groups.notna().all()
+    if use_groups:
+        use_groups = all(groups[y_data == label].nunique() >= 6 for label in y_data.unique())
+
+    train, validation, test = [], [], []
+    if use_groups:
+        for label in sorted(y_data.unique()):
+            label_mask = y_data.to_numpy() == label
+            label_groups = np.asarray(groups[label_mask].unique())
+            g_train, g_hold = train_test_split(
+                label_groups,
+                train_size=train_fraction,
+                random_state=rng,
+            )
+            g_validation, g_test = train_test_split(
+                g_hold,
+                train_size=0.5,
+                random_state=rng,
+            )
+            train.extend(np.flatnonzero(label_mask & groups.isin(g_train).to_numpy()))
+            validation.extend(np.flatnonzero(label_mask & groups.isin(g_validation).to_numpy()))
+            test.extend(np.flatnonzero(label_mask & groups.isin(g_test).to_numpy()))
+        method = "grouped_source_file"
+    else:
+        for label in sorted(y_data.unique()):
+            label_idx = np.flatnonzero(y_data.to_numpy() == label)
+            label_train, label_hold = train_test_split(
+                label_idx,
+                train_size=train_fraction,
+                random_state=rng,
+            )
+            label_validation, label_test = train_test_split(
+                label_hold,
+                train_size=0.5,
+                random_state=rng,
+            )
+            train.extend(label_train)
+            validation.extend(label_validation)
+            test.extend(label_test)
+        method = "stratified_event_fallback"
+
+    return (
+        np.asarray(sorted(train), dtype=int),
+        np.asarray(sorted(validation), dtype=int),
+        np.asarray(sorted(test), dtype=int),
+        {
+            "method": method,
+            "grouped_requested": bool(grouped),
+            "source_groups_available": bool(use_groups),
+        },
+    )
+
+
+def _classification_nuisance_diagnostics(df, labels):
+    """Measure separability of routing/activity proxies without serializing a model."""
+    candidates = {}
+    if "ze_bin" in df:
+        candidates["ze_bin"] = df["ze_bin"]
+    activity = [column for column in df.columns if column.startswith("tel_active_")]
+    if activity:
+        candidates["tel_active_count"] = df[activity].sum(axis=1, skipna=True)
+    telescope_columns = [
+        column
+        for column in df.columns
+        if column.endswith(tuple(f"_{index}" for index in range(64)))
+    ]
+    if telescope_columns:
+        candidates["feature_missing_fraction"] = df[telescope_columns].isna().mean(axis=1)
+    diagnostics = {}
+    for name, values in candidates.items():
+        numeric = pd.to_numeric(values, errors="coerce")
+        valid = numeric.notna() & labels.notna()
+        if valid.sum() < 4 or labels[valid].nunique() < 2 or numeric[valid].nunique() < 2:
+            diagnostics[name] = {"auc": np.nan, "n": int(valid.sum())}
+            continue
+        auc = float(roc_auc_score(labels[valid], numeric[valid]))
+        diagnostics[name] = {
+            "auc": auc,
+            "n": int(valid.sum()),
+            "shortcut_strength": max(auc, 1.0 - auc),
+        }
+    return diagnostics
+
+
+def _class_zenith_balance_weights(x_train, y_train, weight_cap=10.0, smoothing=1.0):
+    """Compute capped, smoothed weights equalizing class distributions over ``ze_bin``.
+
+    ``smoothing`` prevents a single sparse background bin from receiving an
+    arbitrarily large weight.  The cap is an explicit robustness guard for the
+    sparse-background regime common in VERITAS training lists.
+    """
     if "ze_bin" not in x_train.columns:
         raise ValueError(
             "Cannot apply class/zenith balancing because training features do not include ze_bin."
@@ -1118,7 +1364,9 @@ def _class_zenith_balance_weights(x_train, y_train):
     if total_valid == 0:
         raise ValueError("Cannot apply class/zenith balancing with no valid training events.")
 
-    target_fraction = ze_valid.value_counts(normalize=True).sort_index()
+    all_ze = np.sort(ze_valid.unique())
+    target_counts = ze_valid.value_counts().reindex(all_ze, fill_value=0).astype(float)
+    target_fraction = target_counts / target_counts.sum()
     weights = pd.Series(1.0, index=x_train.index, dtype=np.float64)
 
     _logger.info("Class/zenith balancing target distribution:")
@@ -1128,16 +1376,19 @@ def _class_zenith_balance_weights(x_train, y_train):
     for label in sorted(labels_valid.unique()):
         class_mask = labels_valid == label
         class_ze = ze_valid[class_mask]
-        observed_fraction = class_ze.value_counts(normalize=True).sort_index()
         _logger.info(f"Class/zenith balancing weights for label={label}:")
 
         for ze_bin, target_frac in target_fraction.items():
-            obs_frac = observed_fraction.get(ze_bin, 0.0)
-            if obs_frac <= 0:
-                _logger.info(f"  ze_bin={ze_bin}: no events for this class; no weight assigned")
-                continue
-
-            weight = target_frac / obs_frac
+            obs_count = float((class_ze == ze_bin).sum())
+            class_total = float(len(class_ze))
+            if obs_count == 0:
+                # There is no unbiased within-class estimate for an absent
+                # bin.  Give it a finite pseudo-count, then cap the resulting
+                # weight; events in absent bins remain at weight one.
+                obs_frac = smoothing / (class_total + smoothing * len(all_ze))
+            else:
+                obs_frac = obs_count / class_total
+            weight = min(float(target_frac / obs_frac), float(weight_cap))
             mask = valid & (labels == label) & (ze_bins == ze_bin)
             weights.loc[mask] = weight
             _logger.info(
@@ -1145,7 +1396,18 @@ def _class_zenith_balance_weights(x_train, y_train):
                 f"weight={weight:.6f}, events={int(mask.sum())}"
             )
 
-    weight_values = weights.to_numpy(dtype=np.float32)
+    # Equalize total influence of the two classes as well as their zenith
+    # shapes.  This prevents a large simulated signal sample from dominating
+    # a sparse background sample even when raw event counts differ.
+    class_labels = sorted(labels_valid.unique())
+    target_class_total = total_valid / len(class_labels)
+    for label in class_labels:
+        class_mask = valid & (labels == label)
+        class_sum = float(weights.loc[class_mask].sum())
+        if class_sum > 0:
+            weights.loc[class_mask] *= target_class_total / class_sum
+
+    weight_values = np.clip(weights.to_numpy(dtype=np.float32), 0.0, float(weight_cap))
     mean_weight = weight_values.mean()
     if mean_weight > 0:
         weight_values /= mean_weight

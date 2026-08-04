@@ -337,7 +337,7 @@ def _normalize_telescope_variable_to_tel_id_space(data, index_list, max_tel_id, 
     row_indices, col_indices = np.where(~np.isnan(index_list))
     tel_ids = index_list[row_indices, col_indices].astype(int)
     # Filter for valid telescope IDs and valid column indices in data array
-    valid_mask = (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
+    valid_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
     full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
         row_indices[valid_mask], col_indices[valid_mask]
     ]
@@ -483,13 +483,17 @@ def flatten_telescope_data_vectorized(
     active_mask = np.zeros((n_evt, max_tel_id + 1), dtype=bool)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-    valid_tel_mask = tel_ids <= max_tel_id
+    valid_tel_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id)
     active_mask[row_indices[valid_tel_mask], tel_ids[valid_tel_mask]] = True
 
     # Pre-load and normalize size to telescope-ID space for sorting
     size_data = _normalize_telescope_variable_to_tel_id_space(
         _to_dense_array(df["size"]), index_list_for_remapping, max_tel_id, n_evt
     )
+    # A telescope absent from DispTelList_T is not a zero-sized image.  Keep it
+    # explicitly missing so sorting and the XGBoost missing-value path cannot
+    # learn a detector-slot/observing-condition proxy.
+    size_data = np.where(active_mask, size_data, np.nan)
     size_data = _clip_size_array(size_data)
 
     core_x, core_y = _get_core_arrays(df)
@@ -534,6 +538,16 @@ def flatten_telescope_data_vectorized(
                     sort_indices,
                 )
             )
+            # Geometry is useful only for an active image; inactive slots must
+            # not become a stable class/domain indicator.
+            for key in tuple(flat_features):
+                if key.startswith(f"{var}_"):
+                    sorted_tel = int(key.rsplit("_", 1)[1])
+                    flat_features[key] = np.where(
+                        active_mask[np.arange(n_evt), sort_indices[:, sorted_tel]],
+                        flat_features[key],
+                        np.nan,
+                    )
             continue
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
@@ -549,6 +563,9 @@ def flatten_telescope_data_vectorized(
             data_normalized = _normalize_telescope_variable_to_tel_id_space(
                 data, index_list_for_remapping, max_tel_id, n_evt
             )
+
+        if var != "tel_active":
+            data_normalized = np.where(active_mask, data_normalized, np.nan)
 
         # All variables are now in telescope-ID space; apply sorting and flatten uniformly
         data_normalized = data_normalized[np.arange(n_evt)[:, np.newaxis], sort_indices]
@@ -667,6 +684,7 @@ def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_
         for tel_idx in range(max_tel_id + 1):
             area = mirror_lookup[tel_idx]
             size_val = sizes[evt_idx, tel_idx]
+            active = bool(active_mask[evt_idx, tel_idx])
             # Build sort key:
             #   1) valid area first (0), NaN area last (1)
             #   2) area descending via negative value
@@ -676,9 +694,14 @@ def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_
             size_valid = 0 if not np.isnan(size_val) else 1
             area_key = -area if area_valid == 0 else 0.0
             size_key = -size_val if size_valid == 0 else 0.0
-            tel_entries.append((tel_idx, area_valid, area_key, size_valid, size_key))
+            # Active images always precede inactive detector slots.  This keeps
+            # slot ordering deterministic without turning missing telescopes
+            # into a large/small-image classification feature.
+            tel_entries.append(
+                (tel_idx, 0 if active else 1, area_valid, area_key, size_valid, size_key)
+            )
 
-        tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4]))
+        tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4], x[5]))
         sort_indices[evt_idx] = np.array([t[0] for t in tel_entries])
 
     return sort_indices
@@ -960,6 +983,8 @@ def load_training_data(model_configs, file_list, analysis_type):
         _logger.info(f"Adding zenith binning: {model_configs.get('zenith_bins_deg', [])}")
 
     input_files = utils.read_input_file_list(file_list)
+    if not input_files:
+        raise ValueError(f"Input file list is empty: {file_list}")
 
     tmva_style = model_configs.get("tmva_style", False)
     if tmva_style and analysis_type == "classification":
@@ -974,12 +999,16 @@ def load_training_data(model_configs, file_list, analysis_type):
         branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
     if max_events is not None and max_events > 0:
-        max_events_per_file = max_events // len(input_files)
+        # Reserve a bounded quota per file, then perform one deterministic
+        # final sample below.  Integer floor division used to turn a small
+        # global cap into zero (which silently disabled sampling).
+        max_events_per_file = max(1, int(np.ceil(max_events / len(input_files))))
     else:
         max_events_per_file = None
     _logger.info(f"Max events per file: {max_events_per_file}")
 
-    tel_config = None  # Will be read from first file
+    # Reuse/validate across signal and background loads.
+    tel_config = model_configs.get("tel_config")
     dfs = []
     executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
     total_files = len(input_files)
@@ -990,21 +1019,30 @@ def load_training_data(model_configs, file_list, analysis_type):
                     _logger.warning(f"File: {f} does not contain a 'data' tree.")
                     continue
 
+                current_tel_config = read_telescope_config(root_file)
                 if tel_config is None:
-                    tel_config = read_telescope_config(root_file)
+                    tel_config = current_tel_config
                     model_configs["tel_config"] = tel_config
                 else:
-                    # Check if current file has a larger max_tel_id and update if needed
-                    current_tel_config = read_telescope_config(root_file)
-                    if current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
-                        _logger.info(
-                            f"Updating telescope configuration: max_tel_id from "
-                            f"{tel_config['max_tel_id']} to {current_tel_config['max_tel_id']} "
-                            f"(file: {f})"
+                    # A model cannot have a stable feature schema if telescope
+                    # IDs/areas change between input files.  The old code
+                    # silently replaced the configuration when max_tel_id grew.
+                    def _config_signature(config):
+                        return (
+                            int(config["max_tel_id"]),
+                            tuple(int(v) for v in config.get("tel_ids", [])),
+                            tuple(str(v) for v in config.get("tel_types", [])),
+                            tuple(
+                                float(v)
+                                for v in config.get("mirror_area", config.get("mirror_areas", []))
+                            ),
                         )
-                        # Replace the full telescope configuration to keep all fields consistent
-                        tel_config = current_tel_config
-                        model_configs["tel_config"] = tel_config
+
+                    if _config_signature(current_tel_config) != _config_signature(tel_config):
+                        raise ValueError(
+                            "Classification/training input files have incompatible telescope "
+                            f"configurations: {input_files[0]} versus {f}."
+                        )
 
                 _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
                 tree = root_file["data"]
@@ -1015,7 +1053,9 @@ def load_training_data(model_configs, file_list, analysis_type):
                 raw_reservoir_chunks = []
                 reservoir_priorities = None
                 file_dfs = []
-                rng = np.random.default_rng(random_state)
+                rng = np.random.default_rng(
+                    None if random_state is None else int(random_state) + file_idx - 1
+                )
                 chunk_iterator = tree.iterate(
                     resolved_branch_list,
                     cut=model_configs.get("pre_cuts", None),
@@ -1103,6 +1143,14 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if file_df is None or file_df.empty:
                     continue
 
+                if analysis_type == "classification":
+                    # Provenance is retained only as routing metadata and is
+                    # excluded by the feature profile before fitting.  It
+                    # enables grouped validation without rereading ROOT data.
+                    file_df["__source_file_id"] = file_idx - 1
+                    file_df["__source_file"] = str(f)
+                    file_df["__source_row"] = np.arange(len(file_df), dtype=np.int64)
+
                 _logger.info(
                     f"Number of events before / after event cut: {n_before} / "
                     f"{n_after_event_cut} (fraction retained: {n_after_event_cut / n_before:.4f})"
@@ -1119,10 +1167,22 @@ def load_training_data(model_configs, file_list, analysis_type):
                     file_df,
                     enabled=memory_profile,
                 )
+        except (FileNotFoundError, KeyError, ValueError):
+            raise
         except Exception as e:
-            raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
+            raise RuntimeError(f"Error opening or reading file {f}: {e}") from e
 
+    if not dfs:
+        raise ValueError("No data loaded from input files.")
     df_final = pd.concat(dfs, ignore_index=True)
+    if analysis_type == "classification" and max_events is not None and max_events > 0:
+        if len(df_final) > max_events:
+            df_final = df_final.sample(
+                n=max_events,
+                random_state=random_state,
+                ignore_index=True,
+            )
+            _logger.info("Applied exact global classification event cap: %d", max_events)
     del dfs
     utils.log_memory_checkpoint("after final pandas concat", df_final, enabled=memory_profile)
     all_nan_columns = [col for col in df_final.columns if df_final[col].isna().all()]
@@ -1399,6 +1459,19 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
+            # Keep routing quantities in the flattened frame for energy-bin
+            # weighting/diagnostics; feature-profile selection removes them
+            # before fitting.
+            "Erec": (
+                _to_numpy_1d(df["Erec"], np.float32)
+                if _has_field(df, "Erec")
+                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
+            ),
+            "DispNImages": (
+                _to_numpy_1d(df["DispNImages"], np.float32)
+                if _has_field(df, "DispNImages")
+                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
+            ),
         }
         if _has_field(df, "SizeSecondMax"):
             data["SizeSecondMax"] = _to_numpy_1d(df["SizeSecondMax"], np.float32)
@@ -1442,9 +1515,17 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
 
 def zenith_in_bins(zenith_angles, bins):
     """Apply zenith binning based on zenith angles and given bin edges."""
+    if bins is None or len(bins) < 2:
+        raise ValueError("At least two zenith-bin edges are required.")
     if isinstance(bins[0], dict):
+        if any("Ze_min" not in b or "Ze_max" not in b for b in bins):
+            raise ValueError("Zenith-bin dictionaries require Ze_min and Ze_max.")
         bins = [b["Ze_min"] for b in bins] + [bins[-1]["Ze_max"]]
     bins = np.asarray(bins, dtype=float)
+    if bins.ndim != 1 or len(bins) < 2 or not np.all(np.isfinite(bins)):
+        raise ValueError("Zenith-bin edges must be a finite one-dimensional sequence.")
+    if np.any(np.diff(bins) <= 0):
+        raise ValueError("Zenith-bin edges must be strictly increasing.")
     idx = np.clip(np.digitize(zenith_angles, bins) - 1, 0, len(bins) - 2)
     return idx.astype(np.int32)
 
