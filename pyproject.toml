@@ -90,11 +90,9 @@ write_to = "src/eventdisplay_ml/_version.py"
 [tool.ruff]
 line-length = 100
 indent-width = 4
-force-exclude = true
 exclude = [
   "__init__.py",
   "pyproject.toml",
-  "tests/",
 ]
 
 format.indent-style = "space"
