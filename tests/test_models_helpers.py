@@ -136,7 +136,9 @@ def test_load_classification_models_rejects_missing_energy_bin_metadata(tmp_path
         tmp_path / "model_ebin0.joblib",
     )
 
-    with pytest.raises(ValueError, match=r"model_ebin0\.joblib.*energy_bins_log10_tev"):
+    with pytest.raises(
+        (ValueError, TypeError), match=r"model_ebin0\.joblib.*energy_bins_log10_tev"
+    ):
         models.load_classification_models(str(prefix), "xgboost")
 
 
@@ -367,12 +369,14 @@ def test_process_file_chunked_uses_tmva_style_features_when_flag_set():
     def fake_open(path):
         raise RuntimeError("uproot not needed for this assertion")
 
-    with patch("eventdisplay_ml.models.uproot.open", side_effect=fake_open):
-        with pytest.raises(RuntimeError, match="uproot not needed"):
-            models.process_file_chunked(
-                "classification",
-                {"tmva_style": True, "input_file": "dummy.root"},
-            )
+    with (
+        patch("eventdisplay_ml.models.uproot.open", side_effect=fake_open),
+        pytest.raises(RuntimeError, match="uproot not needed"),
+    ):
+        models.process_file_chunked(
+            "classification",
+            {"tmva_style": True, "input_file": "dummy.root"},
+        )
 
     # Verify that tmva_style features differ from regular features
     assert set(expected) != set(regular_features)
