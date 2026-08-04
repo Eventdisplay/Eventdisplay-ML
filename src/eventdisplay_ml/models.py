@@ -1,6 +1,7 @@
 """Apply models for regression and classification tasks."""
 
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -51,6 +52,11 @@ def _validate_saved_model(model_path):
         str(model_path),
         str(_MODEL_VALIDATION_MEMORY_BYTES),
     ]
+    validation_env = os.environ.copy()
+    # The validator applies a memory limit; unrestricted BLAS thread pools can
+    # allocate one workspace per host CPU and fail before the model is read.
+    for variable in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        validation_env[variable] = "1"
     try:
         result = subprocess.run(
             command,
@@ -58,6 +64,7 @@ def _validate_saved_model(model_path):
             check=False,
             text=True,
             timeout=_MODEL_VALIDATION_TIMEOUT_SECONDS,
+            env=validation_env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(

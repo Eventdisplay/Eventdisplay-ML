@@ -26,9 +26,9 @@ def _efficiency_dataframe(name, y_pred_proba, y_test, thresholds, context_label=
 
     for t in thresholds:
         pred = y_pred_proba >= t
-        eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else np.nan)
+        eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else 0.0)
         eff_background.append(
-            ((pred) & (y_test == 0)).sum() / n_background if n_background else np.nan
+            ((pred) & (y_test == 0)).sum() / n_background if n_background else 0.0
         )
         _logger.info(
             f"{name}{context_label} Threshold: {t:.2f} | "

@@ -337,7 +337,7 @@ def _normalize_telescope_variable_to_tel_id_space(data, index_list, max_tel_id, 
     row_indices, col_indices = np.where(~np.isnan(index_list))
     tel_ids = index_list[row_indices, col_indices].astype(int)
     # Filter for valid telescope IDs and valid column indices in data array
-    valid_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
+    valid_mask = (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
     full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
         row_indices[valid_mask], col_indices[valid_mask]
     ]
@@ -468,6 +468,7 @@ def flatten_telescope_data_vectorized(
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
     """
     flat_features = {}
+    classification_mode = analysis_type == "classification"
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
@@ -483,7 +484,7 @@ def flatten_telescope_data_vectorized(
     active_mask = np.zeros((n_evt, max_tel_id + 1), dtype=bool)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-    valid_tel_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id)
+    valid_tel_mask = tel_ids <= max_tel_id
     active_mask[row_indices[valid_tel_mask], tel_ids[valid_tel_mask]] = True
 
     # Pre-load and normalize size to telescope-ID space for sorting
@@ -493,13 +494,27 @@ def flatten_telescope_data_vectorized(
     # A telescope absent from DispTelList_T is not a zero-sized image.  Keep it
     # explicitly missing so sorting and the XGBoost missing-value path cannot
     # learn a detector-slot/observing-condition proxy.
-    size_data = np.where(active_mask, size_data, np.nan)
+    if classification_mode:
+        size_data = np.where(active_mask, size_data, np.nan)
     size_data = _clip_size_array(size_data)
 
     core_x, core_y = _get_core_arrays(df)
 
     # Sorting by mirror area (desc; proxy for telescope type), then size (desc)
-    sort_indices = _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id)
+    if classification_mode:
+        sort_indices = _compute_size_area_sort_indices(
+            size_data,
+            active_mask,
+            tel_config,
+            max_tel_id,
+            active_first=True,
+        )
+    else:
+        # Keep the historical call signature for regression callers and
+        # downstream monkeypatches.
+        sort_indices = _compute_size_area_sort_indices(
+            size_data, active_mask, tel_config, max_tel_id
+        )
 
     # Determine which telescope positions to keep (for feature reduction)
     if max_tel_per_type is not None and tel_config is not None:
@@ -540,14 +555,15 @@ def flatten_telescope_data_vectorized(
             )
             # Geometry is useful only for an active image; inactive slots must
             # not become a stable class/domain indicator.
-            for key in tuple(flat_features):
-                if key.startswith(f"{var}_"):
-                    sorted_tel = int(key.rsplit("_", 1)[1])
-                    flat_features[key] = np.where(
-                        active_mask[np.arange(n_evt), sort_indices[:, sorted_tel]],
-                        flat_features[key],
-                        np.nan,
-                    )
+            if classification_mode:
+                for key in tuple(flat_features):
+                    if key.startswith(f"{var}_"):
+                        sorted_tel = int(key.rsplit("_", 1)[1])
+                        flat_features[key] = np.where(
+                            active_mask[np.arange(n_evt), sort_indices[:, sorted_tel]],
+                            flat_features[key],
+                            np.nan,
+                        )
             continue
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
@@ -564,7 +580,7 @@ def flatten_telescope_data_vectorized(
                 data, index_list_for_remapping, max_tel_id, n_evt
             )
 
-        if var != "tel_active":
+        if classification_mode and var != "tel_active":
             data_normalized = np.where(active_mask, data_normalized, np.nan)
 
         # All variables are now in telescope-ID space; apply sorting and flatten uniformly
@@ -651,7 +667,9 @@ def _get_core_arrays(df):
     return core_x, core_y
 
 
-def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id):
+def _compute_size_area_sort_indices(
+    size_data, active_mask, tel_config, max_tel_id, active_first=False
+):
     """Compute sorting indices: mirror area (desc) then size (desc).
 
     Missing telescopes (NaN size or no mirror area) are sorted to the end.
@@ -694,14 +712,20 @@ def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_
             size_valid = 0 if not np.isnan(size_val) else 1
             area_key = -area if area_valid == 0 else 0.0
             size_key = -size_val if size_valid == 0 else 0.0
-            # Active images always precede inactive detector slots.  This keeps
-            # slot ordering deterministic without turning missing telescopes
-            # into a large/small-image classification feature.
-            tel_entries.append(
-                (tel_idx, 0 if active else 1, area_valid, area_key, size_valid, size_key)
-            )
+            if active_first:
+                # Classification-only safeguard: active images precede
+                # inactive detector slots without exposing slot activity.
+                tel_entries.append(
+                    (tel_idx, 0 if active else 1, area_valid, area_key, size_valid, size_key)
+                )
+            else:
+                # Preserve the historical regression ordering exactly.
+                tel_entries.append((tel_idx, area_valid, area_key, size_valid, size_key))
 
-        tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4], x[5]))
+        if active_first:
+            tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4], x[5]))
+        else:
+            tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4]))
         sort_indices[evt_idx] = np.array([t[0] for t in tel_entries])
 
     return sort_indices
@@ -968,6 +992,7 @@ def load_training_data(model_configs, file_list, analysis_type):
     pandas.DataFrame
         Flattened DataFrame ready for training.
     """
+    classification_mode = analysis_type == "classification"
     max_events = model_configs.get("max_events", None)
     random_state = model_configs.get("random_state", None)
     memory_profile = model_configs.get("memory_profile", False)
@@ -983,7 +1008,7 @@ def load_training_data(model_configs, file_list, analysis_type):
         _logger.info(f"Adding zenith binning: {model_configs.get('zenith_bins_deg', [])}")
 
     input_files = utils.read_input_file_list(file_list)
-    if not input_files:
+    if classification_mode and not input_files:
         raise ValueError(f"Input file list is empty: {file_list}")
 
     tmva_style = model_configs.get("tmva_style", False)
@@ -998,17 +1023,22 @@ def load_training_data(model_configs, file_list, analysis_type):
     else:
         branch_list = features_module.features(analysis_type, training=True)
     _logger.info(f"Branch list: {branch_list}")
-    if max_events is not None and max_events > 0:
+    if classification_mode and max_events is not None and max_events > 0:
         # Reserve a bounded quota per file, then perform one deterministic
         # final sample below.  Integer floor division used to turn a small
         # global cap into zero (which silently disabled sampling).
         max_events_per_file = max(1, int(np.ceil(max_events / len(input_files))))
     else:
-        max_events_per_file = None
+        if max_events is not None and max_events > 0:
+            # Preserve the historical regression quota behavior.
+            max_events_per_file = max_events // len(input_files)
+        else:
+            max_events_per_file = None
     _logger.info(f"Max events per file: {max_events_per_file}")
 
-    # Reuse/validate across signal and background loads.
-    tel_config = model_configs.get("tel_config")
+    # Classification reuses/validates configuration across signal/background;
+    # regression retains its historical first-file initialization.
+    tel_config = model_configs.get("tel_config") if classification_mode else None
     dfs = []
     executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
     total_files = len(input_files)
@@ -1024,25 +1054,31 @@ def load_training_data(model_configs, file_list, analysis_type):
                     tel_config = current_tel_config
                     model_configs["tel_config"] = tel_config
                 else:
-                    # A model cannot have a stable feature schema if telescope
-                    # IDs/areas change between input files.  The old code
-                    # silently replaced the configuration when max_tel_id grew.
-                    def _config_signature(config):
-                        return (
-                            int(config["max_tel_id"]),
-                            tuple(int(v) for v in config.get("tel_ids", [])),
-                            tuple(str(v) for v in config.get("tel_types", [])),
-                            tuple(
-                                float(v)
-                                for v in config.get("mirror_area", config.get("mirror_areas", []))
-                            ),
-                        )
+                    if classification_mode:
+                        # A classification model cannot have a stable feature
+                        # schema if telescope IDs/areas change between files.
+                        def _config_signature(config):
+                            return (
+                                int(config["max_tel_id"]),
+                                tuple(int(v) for v in config.get("tel_ids", [])),
+                                tuple(str(v) for v in config.get("tel_types", [])),
+                                tuple(
+                                    float(v)
+                                    for v in config.get(
+                                        "mirror_area", config.get("mirror_areas", [])
+                                    )
+                                ),
+                            )
 
-                    if _config_signature(current_tel_config) != _config_signature(tel_config):
-                        raise ValueError(
-                            "Classification/training input files have incompatible telescope "
-                            f"configurations: {input_files[0]} versus {f}."
-                        )
+                        if _config_signature(current_tel_config) != _config_signature(tel_config):
+                            raise ValueError(
+                                "Classification/training input files have incompatible "
+                                f"telescope configurations: {input_files[0]} versus {f}."
+                            )
+                    elif current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
+                        # Preserve the historical regression behavior.
+                        tel_config = current_tel_config
+                        model_configs["tel_config"] = tel_config
 
                 _logger.info(f"Processing file: {f} (file {file_idx}/{total_files})")
                 tree = root_file["data"]
@@ -1053,8 +1089,12 @@ def load_training_data(model_configs, file_list, analysis_type):
                 raw_reservoir_chunks = []
                 reservoir_priorities = None
                 file_dfs = []
-                rng = np.random.default_rng(
-                    None if random_state is None else int(random_state) + file_idx - 1
+                rng = (
+                    np.random.default_rng(
+                        None if random_state is None else int(random_state) + file_idx - 1
+                    )
+                    if classification_mode
+                    else np.random.default_rng(random_state)
                 )
                 chunk_iterator = tree.iterate(
                     resolved_branch_list,
@@ -1167,12 +1207,14 @@ def load_training_data(model_configs, file_list, analysis_type):
                     file_df,
                     enabled=memory_profile,
                 )
-        except (FileNotFoundError, KeyError, ValueError):
-            raise
         except Exception as e:
-            raise RuntimeError(f"Error opening or reading file {f}: {e}") from e
+            if classification_mode:
+                if isinstance(e, (FileNotFoundError, KeyError, ValueError)):
+                    raise
+                raise RuntimeError(f"Error opening or reading file {f}: {e}") from e
+            raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
-    if not dfs:
+    if classification_mode and not dfs:
         raise ValueError("No data loaded from input files.")
     df_final = pd.concat(dfs, ignore_index=True)
     if analysis_type == "classification" and max_events is not None and max_events > 0:

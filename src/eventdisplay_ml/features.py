@@ -104,7 +104,8 @@ def classification_feature_columns(columns, profile="robust", ignore_ze_bin=Fals
         # quantities) should still be usable in isolated unit tests.  Real
         # flattened frames contain at least one physics/activity name; fail
         # loudly instead of silently falling back to nuisance columns there.
-        if not selected:
+        morphology_selected = [name for name in selected if name != "ze_bin"]
+        if not morphology_selected:
             looks_like_flattened_physics = any(
                 name.startswith(("tel_", "ArrayPointing", "Xcore", "Ycore"))
                 or name in {"DispNImages", "Erec", "size"}
