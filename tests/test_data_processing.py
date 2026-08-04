@@ -6,14 +6,14 @@ import pandas as pd
 from eventdisplay_ml.data_processing import energy_interpolation_bins, zenith_in_bins
 
 
-def test_zenith_in_bins_numeric_edges_clips_and_handles_boundaries():
-    """Numeric bin edges should clip out-of-range values and place edge values consistently."""
+def test_zenith_in_bins_numeric_edges_marks_invalid_and_handles_boundaries():
+    """Numeric bin edges should mark out-of-range values instead of clipping them."""
     zenith_angles = np.array([-5.0, 0.0, 9.9, 10.0, 19.9, 20.0, 42.0], dtype=float)
     bins = [0.0, 10.0, 20.0, 30.0]
 
     result = zenith_in_bins(zenith_angles, bins)
 
-    np.testing.assert_array_equal(result, np.array([0, 0, 0, 1, 1, 2, 2], dtype=np.int32))
+    np.testing.assert_array_equal(result, np.array([-1, 0, 0, 1, 1, 2, -1], dtype=np.int32))
     assert result.dtype == np.int32
 
 
@@ -28,7 +28,7 @@ def test_zenith_in_bins_dict_bins_matches_numeric_definition():
 
     result = zenith_in_bins(zenith_angles, dict_bins)
 
-    np.testing.assert_array_equal(result, np.array([0, 0, 0, 1, 1, 2, 2], dtype=np.int32))
+    np.testing.assert_array_equal(result, np.array([-1, 0, 0, 1, 1, 2, -1], dtype=np.int32))
     assert result.dtype == np.int32
 
 

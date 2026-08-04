@@ -1556,7 +1556,12 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
 
 
 def zenith_in_bins(zenith_angles, bins):
-    """Apply zenith binning based on zenith angles and given bin edges."""
+    """Apply zenith binning, marking out-of-range angles with ``-1``.
+
+    The final edge is included in the last bin.  Angles below the first edge,
+    above the final edge, or non-finite angles are invalid and receive ``-1``;
+    they are never silently assigned to an edge bin.
+    """
     if bins is None or len(bins) < 2:
         raise ValueError("At least two zenith-bin edges are required.")
     if isinstance(bins[0], dict):
@@ -1568,7 +1573,14 @@ def zenith_in_bins(zenith_angles, bins):
         raise ValueError("Zenith-bin edges must be a finite one-dimensional sequence.")
     if np.any(np.diff(bins) <= 0):
         raise ValueError("Zenith-bin edges must be strictly increasing.")
-    idx = np.clip(np.digitize(zenith_angles, bins) - 1, 0, len(bins) - 2)
+    zenith_angles = np.asarray(zenith_angles, dtype=float)
+    idx = np.full(zenith_angles.shape, -1, dtype=np.int32)
+    valid = np.isfinite(zenith_angles) & (zenith_angles >= bins[0]) & (zenith_angles <= bins[-1])
+    if np.any(valid):
+        idx[valid] = np.minimum(
+            np.digitize(zenith_angles[valid], bins) - 1,
+            len(bins) - 2,
+        )
     return idx.astype(np.int32)
 
 

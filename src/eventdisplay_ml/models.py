@@ -214,6 +214,9 @@ def load_classification_models(model_prefix, model_name):
             model_data.get("energy_bins_log10_tev"),
             file,
         )
+        models[e_bin]["energy_center"] = 0.5 * (
+            float(energy_bin_metadata["E_min"]) + float(energy_bin_metadata["E_max"])
+        )
         par = _update_parameters(
             par,
             model_data.get("zenith_bins_deg"),
@@ -323,7 +326,20 @@ def _validate_energy_bin_metadata(energy_bin, model_file):
             f"missing required key(s): {missing}."
         )
 
-    return energy_bin
+    try:
+        e_min = float(energy_bin["E_min"])
+        e_max = float(energy_bin["E_max"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Classification model file "
+            f"'{model_file}' has non-numeric energy-bin metadata for 'E_min'/'E_max'."
+        ) from exc
+    if not np.isfinite(e_min) or not np.isfinite(e_max) or e_min >= e_max:
+        raise ValueError(
+            "Classification model file "
+            f"'{model_file}' has invalid energy-bin metadata: require finite E_min < E_max."
+        )
+    return {"E_min": e_min, "E_max": e_max}
 
 
 def _update_parameters(full_params, zenith_bins, energy_bin, e_bin_number):
@@ -532,6 +548,18 @@ def apply_classification_models(df, model_configs, threshold_keys):
         if e_bin_lo == -1 or e_bin_hi == -1:
             _logger.warning("Skipping events with invalid energy interpolation bins")
             continue
+        if "ze_bin" in group_df:
+            zenith_values = pd.to_numeric(group_df["ze_bin"], errors="coerce")
+            valid_zenith = zenith_values.notna() & (zenith_values >= 0)
+            if not valid_zenith.all():
+                _logger.warning(
+                    "Skipping %d events with invalid/out-of-range zenith bins during "
+                    "classification apply",
+                    int((~valid_zenith).sum()),
+                )
+                group_df = group_df.loc[valid_zenith]
+                if group_df.empty:
+                    continue
 
         _logger.info(
             "Processing %d events with interpolation bins (%d, %d)",
@@ -564,11 +592,19 @@ def apply_classification_models(df, model_configs, threshold_keys):
         flatten_hi = flatten_data.loc[:, models[resolved_hi]["features"]]
 
         class_probs_lo = model_lo.predict_proba(flatten_lo)[:, 1]
-        if e_bin_lo == e_bin_hi:
+        interpolate_models = resolved_lo != resolved_hi
+        alpha = _classification_interpolation_alpha(
+            group_df,
+            e_bin_lo,
+            e_bin_hi,
+            resolved_lo,
+            resolved_hi,
+            models,
+        )
+        if not interpolate_models:
             class_probs = class_probs_lo
         else:
             class_probs_hi = model_hi.predict_proba(flatten_hi)[:, 1]
-            alpha = group_df["e_alpha"].to_numpy(dtype=np.float32)
             class_probs = (1.0 - alpha) * class_probs_lo + alpha * class_probs_hi
         class_probability[group_df.index] = class_probs
 
@@ -579,17 +615,68 @@ def apply_classification_models(df, model_configs, threshold_keys):
                 thr_lo = thresholds_lo.get(eff)
                 if thr_lo is None:
                     continue
-                if e_bin_lo == e_bin_hi:
+                if not interpolate_models:
                     threshold = thr_lo
                 else:
                     thr_hi = thresholds_hi.get(eff)
                     if thr_hi is None:
                         continue
-                    alpha = group_df["e_alpha"].to_numpy(dtype=np.float32)
                     threshold = (1.0 - alpha) * thr_lo + alpha * thr_hi
                 is_gamma[eff][group_df.index] = (class_probs >= threshold).astype(np.uint8)
 
     return class_probability, is_gamma
+
+
+def _classification_interpolation_alpha(
+    group_df,
+    requested_lo,
+    requested_hi,
+    resolved_lo,
+    resolved_hi,
+    models,
+):
+    """Return interpolation weights in the energy coordinate of resolved models.
+
+    For complete model grids, the precomputed ``e_alpha`` is already correct.
+    When a requested bin is borrowed, recompute the coordinate from the event
+    energy and the actual model centers so scores and calibrated thresholds use
+    the same models and energy geometry.
+    """
+    if resolved_lo == resolved_hi:
+        return np.zeros(len(group_df), dtype=np.float32)
+
+    fallback_alpha = group_df["e_alpha"].to_numpy(dtype=np.float32)
+    borrowed = (requested_lo, requested_hi) != (resolved_lo, resolved_hi)
+    if not borrowed:
+        return fallback_alpha
+
+    center_lo = models[resolved_lo].get("energy_center")
+    center_hi = models[resolved_hi].get("energy_center")
+    if (
+        center_lo is None
+        or center_hi is None
+        or not np.isfinite(center_lo)
+        or not np.isfinite(center_hi)
+        or center_hi <= center_lo
+    ):
+        raise ValueError(
+            "Cannot interpolate borrowed classification energy-bin models without "
+            "finite energy-center metadata."
+        )
+    if "Erec" not in group_df:
+        raise ValueError(
+            "Cannot interpolate borrowed classification energy-bin models without Erec."
+        )
+
+    erec = pd.to_numeric(group_df["Erec"], errors="coerce").to_numpy(dtype=np.float64)
+    valid_energy = np.isfinite(erec) & (erec > 0.0)
+    if not np.all(valid_energy):
+        raise ValueError(
+            "Cannot interpolate borrowed classification energy-bin models for events "
+            "with non-positive or non-finite Erec."
+        )
+    alpha = (np.log10(erec) - float(center_lo)) / float(center_hi - center_lo)
+    return np.clip(alpha, 0.0, 1.0).astype(np.float32)
 
 
 def _resolve_classification_bin(models, requested_bin):
@@ -1091,6 +1178,14 @@ def train_classification(df, model_configs):
     ze_data = full_df["ze_bin"] if "ze_bin" in full_df.columns else None
     if model_configs.get("balance_class_zenith_weights", False) and ze_data is None:
         raise ValueError("Class/zenith balancing requires the derived ze_bin column.")
+    if ze_data is not None:
+        zenith_values = pd.to_numeric(ze_data, errors="coerce")
+        invalid_zenith = zenith_values.isna() | (zenith_values < 0)
+        if invalid_zenith.any():
+            raise ValueError(
+                "Classification training contains out-of-range or invalid zenith bins: "
+                f"{int(invalid_zenith.sum())} events."
+            )
 
     profile = model_configs.get("feature_profile", "robust")
     feature_columns = features.classification_feature_columns(
@@ -1166,9 +1261,16 @@ def train_classification(df, model_configs):
     weights_train = None
     weights_validation = None
     if model_configs.get("balance_class_zenith_weights", False):
-        weights_train = _class_zenith_balance_weights(full_df.iloc[train_idx], y_train)
+        target_ze_fraction = _class_zenith_target_fraction(full_df.iloc[train_idx])
+        weights_train = _class_zenith_balance_weights(
+            full_df.iloc[train_idx],
+            y_train,
+            target_ze_fraction=target_ze_fraction,
+        )
         weights_validation = _class_zenith_balance_weights(
-            full_df.iloc[validation_idx], y_validation
+            full_df.iloc[validation_idx],
+            y_validation,
+            target_ze_fraction=target_ze_fraction,
         )
         _logger.info(
             "Using class/zenith sample weights "
@@ -1371,12 +1473,71 @@ def _classification_nuisance_diagnostics(df, labels):
     return diagnostics
 
 
-def _class_zenith_balance_weights(x_train, y_train, weight_cap=10.0, smoothing=1.0):
+def _class_zenith_target_fraction(x_train):
+    """Return the fixed zenith target distribution derived from training data."""
+    if "ze_bin" not in x_train.columns:
+        raise ValueError("Cannot derive a zenith target distribution without ze_bin.")
+    ze_bins = pd.to_numeric(x_train["ze_bin"], errors="coerce")
+    valid = ze_bins.notna() & (ze_bins >= 0)
+    if not valid.any():
+        raise ValueError("Cannot derive a zenith target distribution with no valid ze_bin.")
+    counts = ze_bins[valid].value_counts().sort_index().astype(float)
+    return counts / counts.sum()
+
+
+def _normalize_capped_weights(weights, weight_cap):
+    """Normalize positive weights to mean one while enforcing a hard upper bound."""
+    if not np.isfinite(weight_cap) or weight_cap <= 0:
+        raise ValueError("weight_cap must be a finite positive number.")
+    values = np.asarray(weights, dtype=np.float64)
+    if values.size == 0:
+        return values.astype(np.float32)
+    values = np.nan_to_num(values, nan=0.0, posinf=float(weight_cap), neginf=0.0)
+    values = np.clip(values, 0.0, float(weight_cap))
+    if not np.any(values):
+        return values.astype(np.float32)
+    if weight_cap < 1.0:
+        _logger.warning(
+            "weight_cap=%s is below one; returning capped weights without mean-one normalization.",
+            weight_cap,
+        )
+        return values.astype(np.float32)
+    if np.count_nonzero(values) * float(weight_cap) < values.size:
+        raise ValueError(
+            "Cannot normalize weights to mean one while enforcing weight_cap: "
+            "too many zero-weight events."
+        )
+
+    target_sum = float(values.size)
+    lower, upper = 0.0, 1.0
+    while np.minimum(values * upper, weight_cap).sum() < target_sum:
+        upper *= 2.0
+    for _ in range(64):
+        scale = 0.5 * (lower + upper)
+        if np.minimum(values * scale, weight_cap).sum() < target_sum:
+            lower = scale
+        else:
+            upper = scale
+    return np.minimum(values * upper, float(weight_cap)).astype(np.float32)
+
+
+def _class_zenith_balance_weights(
+    x_train,
+    y_train,
+    weight_cap=10.0,
+    smoothing=1.0,
+    target_ze_fraction=None,
+):
     """Compute capped, smoothed weights equalizing class distributions over ``ze_bin``.
 
     ``smoothing`` prevents a single sparse background bin from receiving an
     arbitrarily large weight.  The cap is an explicit robustness guard for the
     sparse-background regime common in VERITAS training lists.
+
+    ``target_ze_fraction`` optionally supplies the target distribution derived
+    from the training split.  Passing it when weighting validation data keeps
+    evaluation on the same target population rather than recalculating a
+    distribution from validation composition.
     """
     if "ze_bin" not in x_train.columns:
         raise ValueError(
@@ -1385,7 +1546,7 @@ def _class_zenith_balance_weights(x_train, y_train, weight_cap=10.0, smoothing=1
 
     labels = pd.Series(y_train, index=x_train.index, name="label")
     ze_bins = pd.Series(x_train["ze_bin"], index=x_train.index, name="ze_bin")
-    valid = labels.notna() & ze_bins.notna()
+    valid = labels.notna() & ze_bins.notna() & (ze_bins >= 0)
     n_invalid = int((~valid).sum())
     if n_invalid:
         _logger.warning(
@@ -1399,9 +1560,16 @@ def _class_zenith_balance_weights(x_train, y_train, weight_cap=10.0, smoothing=1
     if total_valid == 0:
         raise ValueError("Cannot apply class/zenith balancing with no valid training events.")
 
-    all_ze = np.sort(ze_valid.unique())
-    target_counts = ze_valid.value_counts().reindex(all_ze, fill_value=0).astype(float)
-    target_fraction = target_counts / target_counts.sum()
+    if target_ze_fraction is None:
+        target_fraction = _class_zenith_target_fraction(x_train)
+    else:
+        target_fraction = pd.Series(target_ze_fraction, dtype=float)
+        target_fraction = target_fraction.replace([np.inf, -np.inf], np.nan).dropna()
+        target_fraction = target_fraction[target_fraction > 0]
+        if target_fraction.empty:
+            raise ValueError("The zenith target distribution must contain positive mass.")
+        target_fraction = target_fraction / target_fraction.sum()
+    all_ze = np.asarray(target_fraction.index)
     weights = pd.Series(1.0, index=x_train.index, dtype=np.float64)
 
     _logger.info("Class/zenith balancing target distribution:")
@@ -1442,12 +1610,7 @@ def _class_zenith_balance_weights(x_train, y_train, weight_cap=10.0, smoothing=1
         if class_sum > 0:
             weights.loc[class_mask] *= target_class_total / class_sum
 
-    weight_values = np.clip(weights.to_numpy(dtype=np.float32), 0.0, float(weight_cap))
-    mean_weight = weight_values.mean()
-    if mean_weight > 0:
-        weight_values /= mean_weight
-
-    return weight_values
+    return _normalize_capped_weights(weights.to_numpy(dtype=np.float64), weight_cap)
 
 
 def _log_energy_bin_counts(df):

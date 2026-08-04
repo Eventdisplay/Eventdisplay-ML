@@ -122,6 +122,48 @@ def test_class_zenith_balance_weights_equalize_class_zenith_distributions():
         assert ze1 / (ze0 + ze1) == pytest.approx(0.5)
 
 
+def test_class_zenith_balance_weights_enforce_hard_cap():
+    """Capped balancing weights must remain bounded after normalization."""
+    x_train = pd.DataFrame(
+        {
+            "f1": np.arange(20, dtype=np.float32),
+            "ze_bin": [0] * 18 + [1] * 2,
+        }
+    )
+    y_train = pd.Series([1] * 10 + [0] * 10, dtype=np.int32)
+
+    weights = models._class_zenith_balance_weights(x_train, y_train, weight_cap=1.5)
+
+    assert weights.max() <= 1.5 + 1e-7
+    assert weights.mean() == pytest.approx(1.0)
+
+
+def test_class_zenith_balance_weights_accept_training_target_for_validation():
+    """Validation weights use the training zenith target rather than validation priors."""
+    train = pd.DataFrame({"ze_bin": [0] * 8 + [1] * 2})
+    validation = pd.DataFrame({"ze_bin": [0] * 2 + [1] * 8})
+    labels = pd.Series([0] * 5 + [1] * 5)
+    target = models._class_zenith_target_fraction(train)
+
+    target_weights = models._class_zenith_balance_weights(
+        validation,
+        labels,
+        target_ze_fraction=target,
+    )
+    validation_weights = models._class_zenith_balance_weights(validation, labels)
+
+    assert not np.allclose(target_weights, validation_weights)
+
+
+def test_train_classification_rejects_invalid_zenith_bins():
+    """Invalid zenith routing states must fail before model fitting."""
+    signal = pd.DataFrame({"f1": [1.0, 2.0, 3.0], "ze_bin": [-1, 0, 0]})
+    background = pd.DataFrame({"f1": [-1.0, -2.0, -3.0], "ze_bin": [0, 0, 0]})
+
+    with pytest.raises(ValueError, match="out-of-range or invalid zenith bins"):
+        models.train_classification([signal, background], {"models": {}})
+
+
 def test_train_classification_applies_class_zenith_weights():
     """The optional class/zenith balance weights should be passed to XGBoost."""
     signal_df = pd.DataFrame(
