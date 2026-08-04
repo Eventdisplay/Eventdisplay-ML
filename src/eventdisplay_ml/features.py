@@ -47,102 +47,44 @@ def target_features(analysis_type):
     raise ValueError(f"Unknown analysis type: {analysis_type}")
 
 
-def classification_feature_columns(columns, profile="robust", ignore_ze_bin=False):
-    """Return safe classification columns from an already flattened frame.
-
-    The profile is applied after flattening, so it works with both VERITAS fixed
-    telescope indexing and the CTAO variable-length compatibility path.  Source
-    provenance and routing columns are deliberately never exposed to XGBoost.
-    """
+def classification_feature_columns(columns, profile="extended", ignore_ze_bin=False):
+    """Select classification features from a flattened data frame."""
     if profile not in {"robust", "extended"}:
         raise ValueError("classification feature profile must be 'robust' or 'extended'")
 
-    reserved = {
-        "label",
-        "Erec",
-        "ErecS",
-        "__source_file_id",
-        "__source_row",
-        "__source_file",
-    }
-    available = list(columns)
-    routing_or_activity = {
-        "label",
-        "Erec",
-        "ErecS",
-        "__source_file_id",
-        "__source_row",
-        "__source_file",
-    }
-
-    def is_excluded_routing_or_activity(name):
-        return name in routing_or_activity or name.startswith(
-            (
-                "__",
-                "tel_active_",
-                "mirror_area_",
-                "tel_rel_x_",
-                "tel_rel_y_",
-                "fpointing_dx_",
-                "fpointing_dy_",
-            )
-        )
-
-    if profile == "extended":
-        selected = [name for name in available if not is_excluded_routing_or_activity(name)]
-    else:
-        # Array/stereo quantities plus per-telescope image morphology.  The
-        # latter are essential gamma/hadron information; detector activity,
-        # telescope geometry and pointing remain excluded below.
-        stable = {
+    selected = [
+        name
+        for name in columns
+        if name not in {"label", "Erec", "ErecS"} and not name.startswith("__")
+    ]
+    if profile == "robust":
+        event_features = {
             "MSCW",
             "MSCL",
             "EChi2S",
             "EmissionHeight",
             "EmissionHeightChi2",
             "Core_Distance",
-            # Coarse zenith conditioning is important because atmospheric
-            # depth/projection changes the image morphology.  It can be
-            # removed explicitly with --ignore_ze_bin for a nuisance test.
             "ze_bin",
         }
-        image_bases = {
-            "size",
-            "cosphi",
-            "sinphi",
-            "loss",
-            "dist",
-            "width",
-            "length",
-            "asym",
-            "tgrad_x",
-        }
+        telescope_features = (
+            "cosphi_",
+            "sinphi_",
+            "loss_",
+            "dist_",
+            "width_",
+            "length_",
+            "asym_",
+            "tgrad_x_",
+        )
         selected = [
             name
-            for name in available
-            if name in stable or any(name.startswith(f"{base}_") for base in image_bases)
+            for name in selected
+            if name in event_features or name.startswith(telescope_features)
         ]
-        # Small synthetic/unit-test frames (and old files missing derived
-        # quantities) should still be usable in isolated unit tests.  Real
-        # flattened frames contain at least one physics/activity name; fail
-        # loudly instead of silently falling back to nuisance columns there.
-        morphology_selected = [name for name in selected if name != "ze_bin"]
-        if not morphology_selected:
-            looks_like_flattened_physics = any(
-                name.startswith(("tel_", "ArrayPointing", "Xcore", "Ycore"))
-                or name in {"DispNImages", "Erec", "size"}
-                for name in available
-            )
-            if looks_like_flattened_physics:
-                raise ValueError(
-                    "Robust classification profile has no available stable morphology features."
-                )
-            selected = [name for name in available if name not in reserved]
-            if not ignore_ze_bin and "ze_bin" in available and "ze_bin" not in selected:
-                selected.append("ze_bin")
 
-    if ignore_ze_bin and "ze_bin" in selected:
-        selected.remove("ze_bin")
+    if ignore_ze_bin:
+        selected = [name for name in selected if name != "ze_bin"]
     if not selected:
         raise ValueError(f"No usable classification features for profile '{profile}'.")
     return selected

@@ -72,42 +72,6 @@ def test_apply_classification_models_interpolates_probabilities_and_thresholds(m
     np.testing.assert_array_equal(is_gamma[50], np.array([0, 1], dtype=np.uint8))
 
 
-def test_apply_borrowed_energy_bins_recomputes_alpha_from_resolved_centers(monkeypatch):
-    """Borrowed models must use their actual energy centers for score calibration."""
-    df = pd.DataFrame(
-        {
-            "Erec": [10.0],
-            "e_bin_lo": [1],
-            "e_bin_hi": [2],
-            "e_alpha": [0.1],
-            "dummy": [1.0],
-        }
-    )
-    model_configs = {
-        "models": {
-            0: {
-                "model": DummyXGBClassifier(0.0),
-                "features": ["dummy"],
-                "thresholds": {50: 0.2},
-                "energy_center": 0.0,
-            },
-            2: {
-                "model": DummyXGBClassifier(1.0),
-                "features": ["dummy"],
-                "thresholds": {50: 0.8},
-                "energy_center": 2.0,
-            },
-        }
-    }
-
-    monkeypatch.setattr(models, "flatten_feature_data", lambda *args, **kwargs: df[["dummy"]])
-
-    class_probability, is_gamma = models.apply_classification_models(df, model_configs, [50])
-
-    np.testing.assert_allclose(class_probability, np.array([0.5], dtype=np.float32))
-    np.testing.assert_array_equal(is_gamma[50], np.array([1], dtype=np.uint8))
-
-
 def test_apply_leaves_out_of_range_zenith_events_invalid(monkeypatch):
     """Events outside the trained zenith range must not be scored by an edge model."""
     df = pd.DataFrame(

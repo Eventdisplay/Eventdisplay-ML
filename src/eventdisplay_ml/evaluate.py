@@ -5,7 +5,6 @@ import logging
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from scipy.stats import beta as beta_distribution
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -23,15 +22,11 @@ def _efficiency_dataframe(name, y_pred_proba, y_test, thresholds, context_label=
 
     eff_signal = []
     eff_background = []
-    background_survivor_counts = []
 
     for t in thresholds:
         pred = y_pred_proba >= t
-        n_signal_survivors = int(((pred) & (y_test == 1)).sum())
-        n_background_survivors = int(((pred) & (y_test == 0)).sum())
-        background_survivor_counts.append(n_background_survivors)
-        eff_signal.append(n_signal_survivors / n_signal if n_signal else 0.0)
-        eff_background.append(n_background_survivors / n_background if n_background else 0.0)
+        eff_signal.append(((pred) & (y_test == 1)).sum() / n_signal if n_signal else 0)
+        eff_background.append(((pred) & (y_test == 0)).sum() / n_background if n_background else 0)
         _logger.info(
             f"{name}{context_label} Threshold: {t:.2f} | "
             f"Signal Efficiency: {eff_signal[-1]:.4f} | "
@@ -40,12 +35,6 @@ def _efficiency_dataframe(name, y_pred_proba, y_test, thresholds, context_label=
 
     eff_signal = np.asarray(eff_signal, dtype=float)
     eff_background = np.asarray(eff_background, dtype=float)
-    background_upper_limit = np.full(len(thresholds), np.nan, dtype=float)
-    if n_background:
-        for i, k in enumerate(background_survivor_counts):
-            background_upper_limit[i] = (
-                1.0 if k >= n_background else beta_distribution.ppf(0.95, k + 1, n_background - k)
-            )
 
     return pd.DataFrame(
         {
@@ -54,7 +43,6 @@ def _efficiency_dataframe(name, y_pred_proba, y_test, thresholds, context_label=
             "background_efficiency": eff_background,
             "n_signal": n_signal * eff_signal,
             "n_background": n_background * eff_background,
-            "background_efficiency_upper95": background_upper_limit,
         }
     )
 
@@ -95,37 +83,6 @@ def evaluation_efficiency(name, model, x_test, y_test, return_by_zenith=False, z
         )
 
     return efficiency_all, efficiencies_by_zenith
-
-
-def classification_thresholds_from_signal(signal_scores, efficiencies=(0.5, 0.7, 0.8, 0.9, 0.95)):
-    """Calibrate score thresholds to measured held-out signal efficiency.
-
-    Quantiles avoid treating XGBoost's score as a globally calibrated
-    probability.  ``method='higher'`` ensures ties do not exceed the requested
-    operating point.
-    """
-    scores = np.asarray(signal_scores, dtype=float)
-    scores = scores[np.isfinite(scores)]
-    if scores.size == 0:
-        raise ValueError("Cannot calibrate classification thresholds without signal scores.")
-    targets = np.asarray(efficiencies, dtype=float)
-    if np.any((targets <= 0) | (targets >= 1)):
-        raise ValueError("Signal efficiencies must be strictly between zero and one.")
-    thresholds = []
-    for efficiency in targets:
-        quantile = 1.0 - efficiency
-        try:
-            threshold = np.quantile(scores, quantile, method="higher")
-        except TypeError:  # NumPy < 1.22 compatibility
-            threshold = np.quantile(scores, quantile, interpolation="higher")
-        thresholds.append(float(np.clip(threshold, 0.0, 1.0)))
-    return pd.DataFrame(
-        {
-            "signal_efficiency_target": targets,
-            "threshold": thresholds,
-            "n_signal": len(scores),
-        }
-    )
 
 
 def evaluate_classification_model(model, x_test, y_test, df, x_cols, name):

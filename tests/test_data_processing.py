@@ -33,6 +33,12 @@ def test_zenith_in_bins_dict_bins_matches_numeric_definition():
     assert result.dtype == np.int32
 
 
+def test_zenith_in_bins_accepts_one_dictionary_bin():
+    result = zenith_in_bins([0.0, 10.0, 20.0], [{"Ze_min": 0.0, "Ze_max": 20.0}])
+
+    np.testing.assert_array_equal(result, np.array([0, 0, 0], dtype=np.int32))
+
+
 def test_zenith_in_bins_rejects_noncontiguous_dict_bins():
     bins = [
         {"Ze_min": 0.0, "Ze_max": 10.0},
@@ -47,7 +53,7 @@ def test_zenith_in_bins_rejects_invalid_dict_bin_bounds():
         {"Ze_min": 10.0, "Ze_max": 0.0},
         {"Ze_min": 0.0, "Ze_max": 20.0},
     ]
-    with pytest.raises(ValueError, match="finite Ze_min < Ze_max"):
+    with pytest.raises(ValueError, match="strictly increasing"):
         zenith_in_bins([5.0], bins)
 
 

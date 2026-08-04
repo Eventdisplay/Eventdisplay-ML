@@ -79,6 +79,14 @@ def read_telescope_config(root_file):
     }
 
 
+def _telescope_config_signature(config):
+    """Return fields that determine the flattened classification schema."""
+    return tuple(
+        tuple(np.asarray(config[key]).tolist())
+        for key in ("tel_ids", "mirror_area", "tel_x", "tel_y")
+    )
+
+
 def _resolve_branch_aliases(tree, branch_list):
     """
     Resolve branch name aliases (e.g. R_core vs R) and drop missing optional branches.
@@ -501,20 +509,7 @@ def flatten_telescope_data_vectorized(
     core_x, core_y = _get_core_arrays(df)
 
     # Sorting by mirror area (desc; proxy for telescope type), then size (desc)
-    if classification_mode:
-        sort_indices = _compute_size_area_sort_indices(
-            size_data,
-            active_mask,
-            tel_config,
-            max_tel_id,
-            active_first=True,
-        )
-    else:
-        # Keep the historical call signature for regression callers and
-        # downstream monkeypatches.
-        sort_indices = _compute_size_area_sort_indices(
-            size_data, active_mask, tel_config, max_tel_id
-        )
+    sort_indices = _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id)
 
     # Determine which telescope positions to keep (for feature reduction)
     if max_tel_per_type is not None and tel_config is not None:
@@ -553,17 +548,6 @@ def flatten_telescope_data_vectorized(
                     sort_indices,
                 )
             )
-            # Geometry is useful only for an active image; inactive slots must
-            # not become a stable class/domain indicator.
-            if classification_mode:
-                for key in tuple(flat_features):
-                    if key.startswith(f"{var}_"):
-                        sorted_tel = int(key.rsplit("_", 1)[1])
-                        flat_features[key] = np.where(
-                            active_mask[np.arange(n_evt), sort_indices[:, sorted_tel]],
-                            flat_features[key],
-                            np.nan,
-                        )
             continue
 
         data = _to_dense_array(df[var]) if _has_field(df, var) else np.full((n_evt, n_tel), np.nan)
@@ -667,9 +651,7 @@ def _get_core_arrays(df):
     return core_x, core_y
 
 
-def _compute_size_area_sort_indices(
-    size_data, active_mask, tel_config, max_tel_id, active_first=False
-):
+def _compute_size_area_sort_indices(size_data, active_mask, tel_config, max_tel_id):
     """Compute sorting indices: mirror area (desc) then size (desc).
 
     Missing telescopes (NaN size or no mirror area) are sorted to the end.
@@ -702,7 +684,6 @@ def _compute_size_area_sort_indices(
         for tel_idx in range(max_tel_id + 1):
             area = mirror_lookup[tel_idx]
             size_val = sizes[evt_idx, tel_idx]
-            active = bool(active_mask[evt_idx, tel_idx])
             # Build sort key:
             #   1) valid area first (0), NaN area last (1)
             #   2) area descending via negative value
@@ -712,20 +693,9 @@ def _compute_size_area_sort_indices(
             size_valid = 0 if not np.isnan(size_val) else 1
             area_key = -area if area_valid == 0 else 0.0
             size_key = -size_val if size_valid == 0 else 0.0
-            if active_first:
-                # Classification-only safeguard: active images precede
-                # inactive detector slots without exposing slot activity.
-                tel_entries.append(
-                    (tel_idx, 0 if active else 1, area_valid, area_key, size_valid, size_key)
-                )
-            else:
-                # Preserve the historical regression ordering exactly.
-                tel_entries.append((tel_idx, area_valid, area_key, size_valid, size_key))
+            tel_entries.append((tel_idx, area_valid, area_key, size_valid, size_key))
 
-        if active_first:
-            tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4], x[5]))
-        else:
-            tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4]))
+        tel_entries.sort(key=lambda x: (x[1], x[2], x[3], x[4]))
         sort_indices[evt_idx] = np.array([t[0] for t in tel_entries])
 
     return sort_indices
@@ -1038,8 +1008,6 @@ def load_training_data(model_configs, file_list, analysis_type):
             max_events_per_file = None
     _logger.info(f"Max events per file: {max_events_per_file}")
 
-    # Classification reuses/validates configuration across signal/background;
-    # regression retains its historical first-file initialization.
     tel_config = model_configs.get("tel_config") if classification_mode else None
     dfs = []
     executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
@@ -1057,28 +1025,14 @@ def load_training_data(model_configs, file_list, analysis_type):
                     model_configs["tel_config"] = tel_config
                 else:
                     if classification_mode:
-                        # A classification model cannot have a stable feature
-                        # schema if telescope IDs/areas change between files.
-                        def _config_signature(config):
-                            return (
-                                int(config["max_tel_id"]),
-                                tuple(int(v) for v in config.get("tel_ids", [])),
-                                tuple(str(v) for v in config.get("tel_types", [])),
-                                tuple(
-                                    float(v)
-                                    for v in config.get(
-                                        "mirror_area", config.get("mirror_areas", [])
-                                    )
-                                ),
-                            )
-
-                        if _config_signature(current_tel_config) != _config_signature(tel_config):
+                        if _telescope_config_signature(
+                            current_tel_config
+                        ) != _telescope_config_signature(tel_config):
                             raise ValueError(
                                 "Classification/training input files have incompatible "
-                                f"telescope configurations: {input_files[0]} versus {f}."
+                                f"telescope configurations: {f}."
                             )
                     elif current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
-                        # Preserve the historical regression behavior.
                         tel_config = current_tel_config
                         model_configs["tel_config"] = tel_config
 
@@ -1091,13 +1045,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                 raw_reservoir_chunks = []
                 reservoir_priorities = None
                 file_dfs = []
-                rng = (
-                    np.random.default_rng(
-                        None if random_state is None else int(random_state) + file_idx - 1
-                    )
-                    if classification_mode
-                    else np.random.default_rng(random_state)
-                )
+                rng = np.random.default_rng(random_state)
                 chunk_iterator = tree.iterate(
                     resolved_branch_list,
                     cut=model_configs.get("pre_cuts", None),
@@ -1186,12 +1134,7 @@ def load_training_data(model_configs, file_list, analysis_type):
                     continue
 
                 if analysis_type == "classification":
-                    # Provenance is retained only as routing metadata and is
-                    # excluded by the feature profile before fitting.  It
-                    # enables grouped validation without rereading ROOT data.
-                    file_df["__source_file_id"] = file_idx - 1
                     file_df["__source_file"] = str(f)
-                    file_df["__source_row"] = np.arange(len(file_df), dtype=np.int64)
 
                 _logger.info(
                     f"Number of events before / after event cut: {n_before} / "
@@ -1210,23 +1153,25 @@ def load_training_data(model_configs, file_list, analysis_type):
                     enabled=memory_profile,
                 )
         except Exception as e:
-            if classification_mode:
-                if isinstance(e, (FileNotFoundError, KeyError, ValueError)):
-                    raise
-                raise RuntimeError(f"Error opening or reading file {f}: {e}") from e
+            if classification_mode and isinstance(e, (KeyError, ValueError)):
+                raise
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
     if classification_mode and not dfs:
         raise ValueError("No data loaded from input files.")
     df_final = pd.concat(dfs, ignore_index=True)
-    if analysis_type == "classification" and max_events is not None and max_events > 0:
-        if len(df_final) > max_events:
-            df_final = df_final.sample(
-                n=max_events,
-                random_state=random_state,
-                ignore_index=True,
-            )
-            _logger.info("Applied exact global classification event cap: %d", max_events)
+    if (
+        analysis_type == "classification"
+        and max_events is not None
+        and max_events > 0
+        and len(df_final) > max_events
+    ):
+        df_final = df_final.sample(
+            n=max_events,
+            random_state=random_state,
+            ignore_index=True,
+        )
+        _logger.info("Applied global classification event cap: %d", max_events)
     del dfs
     utils.log_memory_checkpoint("after final pandas concat", df_final, enabled=memory_profile)
     all_nan_columns = [col for col in df_final.columns if df_final[col].isna().all()]
@@ -1503,19 +1448,6 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
             "EChi2S": _to_numpy_1d(df["EChi2S"], np.float32),
             "EmissionHeight": _to_numpy_1d(df["EmissionHeight"], np.float32),
             "EmissionHeightChi2": _to_numpy_1d(df["EmissionHeightChi2"], np.float32),
-            # Keep routing quantities in the flattened frame for energy-bin
-            # weighting/diagnostics; feature-profile selection removes them
-            # before fitting.
-            "Erec": (
-                _to_numpy_1d(df["Erec"], np.float32)
-                if _has_field(df, "Erec")
-                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
-            ),
-            "DispNImages": (
-                _to_numpy_1d(df["DispNImages"], np.float32)
-                if _has_field(df, "DispNImages")
-                else np.full(n, DEFAULT_FILL_VALUE, dtype=np.float32)
-            ),
         }
         if _has_field(df, "SizeSecondMax"):
             data["SizeSecondMax"] = _to_numpy_1d(df["SizeSecondMax"], np.float32)
@@ -1558,46 +1490,22 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
 
 
 def zenith_in_bins(zenith_angles, bins):
-    """Apply zenith binning, marking out-of-range angles with ``-1``.
-
-    The final edge is included in the last bin.  Angles below the first edge,
-    above the final edge, or non-finite angles are invalid and receive ``-1``;
-    they are never silently assigned to an edge bin.
-    """
-    if bins is None or len(bins) < 2:
-        raise ValueError("At least two zenith-bin edges are required.")
-    if any(isinstance(value, dict) for value in bins):
+    """Apply zenith binning, marking out-of-range angles with ``-1``."""
+    if bins is None or len(bins) == 0:
+        raise ValueError("Zenith-bin definitions must not be empty.")
+    if isinstance(bins[0], dict):
         if not all(isinstance(value, dict) for value in bins):
-            raise ValueError("Zenith-bin definitions must be all numeric or all dictionaries.")
-        parsed_bins = []
-        for index, definition in enumerate(bins):
-            if "Ze_min" not in definition or "Ze_max" not in definition:
-                raise ValueError("Zenith-bin dictionaries require Ze_min and Ze_max.")
-            try:
-                ze_min = float(definition["Ze_min"])
-                ze_max = float(definition["Ze_max"])
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Zenith-bin {index} has non-numeric Ze_min/Ze_max values."
-                ) from exc
-            if not np.isfinite(ze_min) or not np.isfinite(ze_max) or ze_min >= ze_max:
-                raise ValueError(
-                    f"Zenith-bin {index} must have finite Ze_min < Ze_max; "
-                    f"got ({ze_min}, {ze_max})."
-                )
-            if parsed_bins and not np.isclose(
-                ze_min,
-                parsed_bins[-1][1],
-                rtol=1e-9,
-                atol=1e-9,
-            ):
-                raise ValueError(
-                    "Zenith-bin dictionaries must be ordered and contiguous: "
-                    f"bin {index - 1} ends at {parsed_bins[-1][1]}, "
-                    f"but bin {index} starts at {ze_min}."
-                )
-            parsed_bins.append((ze_min, ze_max))
-        bins = [parsed_bins[0][0]] + [ze_max for _, ze_max in parsed_bins]
+            raise ValueError("Zenith-bin definitions must use one format.")
+        try:
+            edges = [float(bins[0]["Ze_min"]), *(float(b["Ze_max"]) for b in bins)]
+            starts = np.asarray([float(b["Ze_min"]) for b in bins[1:]])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Zenith-bin dictionaries require numeric Ze_min and Ze_max.") from exc
+        if not np.allclose(starts, edges[1:-1]):
+            raise ValueError("Zenith-bin dictionaries must be ordered and contiguous.")
+        bins = edges
+    elif len(bins) < 2:
+        raise ValueError("At least two zenith-bin edges are required.")
     bins = np.asarray(bins, dtype=float)
     if bins.ndim != 1 or len(bins) < 2 or not np.all(np.isfinite(bins)):
         raise ValueError("Zenith-bin edges must be a finite one-dimensional sequence.")
