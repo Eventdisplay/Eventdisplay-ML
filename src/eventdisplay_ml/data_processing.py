@@ -824,7 +824,9 @@ def _flatten_training_chunk(
         disp_erec = df_flat["ErecS"].values
 
         # Compute log energies (ErecS already filtered > 0)
-        mc_e0_log = np.where(mc_e0 > 0, np.log10(mc_e0), np.nan)
+        mc_e0_log = np.full_like(mc_e0, np.nan, dtype=np.float32)
+        valid_mc_energy = mc_e0 > 0
+        mc_e0_log[valid_mc_energy] = np.log10(mc_e0[valid_mc_energy])
         disp_erec_log = np.log10(disp_erec)  # Safe since already filtered > 0
 
         new_cols = {
