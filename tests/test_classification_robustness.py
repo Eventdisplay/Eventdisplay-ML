@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from eventdisplay_ml import features, models
 from eventdisplay_ml.evaluate import (
@@ -65,6 +66,34 @@ def test_grouped_split_keeps_source_groups_disjoint_when_supported():
     assert set(groups.iloc[train]).isdisjoint(groups.iloc[validation])
     assert set(groups.iloc[train]).isdisjoint(groups.iloc[test])
     assert set(groups.iloc[validation]).isdisjoint(groups.iloc[test])
+
+
+def test_event_split_reports_insufficient_holdout_events():
+    y = pd.Series([0, 0, 1, 1])
+    with pytest.raises(ValueError, match="holdout events"):
+        models._classification_split_indices(
+            y, None, train_fraction=0.5, random_state=7, grouped=False
+        )
+
+
+def test_grouped_split_reports_insufficient_holdout_groups():
+    y = pd.Series(np.repeat([0, 1], 60))
+    groups = pd.Series(np.tile(np.arange(6), 20))
+    with pytest.raises(ValueError, match="holdout groups"):
+        models._classification_split_indices(
+            y, groups, train_fraction=0.9, random_state=7, grouped=True
+        )
+
+
+def test_nuisance_diagnostics_handles_telescope_ids_above_63():
+    frame = pd.DataFrame(
+        {
+            "size_64": [1.0, np.nan, 1.0, np.nan],
+            "width_128": [0.1, 0.2, np.nan, np.nan],
+        }
+    )
+    diagnostics = models._classification_nuisance_diagnostics(frame, pd.Series([0, 0, 1, 1]))
+    assert diagnostics["feature_missing_fraction"]["n"] == 4
 
 
 def test_threshold_calibration_is_quantile_based_and_background_limit_nonzero():

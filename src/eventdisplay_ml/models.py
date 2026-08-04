@@ -1268,11 +1268,27 @@ def _classification_split_indices(y_data, groups, train_fraction, random_state, 
         for label in sorted(y_data.unique()):
             label_mask = y_data.to_numpy() == label
             label_groups = np.asarray(groups[label_mask].unique())
+            n_train_groups = int(np.ceil(len(label_groups) * train_fraction))
+            n_hold_groups = len(label_groups) - n_train_groups
+            if n_train_groups < 1 or n_hold_groups < 2:
+                raise ValueError(
+                    "Grouped classification split cannot create separate validation "
+                    "and test groups for label="
+                    f"{label}: train_test_fraction={train_fraction} leaves "
+                    f"{n_hold_groups} holdout groups. Reduce train_test_fraction or "
+                    "provide more source groups."
+                )
             g_train, g_hold = train_test_split(
                 label_groups,
                 train_size=train_fraction,
                 random_state=rng,
             )
+            if len(g_hold) < 2:
+                raise ValueError(
+                    "Grouped classification split cannot create separate validation "
+                    f"and test groups for label={label}: only {len(g_hold)} holdout "
+                    "groups remain after the training split."
+                )
             g_validation, g_test = train_test_split(
                 g_hold,
                 train_size=0.5,
@@ -1285,11 +1301,27 @@ def _classification_split_indices(y_data, groups, train_fraction, random_state, 
     else:
         for label in sorted(y_data.unique()):
             label_idx = np.flatnonzero(y_data.to_numpy() == label)
+            n_train_events = int(np.ceil(len(label_idx) * train_fraction))
+            n_hold_events = len(label_idx) - n_train_events
+            if n_train_events < 1 or n_hold_events < 2:
+                raise ValueError(
+                    "Classification split cannot create separate validation and test "
+                    "events for label="
+                    f"{label}: train_test_fraction={train_fraction} leaves "
+                    f"{n_hold_events} holdout events. Reduce train_test_fraction or "
+                    "provide more events."
+                )
             label_train, label_hold = train_test_split(
                 label_idx,
                 train_size=train_fraction,
                 random_state=rng,
             )
+            if len(label_hold) < 2:
+                raise ValueError(
+                    "Classification split cannot create separate validation and test "
+                    f"events for label={label}: only {len(label_hold)} holdout events "
+                    "remain after the training split."
+                )
             label_validation, label_test = train_test_split(
                 label_hold,
                 train_size=0.5,
@@ -1320,11 +1352,7 @@ def _classification_nuisance_diagnostics(df, labels):
     activity = [column for column in df.columns if column.startswith("tel_active_")]
     if activity:
         candidates["tel_active_count"] = df[activity].sum(axis=1, skipna=True)
-    telescope_columns = [
-        column
-        for column in df.columns
-        if column.endswith(tuple(f"_{index}" for index in range(64)))
-    ]
+    telescope_columns = [column for column in df.columns if re.search(r"_\d+$", str(column))]
     if telescope_columns:
         candidates["feature_missing_fraction"] = df[telescope_columns].isna().mean(axis=1)
     diagnostics = {}
