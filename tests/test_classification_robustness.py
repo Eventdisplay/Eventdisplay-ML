@@ -41,7 +41,14 @@ def test_robust_profile_excludes_routing_and_activity_columns():
 
 
 def test_extended_profile_retains_zenith_but_not_provenance():
-    columns = ["MSCW", "ze_bin", "Erec", "__source_file"]
+    columns = [
+        "MSCW",
+        "ze_bin",
+        "Erec",
+        "tel_active_0",
+        "mirror_area_0",
+        "__source_file",
+    ]
     assert features.classification_feature_columns(columns, profile="extended") == [
         "MSCW",
         "ze_bin",

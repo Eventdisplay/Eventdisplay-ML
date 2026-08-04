@@ -66,8 +66,30 @@ def classification_feature_columns(columns, profile="robust", ignore_ze_bin=Fals
         "__source_file",
     }
     available = list(columns)
+    routing_or_activity = {
+        "label",
+        "Erec",
+        "ErecS",
+        "__source_file_id",
+        "__source_row",
+        "__source_file",
+    }
+
+    def is_excluded_routing_or_activity(name):
+        return name in routing_or_activity or name.startswith(
+            (
+                "__",
+                "tel_active_",
+                "mirror_area_",
+                "tel_rel_x_",
+                "tel_rel_y_",
+                "fpointing_dx_",
+                "fpointing_dy_",
+            )
+        )
+
     if profile == "extended":
-        selected = [name for name in available if name not in reserved]
+        selected = [name for name in available if not is_excluded_routing_or_activity(name)]
     else:
         # Array/stereo quantities plus per-telescope image morphology.  The
         # latter are essential gamma/hadron information; detector activity,
