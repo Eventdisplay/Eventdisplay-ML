@@ -1097,7 +1097,7 @@ def train_classification(df, model_configs):
 
     train_idx, validation_idx, test_idx, split_method = _classification_split_indices(
         y_data,
-        full_df.get("__source_file"),
+        full_df.get("__source_file_id"),
         model_configs.get("train_test_fraction", 0.5),
         model_configs.get("random_state"),
     )

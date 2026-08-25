@@ -5,6 +5,7 @@ Provides common functions for flattening and preprocessing telescope array data.
 """
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import awkward as ak
@@ -820,6 +821,8 @@ def _flatten_training_chunk(
             max_tel_per_type=model_configs.get("max_tel_per_type", None),
             preview_rows=model_configs.get("preview_rows", 20),
         )
+    if analysis_type == "classification" and "__source_row" in df.fields:
+        df_flat["__source_row"] = _to_numpy_1d(df["__source_row"], np.int64)
     utils.log_memory_checkpoint(
         f"{chunk_label}: after flattening",
         df_flat,
@@ -893,6 +896,45 @@ def _flatten_training_chunk(
             )
 
     return df_flat
+
+
+def _source_rows_for_chunk(tree, cut, branch_list, report, n_rows):
+    """Return original ROOT entry numbers represented by a classified chunk."""
+    if report is None:
+        raise RuntimeError(
+            "Classification iteration did not provide ROOT entry metadata; "
+            "cannot preserve provenance."
+        )
+    entry_start = int(report.tree_entry_start)
+    entry_stop = int(report.tree_entry_stop)
+    if cut is None:
+        source_rows = np.arange(entry_start, entry_stop, dtype=np.int64)
+    else:
+        cut_text = str(cut)
+        cut_branches = [
+            branch
+            for branch in branch_list
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(branch)}(?![A-Za-z0-9_])", cut_text)
+        ]
+        # If a custom cut references a branch outside the requested feature
+        # list, let uproot resolve all dependencies rather than fabricating an
+        # incomplete provenance mask.
+        expressions = cut_branches or None
+        selected = tree.arrays(
+            expressions=expressions,
+            cut=cut,
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+            library="pd",
+        )
+        source_rows = np.asarray(selected.index, dtype=np.int64)
+    if len(source_rows) != n_rows:
+        raise RuntimeError(
+            "Could not preserve original ROOT entry numbers for a classification chunk: "
+            f"report range=({entry_start}, {entry_stop}), selected_rows={len(source_rows)}, "
+            f"processed_rows={n_rows}."
+        )
+    return source_rows
 
 
 def _compact_awkward_reservoir(reservoir_chunks, priorities, max_rows):
@@ -1063,9 +1105,22 @@ def load_training_data(model_configs, file_list, analysis_type):
                     library="ak",
                     step_size=model_configs.get("read_step_size", "100 MB"),
                     decompression_executor=executor,
+                    report=classification_mode,
                 )
 
-                for chunk_idx, df in enumerate(chunk_iterator, start=1):
+                for chunk_idx, chunk_item in enumerate(chunk_iterator, start=1):
+                    if classification_mode:
+                        if not (
+                            isinstance(chunk_item, tuple)
+                            and len(chunk_item) == 2
+                            and hasattr(chunk_item[1], "tree_entry_start")
+                        ):
+                            raise RuntimeError(
+                                "Classification iteration did not provide ROOT entry metadata."
+                            )
+                        df, report = chunk_item
+                    else:
+                        df = chunk_item
                     chunk_label = f"file {file_idx}/{total_files}, chunk {chunk_idx}"
                     utils.log_memory_checkpoint(
                         f"{chunk_label}: after tree.iterate",
@@ -1078,6 +1133,15 @@ def load_training_data(model_configs, file_list, analysis_type):
                     df = _ensure_fpointing_fields(df)
                     if len(df) == 0:
                         continue
+                    if classification_mode:
+                        source_rows = _source_rows_for_chunk(
+                            tree,
+                            model_configs.get("pre_cuts"),
+                            resolved_branch_list,
+                            report,
+                            len(df),
+                        )
+                        df = ak.with_field(df, source_rows, "__source_row")
 
                     n_after_event_cut += len(df)
                     if max_events_per_file:
@@ -1145,7 +1209,13 @@ def load_training_data(model_configs, file_list, analysis_type):
                     continue
 
                 if analysis_type == "classification":
+                    # Keep provenance for grouped validation and diagnostics.
+                    file_df["__source_file_id"] = file_idx - 1
                     file_df["__source_file"] = str(f)
+                    if "__source_row" not in file_df:
+                        raise RuntimeError(
+                            "Classification provenance is missing original ROOT entry numbers."
+                        )
 
                 _logger.info(
                     f"Number of events before / after event cut: {n_before} / "
