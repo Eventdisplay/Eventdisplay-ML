@@ -125,7 +125,7 @@ def test_source_rows_for_chunk_preserves_selected_root_entries():
     )
 
 
-def test_flatten_feature_data_drops_size_columns_for_classification(tel_config):
+def test_flatten_feature_data_keeps_size_columns_for_classification(tel_config):
     df = create_base_df(n_rows=2, n_tel=2)
     df["ImgSel_list"] = [np.array([0, 1]), np.array([0, 1])]
     df["MSCW"] = [1.0, 2.0]
@@ -150,7 +150,7 @@ def test_flatten_feature_data_drops_size_columns_for_classification(tel_config):
         preview_rows=0,
     )
 
-    assert "size_0" not in result.columns
+    assert "size_0" in result.columns
     assert "cosphi_0" in result.columns
     assert "ze_bin" in result.columns
 

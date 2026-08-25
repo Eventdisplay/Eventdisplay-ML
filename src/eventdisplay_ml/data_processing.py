@@ -1362,7 +1362,7 @@ def flatten_telescope_variables(
     # Determine max telescope ID from config or use n_tel
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    keep_size_vars = analysis_type == "stereo_analysis"
+    keep_size_vars = analysis_type in {"stereo_analysis", "classification"}
     if not keep_size_vars:
         _logger.info(f"Dropping 'size'-related variables for {analysis_type} analysis.")
 
@@ -1571,10 +1571,15 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
 
 
 def zenith_in_bins(zenith_angles, bins):
-    """Apply zenith binning, marking out-of-range angles with ``-1``."""
+    """Apply zenith binning, marking out-of-range angles with ``-1``.
+
+    The final edge is included in the last bin.  Angles below the first edge,
+    above the final edge, or non-finite angles are invalid and receive ``-1``;
+    they are never silently assigned to an edge bin.
+    """
     if bins is None or len(bins) == 0:
-        raise ValueError("Zenith-bin definitions must not be empty.")
-    if isinstance(bins[0], dict):
+        raise ValueError("At least two zenith-bin edges are required.")
+    if any(isinstance(value, dict) for value in bins):
         if not all(isinstance(value, dict) for value in bins):
             raise ValueError("Zenith-bin definitions must use one format.")
         try:

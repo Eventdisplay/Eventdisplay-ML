@@ -54,7 +54,7 @@ def test_excluded_features_stereo_scales_with_ntel():
 def test_excluded_features_classification_contains_energy_and_position():
     result = excluded_features("classification", ntel=2)
     assert "Erec" in result
-    assert "size_0" in result
+    assert "size_0" not in result
     assert "cen_x_0" in result
     assert "cen_y_0" in result
     assert "E_0" in result
