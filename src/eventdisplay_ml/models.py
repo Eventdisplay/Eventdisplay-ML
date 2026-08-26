@@ -613,6 +613,12 @@ def process_file_chunked(analysis_type, model_configs):
                 branch_list.append(required)
     else:
         branch_list = features.features(analysis_type, training=False)
+    # XGB sidecars are read as entry-aligned friends by EventDisplay. Preserve
+    # input identifiers in both sidecar types for per-event provenance and
+    # integrity checks against stale or truncated outputs.
+    for required in ("runNumber", "eventNumber"):
+        if required not in branch_list:
+            branch_list.append(required)
     _logger.info(f"Using branches: {branch_list}")
     rename_map = {}
 
@@ -721,10 +727,20 @@ def _output_tree(analysis_type, root_file, threshold_keys=None):
     if analysis_type == "stereo_analysis":
         return root_file.mktree(
             "StereoAnalysis",
-            {"Dir_Xoff": np.float32, "Dir_Yoff": np.float32, "Dir_Erec": np.float32},
+            {
+                "Dir_Xoff": np.float32,
+                "Dir_Yoff": np.float32,
+                "Dir_Erec": np.float32,
+                "runNumber": np.int32,
+                "eventNumber": np.int32,
+            },
         )
     if analysis_type == "classification":
-        branches = {"Gamma_Prediction": np.float32}
+        branches = {
+            "Gamma_Prediction": np.float32,
+            "runNumber": np.int32,
+            "eventNumber": np.int32,
+        }
         for eff in threshold_keys or []:
             branches[f"Is_Gamma_{eff}"] = np.uint8
         return root_file.mktree("Classification", branches)
@@ -755,6 +771,8 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
                 "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
                 "Dir_Yoff": np.asarray(pred_yoff, dtype=np.float32),
                 "Dir_Erec": np.power(10.0, pred_erec, dtype=np.float32),
+                "runNumber": np.asarray(df_chunk["runNumber"], dtype=np.int32),
+                "eventNumber": np.asarray(df_chunk["eventNumber"], dtype=np.int32),
             }
         )
     elif analysis_type == "classification":
@@ -762,7 +780,11 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
             df_chunk, model_config, threshold_keys or []
         )
 
-        tree_payload = {"Gamma_Prediction": np.asarray(pred_proba, dtype=np.float32)}
+        tree_payload = {
+            "Gamma_Prediction": np.asarray(pred_proba, dtype=np.float32),
+            "runNumber": np.asarray(df_chunk["runNumber"], dtype=np.int32),
+            "eventNumber": np.asarray(df_chunk["eventNumber"], dtype=np.int32),
+        }
         for eff, flags in pred_is_gamma.items():
             tree_payload[f"Is_Gamma_{eff}"] = np.asarray(flags, dtype=np.uint8)
 
@@ -1097,7 +1119,7 @@ def train_classification(df, model_configs):
 
     train_idx, validation_idx, test_idx, split_method = _classification_split_indices(
         y_data,
-        full_df.get("__source_file"),
+        _classification_source_groups(full_df),
         model_configs.get("train_test_fraction", 0.5),
         model_configs.get("random_state"),
     )
@@ -1148,6 +1170,18 @@ def train_classification(df, model_configs):
             cfg[f"efficiency_ze{ze_bin}"] = ze_efficiency
 
     return model_configs
+
+
+def _classification_source_groups(df):
+    """Return globally unique, class-specific source groups for splitting."""
+    source = df.get("__source_file")
+    if source is None:
+        source = df.get("__source_file_id")
+    if source is None:
+        return None
+    # Signal and background are loaded separately, so their ordinal source IDs
+    # overlap. Prefixing with the class makes each input source unambiguous.
+    return df["label"].astype(str) + ":" + source.astype(str)
 
 
 def _classification_split_indices(labels, groups, train_fraction, random_state):

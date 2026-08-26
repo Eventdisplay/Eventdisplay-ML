@@ -102,6 +102,29 @@ def test_has_field_supports_awkward_and_fallback():
     assert data_processing._has_field(BrokenContains(), "field") is False
 
 
+def test_source_rows_for_chunk_preserves_selected_root_entries():
+    tree = MagicMock()
+    tree.arrays.return_value = pd.DataFrame({"Erec": [1.0, 2.0]}, index=[10, 12])
+    report = MagicMock(tree_entry_start=10, tree_entry_stop=14)
+
+    source_rows = data_processing._source_rows_for_chunk(
+        tree,
+        "Erec > 0",
+        ["Erec"],
+        report,
+        n_rows=2,
+    )
+
+    np.testing.assert_array_equal(source_rows, np.array([10, 12], dtype=np.int64))
+    tree.arrays.assert_called_once_with(
+        expressions=["Erec"],
+        cut="Erec > 0",
+        entry_start=10,
+        entry_stop=14,
+        library="pd",
+    )
+
+
 def test_flatten_feature_data_drops_size_columns_for_classification(tel_config):
     df = create_base_df(n_rows=2, n_tel=2)
     df["ImgSel_list"] = [np.array([0, 1]), np.array([0, 1])]
@@ -128,6 +151,7 @@ def test_flatten_feature_data_drops_size_columns_for_classification(tel_config):
     )
 
     assert "size_0" not in result.columns
+    assert "size_dist2_0" not in result.columns
     assert "cosphi_0" in result.columns
     assert "ze_bin" in result.columns
 
@@ -195,7 +219,7 @@ def test_load_training_data_tmva_style_classification(monkeypatch, tel_config):
     )
     tree = MagicMock()
     tree.num_entries = 2
-    tree.iterate.return_value = [arrays]
+    tree.iterate.return_value = [(arrays, MagicMock(tree_entry_start=0, tree_entry_stop=2))]
     root_file = MagicMock()
     root_file.__enter__.return_value = {"data": tree, "telconfig": MagicMock()}
     root_file.__exit__.return_value = False

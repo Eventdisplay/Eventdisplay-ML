@@ -77,3 +77,26 @@ def test_grouped_split_keeps_source_files_disjoint():
     assert set(groups.iloc[train]).isdisjoint(groups.iloc[validation])
     assert set(groups.iloc[train]).isdisjoint(groups.iloc[test])
     assert set(groups.iloc[validation]).isdisjoint(groups.iloc[test])
+
+
+def test_classification_source_groups_are_unique_across_classes():
+    df = pd.DataFrame(
+        {
+            "label": [1, 1, 0, 0],
+            "__source_file_id": [0, 1, 0, 1],
+            "__source_file": ["signal_a.root", "signal_b.root", "background_a.root", "background_b.root"],
+        }
+    )
+
+    assert models._classification_source_groups(df).tolist() == [
+        "1:signal_a.root",
+        "1:signal_b.root",
+        "0:background_a.root",
+        "0:background_b.root",
+    ]
+    assert models._classification_source_groups(df.drop(columns="__source_file")).tolist() == [
+        "1:0",
+        "1:1",
+        "0:0",
+        "0:1",
+    ]

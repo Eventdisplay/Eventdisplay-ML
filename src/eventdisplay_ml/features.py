@@ -115,9 +115,9 @@ def excluded_features(analysis_type, ntel):
     if "classification" in analysis_type:
         return {
             "Erec",
+            *[f"size_{i}" for i in range(ntel)],
             *[f"cen_x_{i}" for i in range(ntel)],
             *[f"cen_y_{i}" for i in range(ntel)],
-            *[f"size_{i}" for i in range(ntel)],
             *[f"E_{i}" for i in range(ntel)],
             *[f"ES_{i}" for i in range(ntel)],
             *[f"fpointing_dx_{i}" for i in range(ntel)],

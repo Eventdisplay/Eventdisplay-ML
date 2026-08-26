@@ -207,13 +207,26 @@ def test_output_tree_and_apply_model(monkeypatch):
         lambda *_: (np.array([0.8]), {20: np.array([1], dtype=np.uint8)}),
     )
 
-    models._apply_model("stereo_analysis", pd.DataFrame({"a": [1]}), {}, stereo_tree)
-    models._apply_model("classification", pd.DataFrame({"a": [1]}), {}, class_tree, [20])
+    models._apply_model(
+        "stereo_analysis",
+        pd.DataFrame({"a": [1], "runNumber": [12345], "eventNumber": [678]}),
+        {},
+        stereo_tree,
+    )
+    models._apply_model(
+        "classification",
+        pd.DataFrame({"a": [1], "runNumber": [12345], "eventNumber": [678]}),
+        {},
+        class_tree,
+        [20],
+    )
 
     assert root_file.mktree.call_args_list[0].args[0] == "StereoAnalysis"
     assert root_file.mktree.call_args_list[1].args[0] == "Classification"
     assert stereo_tree.extend.call_args.args[0]["Dir_Erec"][0] == pytest.approx(10.0)
     assert class_tree.extend.call_args.args[0]["Gamma_Prediction"][0] == pytest.approx(0.8)
+    assert class_tree.extend.call_args.args[0]["runNumber"][0] == 12345
+    assert class_tree.extend.call_args.args[0]["eventNumber"][0] == 678
     with pytest.raises(ValueError, match="Unknown analysis_type"):
         models._output_tree("bad", root_file)
     with pytest.raises(ValueError, match="Unknown analysis_type"):

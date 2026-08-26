@@ -893,7 +893,7 @@ class TestLoadRegressionModels:
 
 
 class TestApplyModelStereoDispatch:
-    """_apply_model must write Dir_Xoff, Dir_Yoff, Dir_Erec with correct types."""
+    """_apply_model must write predictions and alignment identifiers."""
 
     def _tree_and_apply(self, monkeypatch, pred_xoff, pred_yoff, pred_log_e):
         tree = MagicMock()
@@ -908,7 +908,13 @@ class TestApplyModelStereoDispatch:
         )
         models._apply_model(
             "stereo_analysis",
-            pd.DataFrame({"event": range(len(pred_xoff))}),
+            pd.DataFrame(
+                {
+                    "event": range(len(pred_xoff)),
+                    "runNumber": np.full(len(pred_xoff), 12345),
+                    "eventNumber": np.arange(len(pred_xoff)),
+                }
+            ),
             {},
             tree,
         )
@@ -916,11 +922,14 @@ class TestApplyModelStereoDispatch:
 
     def test_stereo_payload_keys(self, monkeypatch):
         payload = self._tree_and_apply(monkeypatch, [1.0], [2.0], [3.0])
-        assert set(payload) == {"Dir_Xoff", "Dir_Yoff", "Dir_Erec"}
+        assert set(payload) == {"Dir_Xoff", "Dir_Yoff", "Dir_Erec", "runNumber", "eventNumber"}
 
     def test_stereo_payload_dtype_float32(self, monkeypatch):
         payload = self._tree_and_apply(monkeypatch, [1.0, 2.0], [3.0, 4.0], [5.0, 6.0])
         for key, arr in payload.items():
+            if key in {"runNumber", "eventNumber"}:
+                assert arr.dtype == np.int32
+                continue
             assert arr.dtype == np.float32, f"Branch {key} has dtype {arr.dtype}, expected float32"
 
     def test_energy_converted_from_log10(self, monkeypatch):
@@ -951,6 +960,8 @@ class TestApplyModelStereoDispatch:
         assert len(payload["Dir_Xoff"]) == n
         assert len(payload["Dir_Yoff"]) == n
         assert len(payload["Dir_Erec"]) == n
+        assert len(payload["runNumber"]) == n
+        assert len(payload["eventNumber"]) == n
 
     def test_no_classification_branches_written(self, monkeypatch):
         payload = self._tree_and_apply(monkeypatch, [1.0], [1.0], [1.0])
@@ -1259,7 +1270,7 @@ class TestLogEnergyBinCountsFromArrays:
 
 
 class TestOutputTreeStereo:
-    """Stereo output tree must have exactly three float32 branches."""
+    """Stereo output tree must include predictions and event identifiers."""
 
     def test_stereo_creates_correct_tree(self):
         root_file = MagicMock()
@@ -1274,8 +1285,9 @@ class TestOutputTreeStereo:
         branches = call_args.args[1]
 
         assert tree_name == "StereoAnalysis"
-        assert set(branches.keys()) == {"Dir_Xoff", "Dir_Yoff", "Dir_Erec"}
-        assert all(v is np.float32 for v in branches.values())
+        assert set(branches.keys()) == {"Dir_Xoff", "Dir_Yoff", "Dir_Erec", "runNumber", "eventNumber"}
+        assert all(branches[key] is np.float32 for key in ("Dir_Xoff", "Dir_Yoff", "Dir_Erec"))
+        assert all(branches[key] is np.int32 for key in ("runNumber", "eventNumber"))
         assert result is mock_tree
 
     def test_stereo_tree_has_no_classification_branches(self):
