@@ -183,11 +183,17 @@ def test_stereo_output_writer_keeps_nan_energy_rows_and_converts_only_log_energy
         ),
     )
 
-    models._apply_model("stereo_analysis", pd.DataFrame({"event": [1, 2]}), {}, tree)
+    models._apply_model(
+        "stereo_analysis",
+        pd.DataFrame({"event": [1, 2], "runNumber": [12345, 12345], "eventNumber": [1, 2]}),
+        {},
+        tree,
+    )
 
     payload = tree.extend.call_args.args[0]
-    assert list(payload) == ["Dir_Xoff", "Dir_Yoff", "Dir_Erec"]
-    assert all(values.dtype == np.float32 for values in payload.values())
+    assert list(payload) == ["Dir_Xoff", "Dir_Yoff", "Dir_Erec", "runNumber", "eventNumber"]
+    assert all(payload[key].dtype == np.float32 for key in ("Dir_Xoff", "Dir_Yoff", "Dir_Erec"))
+    assert all(payload[key].dtype == np.int32 for key in ("runNumber", "eventNumber"))
     assert len(payload["Dir_Xoff"]) == 2
     assert payload["Dir_Erec"][0] == pytest.approx(100.0)
     assert np.isnan(payload["Dir_Xoff"][1])

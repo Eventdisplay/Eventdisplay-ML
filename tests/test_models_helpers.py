@@ -207,7 +207,12 @@ def test_output_tree_and_apply_model(monkeypatch):
         lambda *_: (np.array([0.8]), {20: np.array([1], dtype=np.uint8)}),
     )
 
-    models._apply_model("stereo_analysis", pd.DataFrame({"a": [1]}), {}, stereo_tree)
+    models._apply_model(
+        "stereo_analysis",
+        pd.DataFrame({"a": [1], "runNumber": [12345], "eventNumber": [678]}),
+        {},
+        stereo_tree,
+    )
     models._apply_model("classification", pd.DataFrame({"a": [1]}), {}, class_tree, [20])
 
     assert root_file.mktree.call_args_list[0].args[0] == "StereoAnalysis"

@@ -613,6 +613,13 @@ def process_file_chunked(analysis_type, model_configs):
                 branch_list.append(required)
     else:
         branch_list = features.features(analysis_type, training=False)
+    # XGB sidecars are read as entry-aligned friends by EventDisplay.  Preserve
+    # the input identifiers so the reader can prove that alignment for every
+    # event instead of silently accepting a stale or truncated sidecar.
+    if analysis_type == "stereo_analysis":
+        for required in ("runNumber", "eventNumber"):
+            if required not in branch_list:
+                branch_list.append(required)
     _logger.info(f"Using branches: {branch_list}")
     rename_map = {}
 
@@ -721,7 +728,13 @@ def _output_tree(analysis_type, root_file, threshold_keys=None):
     if analysis_type == "stereo_analysis":
         return root_file.mktree(
             "StereoAnalysis",
-            {"Dir_Xoff": np.float32, "Dir_Yoff": np.float32, "Dir_Erec": np.float32},
+            {
+                "Dir_Xoff": np.float32,
+                "Dir_Yoff": np.float32,
+                "Dir_Erec": np.float32,
+                "runNumber": np.int32,
+                "eventNumber": np.int32,
+            },
         )
     if analysis_type == "classification":
         branches = {"Gamma_Prediction": np.float32}
@@ -755,6 +768,8 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
                 "Dir_Xoff": np.asarray(pred_xoff, dtype=np.float32),
                 "Dir_Yoff": np.asarray(pred_yoff, dtype=np.float32),
                 "Dir_Erec": np.power(10.0, pred_erec, dtype=np.float32),
+                "runNumber": np.asarray(df_chunk["runNumber"], dtype=np.int32),
+                "eventNumber": np.asarray(df_chunk["eventNumber"], dtype=np.int32),
             }
         )
     elif analysis_type == "classification":
