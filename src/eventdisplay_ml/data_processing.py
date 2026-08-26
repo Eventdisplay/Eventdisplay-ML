@@ -1362,7 +1362,7 @@ def flatten_telescope_variables(
     # Determine max telescope ID from config or use n_tel
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    keep_size_vars = analysis_type in {"stereo_analysis", "classification"}
+    keep_size_vars = analysis_type == "stereo_analysis"
     if not keep_size_vars:
         _logger.info(f"Dropping 'size'-related variables for {analysis_type} analysis.")
 

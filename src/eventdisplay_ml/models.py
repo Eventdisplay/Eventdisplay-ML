@@ -1119,7 +1119,7 @@ def train_classification(df, model_configs):
 
     train_idx, validation_idx, test_idx, split_method = _classification_split_indices(
         y_data,
-        full_df.get("__source_file_id"),
+        _classification_source_groups(full_df),
         model_configs.get("train_test_fraction", 0.5),
         model_configs.get("random_state"),
     )
@@ -1170,6 +1170,18 @@ def train_classification(df, model_configs):
             cfg[f"efficiency_ze{ze_bin}"] = ze_efficiency
 
     return model_configs
+
+
+def _classification_source_groups(df):
+    """Return globally unique, class-specific source groups for splitting."""
+    source = df.get("__source_file")
+    if source is None:
+        source = df.get("__source_file_id")
+    if source is None:
+        return None
+    # Signal and background are loaded separately, so their ordinal source IDs
+    # overlap. Prefixing with the class makes each input source unambiguous.
+    return df["label"].astype(str) + ":" + source.astype(str)
 
 
 def _classification_split_indices(labels, groups, train_fraction, random_state):
