@@ -613,13 +613,12 @@ def process_file_chunked(analysis_type, model_configs):
                 branch_list.append(required)
     else:
         branch_list = features.features(analysis_type, training=False)
-    # XGB sidecars are read as entry-aligned friends by EventDisplay.  Preserve
-    # the input identifiers so the reader can prove that alignment for every
-    # event instead of silently accepting a stale or truncated sidecar.
-    if analysis_type == "stereo_analysis":
-        for required in ("runNumber", "eventNumber"):
-            if required not in branch_list:
-                branch_list.append(required)
+    # XGB sidecars are read as entry-aligned friends by EventDisplay. Preserve
+    # input identifiers in both sidecar types for per-event provenance and
+    # integrity checks against stale or truncated outputs.
+    for required in ("runNumber", "eventNumber"):
+        if required not in branch_list:
+            branch_list.append(required)
     _logger.info(f"Using branches: {branch_list}")
     rename_map = {}
 
@@ -737,7 +736,11 @@ def _output_tree(analysis_type, root_file, threshold_keys=None):
             },
         )
     if analysis_type == "classification":
-        branches = {"Gamma_Prediction": np.float32}
+        branches = {
+            "Gamma_Prediction": np.float32,
+            "runNumber": np.int32,
+            "eventNumber": np.int32,
+        }
         for eff in threshold_keys or []:
             branches[f"Is_Gamma_{eff}"] = np.uint8
         return root_file.mktree("Classification", branches)
@@ -777,7 +780,11 @@ def _apply_model(analysis_type, df_chunk, model_config, tree, threshold_keys=Non
             df_chunk, model_config, threshold_keys or []
         )
 
-        tree_payload = {"Gamma_Prediction": np.asarray(pred_proba, dtype=np.float32)}
+        tree_payload = {
+            "Gamma_Prediction": np.asarray(pred_proba, dtype=np.float32),
+            "runNumber": np.asarray(df_chunk["runNumber"], dtype=np.int32),
+            "eventNumber": np.asarray(df_chunk["eventNumber"], dtype=np.int32),
+        }
         for eff, flags in pred_is_gamma.items():
             tree_payload[f"Is_Gamma_{eff}"] = np.asarray(flags, dtype=np.uint8)
 
