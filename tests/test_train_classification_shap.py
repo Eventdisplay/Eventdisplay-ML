@@ -122,6 +122,15 @@ def test_class_zenith_balance_weights_equalize_class_zenith_distributions():
         assert ze1 / (ze0 + ze1) == pytest.approx(0.5)
 
 
+def test_train_classification_rejects_invalid_zenith_bins():
+    """Invalid zenith routing states must fail before model fitting."""
+    signal = pd.DataFrame({"f1": [1.0, 2.0, 3.0], "ze_bin": [-1, 0, 0]})
+    background = pd.DataFrame({"f1": [-1.0, -2.0, -3.0], "ze_bin": [0, 0, 0]})
+
+    with pytest.raises(ValueError, match="out-of-range or invalid zenith bins"):
+        models.train_classification([signal, background], {"models": {}})
+
+
 def test_train_classification_applies_class_zenith_weights():
     """The optional class/zenith balance weights should be passed to XGBoost."""
     signal_df = pd.DataFrame(

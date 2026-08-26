@@ -47,6 +47,49 @@ def target_features(analysis_type):
     raise ValueError(f"Unknown analysis type: {analysis_type}")
 
 
+def classification_feature_columns(columns, profile="extended", ignore_ze_bin=False):
+    """Select classification features from a flattened data frame."""
+    if profile not in {"robust", "extended"}:
+        raise ValueError("classification feature profile must be 'robust' or 'extended'")
+
+    selected = [
+        name
+        for name in columns
+        if name not in {"label", "Erec", "ErecS"} and not name.startswith("__")
+    ]
+    if profile == "robust":
+        event_features = {
+            "MSCW",
+            "MSCL",
+            "EChi2S",
+            "EmissionHeight",
+            "EmissionHeightChi2",
+            "Core_Distance",
+            "ze_bin",
+        }
+        telescope_features = (
+            "cosphi_",
+            "sinphi_",
+            "loss_",
+            "dist_",
+            "width_",
+            "length_",
+            "asym_",
+            "tgrad_x_",
+        )
+        selected = [
+            name
+            for name in selected
+            if name in event_features or name.startswith(telescope_features)
+        ]
+
+    if ignore_ze_bin:
+        selected = [name for name in selected if name != "ze_bin"]
+    if not selected:
+        raise ValueError(f"No usable classification features for profile '{profile}'.")
+    return selected
+
+
 def excluded_features(analysis_type, ntel):
     """
     Features not to be used for training/prediction.

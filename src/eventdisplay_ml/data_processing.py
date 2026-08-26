@@ -79,6 +79,21 @@ def read_telescope_config(root_file):
     }
 
 
+def _telescope_configs_match(first, second):
+    """Compare telescope configurations, tolerating float serialization noise."""
+    for key in ("tel_ids", "mirror_area", "tel_x", "tel_y"):
+        first_values = np.asarray(first[key])
+        second_values = np.asarray(second[key])
+        if first_values.shape != second_values.shape:
+            return False
+        if key == "tel_ids":
+            if not np.array_equal(first_values, second_values):
+                return False
+        elif not np.allclose(first_values, second_values, rtol=1e-7, atol=1e-7, equal_nan=True):
+            return False
+    return True
+
+
 def _resolve_branch_aliases(tree, branch_list):
     """
     Resolve branch name aliases (e.g. R_core vs R) and drop missing optional branches.
@@ -468,6 +483,7 @@ def flatten_telescope_data_vectorized(
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
     """
     flat_features = {}
+    classification_mode = analysis_type == "classification"
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
@@ -490,6 +506,11 @@ def flatten_telescope_data_vectorized(
     size_data = _normalize_telescope_variable_to_tel_id_space(
         _to_dense_array(df["size"]), index_list_for_remapping, max_tel_id, n_evt
     )
+    # A telescope absent from DispTelList_T is not a zero-sized image.  Keep it
+    # explicitly missing so sorting and the XGBoost missing-value path cannot
+    # learn a detector-slot/observing-condition proxy.
+    if classification_mode:
+        size_data = np.where(active_mask, size_data, np.nan)
     size_data = _clip_size_array(size_data)
 
     core_x, core_y = _get_core_arrays(df)
@@ -549,6 +570,9 @@ def flatten_telescope_data_vectorized(
             data_normalized = _normalize_telescope_variable_to_tel_id_space(
                 data, index_list_for_remapping, max_tel_id, n_evt
             )
+
+        if classification_mode and var != "tel_active":
+            data_normalized = np.where(active_mask, data_normalized, np.nan)
 
         # All variables are now in telescope-ID space; apply sorting and flatten uniformly
         data_normalized = data_normalized[np.arange(n_evt)[:, np.newaxis], sort_indices]
@@ -947,6 +971,7 @@ def load_training_data(model_configs, file_list, analysis_type):
     pandas.DataFrame
         Flattened DataFrame ready for training.
     """
+    classification_mode = analysis_type == "classification"
     max_events = model_configs.get("max_events", None)
     random_state = model_configs.get("random_state", None)
     memory_profile = model_configs.get("memory_profile", False)
@@ -962,6 +987,8 @@ def load_training_data(model_configs, file_list, analysis_type):
         _logger.info(f"Adding zenith binning: {model_configs.get('zenith_bins_deg', [])}")
 
     input_files = utils.read_input_file_list(file_list)
+    if classification_mode and not input_files:
+        raise ValueError(f"Input file list is empty: {file_list}")
 
     tmva_style = model_configs.get("tmva_style", False)
     if tmva_style and analysis_type == "classification":
@@ -979,9 +1006,15 @@ def load_training_data(model_configs, file_list, analysis_type):
         max_events_per_file = max_events // len(input_files)
     else:
         max_events_per_file = None
+    if classification_mode and max_events is not None and max_events > 0:
+        # Integer floor division can turn a small cap into zero, which means
+        # unlimited sampling. Classification applies an exact final cap below.
+        max_events_per_file = max(1, int(np.ceil(max_events / len(input_files))))
     _logger.info(f"Max events per file: {max_events_per_file}")
 
     tel_config = None  # Will be read from first file
+    if classification_mode:
+        tel_config = model_configs.get("tel_config")
     dfs = []
     executor = ThreadPoolExecutor(max_workers=model_configs.get("max_cores", 1))
     total_files = len(input_files)
@@ -998,7 +1031,13 @@ def load_training_data(model_configs, file_list, analysis_type):
                 else:
                     # Check if current file has a larger max_tel_id and update if needed
                     current_tel_config = read_telescope_config(root_file)
-                    if current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
+                    if classification_mode:
+                        if not _telescope_configs_match(current_tel_config, tel_config):
+                            raise ValueError(
+                                "Classification/training input files have incompatible "
+                                f"telescope configurations: {f}."
+                            )
+                    elif current_tel_config["max_tel_id"] > tel_config["max_tel_id"]:
                         _logger.info(
                             f"Updating telescope configuration: max_tel_id from "
                             f"{tel_config['max_tel_id']} to {current_tel_config['max_tel_id']} "
@@ -1105,6 +1144,9 @@ def load_training_data(model_configs, file_list, analysis_type):
                 if file_df is None or file_df.empty:
                     continue
 
+                if analysis_type == "classification":
+                    file_df["__source_file"] = str(f)
+
                 _logger.info(
                     f"Number of events before / after event cut: {n_before} / "
                     f"{n_after_event_cut} (fraction retained: {n_after_event_cut / n_before:.4f})"
@@ -1122,9 +1164,25 @@ def load_training_data(model_configs, file_list, analysis_type):
                     enabled=memory_profile,
                 )
         except Exception as e:
+            if classification_mode and isinstance(e, (KeyError, ValueError)):
+                raise
             raise FileNotFoundError(f"Error opening or reading file {f}: {e}") from e
 
+    if classification_mode and not dfs:
+        raise ValueError("No data loaded from input files.")
     df_final = pd.concat(dfs, ignore_index=True)
+    if (
+        analysis_type == "classification"
+        and max_events is not None
+        and max_events > 0
+        and len(df_final) > max_events
+    ):
+        df_final = df_final.sample(
+            n=max_events,
+            random_state=random_state,
+            ignore_index=True,
+        )
+        _logger.info("Applied global classification event cap: %d", max_events)
     del dfs
     utils.log_memory_checkpoint("after final pandas concat", df_final, enabled=memory_profile)
     all_nan_columns = [col for col in df_final.columns if df_final[col].isna().all()]
@@ -1443,11 +1501,35 @@ def extra_columns(df, analysis_type, training, index, tel_config=None, observato
 
 
 def zenith_in_bins(zenith_angles, bins):
-    """Apply zenith binning based on zenith angles and given bin edges."""
+    """Apply zenith binning, marking out-of-range angles with ``-1``."""
+    if bins is None or len(bins) == 0:
+        raise ValueError("Zenith-bin definitions must not be empty.")
     if isinstance(bins[0], dict):
-        bins = [b["Ze_min"] for b in bins] + [bins[-1]["Ze_max"]]
+        if not all(isinstance(value, dict) for value in bins):
+            raise ValueError("Zenith-bin definitions must use one format.")
+        try:
+            edges = [float(bins[0]["Ze_min"]), *(float(b["Ze_max"]) for b in bins)]
+            starts = np.asarray([float(b["Ze_min"]) for b in bins[1:]])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Zenith-bin dictionaries require numeric Ze_min and Ze_max.") from exc
+        if not np.allclose(starts, edges[1:-1]):
+            raise ValueError("Zenith-bin dictionaries must be ordered and contiguous.")
+        bins = edges
+    elif len(bins) < 2:
+        raise ValueError("At least two zenith-bin edges are required.")
     bins = np.asarray(bins, dtype=float)
-    idx = np.clip(np.digitize(zenith_angles, bins) - 1, 0, len(bins) - 2)
+    if bins.ndim != 1 or len(bins) < 2 or not np.all(np.isfinite(bins)):
+        raise ValueError("Zenith-bin edges must be a finite one-dimensional sequence.")
+    if np.any(np.diff(bins) <= 0):
+        raise ValueError("Zenith-bin edges must be strictly increasing.")
+    zenith_angles = np.asarray(zenith_angles, dtype=float)
+    idx = np.full(zenith_angles.shape, -1, dtype=np.int32)
+    valid = np.isfinite(zenith_angles) & (zenith_angles >= bins[0]) & (zenith_angles <= bins[-1])
+    if np.any(valid):
+        idx[valid] = np.minimum(
+            np.digitize(zenith_angles[valid], bins) - 1,
+            len(bins) - 2,
+        )
     return idx.astype(np.int32)
 
 

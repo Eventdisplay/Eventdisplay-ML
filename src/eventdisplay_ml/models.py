@@ -243,6 +243,8 @@ def _calculate_classification_thresholds(efficiency, min_efficiency=0.2, steps=5
     dict[int, float]
         Mapping from efficiency (percent) to classification threshold.
     """
+    if efficiency is None or len(efficiency) == 0:
+        raise ValueError("Classification efficiency diagnostics are missing from the model file.")
     df = efficiency.copy()
     df = df.sort_values("signal_efficiency")
     eff_targets = np.arange(min_efficiency * 100, 100, steps) / 100.0
@@ -298,7 +300,20 @@ def _validate_energy_bin_metadata(energy_bin, model_file):
             f"missing required key(s): {missing}."
         )
 
-    return energy_bin
+    try:
+        e_min = float(energy_bin["E_min"])
+        e_max = float(energy_bin["E_max"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Classification model file "
+            f"'{model_file}' has non-numeric energy-bin metadata for 'E_min'/'E_max'."
+        ) from exc
+    if not np.isfinite(e_min) or not np.isfinite(e_max) or e_min >= e_max:
+        raise ValueError(
+            "Classification model file "
+            f"'{model_file}' has invalid energy-bin metadata: require finite E_min < E_max."
+        )
+    return {"E_min": e_min, "E_max": e_max}
 
 
 def _update_parameters(full_params, zenith_bins, energy_bin, e_bin_number):
@@ -507,6 +522,18 @@ def apply_classification_models(df, model_configs, threshold_keys):
         if e_bin_lo == -1 or e_bin_hi == -1:
             _logger.warning("Skipping events with invalid energy interpolation bins")
             continue
+        if "ze_bin" in group_df:
+            zenith_values = pd.to_numeric(group_df["ze_bin"], errors="coerce")
+            valid_zenith = zenith_values.notna() & (zenith_values >= 0)
+            if not valid_zenith.all():
+                _logger.warning(
+                    "Skipping %d events with invalid/out-of-range zenith bins during "
+                    "classification apply",
+                    int((~valid_zenith).sum()),
+                )
+                group_df = group_df.loc[valid_zenith]
+                if group_df.empty:
+                    continue
 
         _logger.info(
             "Processing %d events with interpolation bins (%d, %d)",
@@ -526,8 +553,15 @@ def apply_classification_models(df, model_configs, threshold_keys):
         )
         model_lo = models[e_bin_lo]["model"]
         model_hi = models[e_bin_hi]["model"]
-        flatten_lo = flatten_data.reindex(columns=models[e_bin_lo]["features"])
-        flatten_hi = flatten_data.reindex(columns=models[e_bin_hi]["features"])
+        missing_lo = sorted(set(models[e_bin_lo]["features"]) - set(flatten_data.columns))
+        missing_hi = sorted(set(models[e_bin_hi]["features"]) - set(flatten_data.columns))
+        if missing_lo or missing_hi:
+            raise ValueError(
+                "Classification model/input feature schema mismatch: "
+                f"low-bin missing={missing_lo}, high-bin missing={missing_hi}."
+            )
+        flatten_lo = flatten_data.loc[:, models[e_bin_lo]["features"]]
+        flatten_hi = flatten_data.loc[:, models[e_bin_hi]["features"]]
 
         class_probs_lo = model_lo.predict_proba(flatten_lo)[:, 1]
         if e_bin_lo == e_bin_hi:
@@ -1008,91 +1042,162 @@ def train_regression(df, model_configs):
 
 
 def train_classification(df, model_configs):
-    """
-    Train a single XGBoost model for gamma/hadron classification.
-
-    Parameters
-    ----------
-    df : list of pd.DataFrame
-        Training data.
-    model_configs : dict
-        Dictionary of model configurations.
-    """
+    """Train a single XGBoost model for gamma/hadron classification."""
     if df[0].empty or df[1].empty:
         raise ValueError(
             "Classification training requires non-empty signal and background data. "
             f"signal_events={len(df[0])}, background_events={len(df[1])}."
         )
+    if set(df[0].columns) != set(df[1].columns):
+        raise ValueError(
+            "Signal/background classification schemas differ. "
+            f"Only signal: {sorted(set(df[0].columns) - set(df[1].columns))}; "
+            f"only background: {sorted(set(df[1].columns) - set(df[0].columns))}"
+        )
 
-    df[0]["label"] = 1
-    df[1]["label"] = 0
-    full_df = pd.concat([df[0], df[1]], ignore_index=True)
-    ze_data = full_df["ze_bin"] if "ze_bin" in full_df.columns else None
-    x_data = full_df.drop(columns=["label"])
-    if model_configs.get("ignore_ze_bin", False):
-        if model_configs.get("balance_class_zenith_weights", False):
-            raise ValueError("Cannot use ignore_ze_bin with balance_class_zenith_weights.")
-        if "ze_bin" in x_data.columns:
-            _logger.info("Removing ze_bin from classification training features.")
-            x_data = x_data.drop(columns=["ze_bin"])
-    _logger.info(f"Features ({len(x_data.columns)}): {', '.join(x_data.columns)}")
-    model_configs["features"] = list(x_data.columns)
+    signal = df[0].copy()
+    background = df[1].copy()
+    signal["label"] = 1
+    background["label"] = 0
+    full_df = pd.concat([signal, background], ignore_index=True)
     y_data = full_df["label"]
-
-    split_inputs = [x_data, y_data]
+    ze_data = full_df.get("ze_bin")
     if ze_data is not None:
-        split_inputs.append(ze_data)
+        numeric_zenith = pd.to_numeric(ze_data, errors="coerce")
+        invalid_zenith = numeric_zenith.isna() | (numeric_zenith < 0)
+        if invalid_zenith.any():
+            raise ValueError(
+                "Classification training contains out-of-range or invalid zenith bins: "
+                f"{int(invalid_zenith.sum())} events."
+            )
 
-    split_result = train_test_split(
-        *split_inputs,
-        train_size=model_configs.get("train_test_fraction", 0.5),
-        random_state=model_configs.get("random_state", None),
-        stratify=y_data,
+    profile = (
+        "extended"
+        if model_configs.get("tmva_style", False)
+        else model_configs.get("feature_profile", "extended")
     )
-    if ze_data is None:
-        x_train, x_test, y_train, y_test = split_result
-        ze_test = None
-    else:
-        x_train, x_test, y_train, y_test, _, ze_test = split_result
+    feature_columns = features.classification_feature_columns(
+        full_df.columns,
+        profile=profile,
+        ignore_ze_bin=model_configs.get("ignore_ze_bin", False),
+    )
+    all_nan = [
+        column
+        for column in feature_columns
+        if signal[column].isna().all() or background[column].isna().all()
+    ]
+    if all_nan:
+        raise ValueError(
+            f"Classification features must contain values in both classes: {', '.join(all_nan)}"
+        )
 
-    _logger.info(f"Training events: {len(x_train)}, Testing events: {len(x_test)}")
+    x_data = full_df.loc[:, feature_columns]
+    model_configs["features"] = feature_columns
+    _logger.info("Features (%d): %s", len(feature_columns), ", ".join(feature_columns))
+
+    train_idx, validation_idx, test_idx, split_method = _classification_split_indices(
+        y_data,
+        full_df.get("__source_file"),
+        model_configs.get("train_test_fraction", 0.5),
+        model_configs.get("random_state"),
+    )
+    x_train, x_validation, x_test = (
+        x_data.iloc[index] for index in (train_idx, validation_idx, test_idx)
+    )
+    y_train, y_validation, y_test = (
+        y_data.iloc[index] for index in (train_idx, validation_idx, test_idx)
+    )
+    ze_test = ze_data.iloc[test_idx] if ze_data is not None else None
+    model_configs["classification_split"] = {
+        "method": split_method,
+        "n_train": len(train_idx),
+        "n_validation": len(validation_idx),
+        "n_test": len(test_idx),
+    }
+    _logger.info(
+        "Classification split: train=%d validation=%d test=%d (%s)",
+        len(x_train),
+        len(x_validation),
+        len(x_test),
+        split_method,
+    )
+
     weights_train = None
     if model_configs.get("balance_class_zenith_weights", False):
-        weights_train = _class_zenith_balance_weights(x_train, y_train)
-        _logger.info(
-            "Using class/zenith sample weights "
-            f"(mean={weights_train.mean():.3f}, std={weights_train.std():.3f}, "
-            f"min={weights_train.min():.3f}, max={weights_train.max():.3f})"
-        )
-    eval_set = [(x_train, y_train), (x_test, y_test)]
+        weights_train = _class_zenith_balance_weights(full_df.iloc[train_idx], y_train)
+    eval_set = [(x_train, y_train), (x_validation, y_validation)]
 
     for name, cfg in model_configs.get("models", {}).items():
-        _logger.info(f"Training {name}")
+        _logger.info("Training %s", name)
         model = xgb.XGBClassifier(**cfg.get("hyper_parameters", {}))
         fit_kwargs = {"eval_set": eval_set, "verbose": True}
         if weights_train is not None:
             fit_kwargs["sample_weight"] = weights_train
         model.fit(x_train, y_train, **fit_kwargs)
 
-        shap_importance = evaluate_classification_model(
-            model,
-            x_test,
-            y_test,
-            full_df,
-            x_data.columns.tolist(),
-            name,
-        )
         cfg["model"] = model
-        cfg["features"] = x_data.columns.tolist()  # Store feature names for diagnostics
-        efficiency_all, efficiencies_by_zenith = evaluation_efficiency(
+        cfg["features"] = feature_columns
+        cfg["shap_importance"] = evaluate_classification_model(
+            model, x_test, y_test, full_df, feature_columns, name
+        )
+        efficiency, efficiencies_by_zenith = evaluation_efficiency(
             name, model, x_test, y_test, return_by_zenith=True, ze_bins=ze_test
         )
-        cfg["efficiency"] = efficiency_all
+        cfg["efficiency"] = efficiency
         for ze_bin, ze_efficiency in efficiencies_by_zenith.items():
             cfg[f"efficiency_ze{ze_bin}"] = ze_efficiency
-        cfg["shap_importance"] = shap_importance
 
     return model_configs
+
+
+def _classification_split_indices(labels, groups, train_fraction, random_state):
+    """Return source-grouped train, validation, and test row indices."""
+    if not 0 < train_fraction < 1:
+        raise ValueError("train_test_fraction must be between zero and one.")
+
+    indices = np.arange(len(labels))
+    if groups is not None:
+        group_labels = pd.DataFrame({"group": groups, "label": labels}).drop_duplicates()
+        groups_are_class_specific = not group_labels["group"].duplicated().any()
+        if groups_are_class_specific:
+            try:
+                train_groups, holdout_groups = train_test_split(
+                    group_labels,
+                    train_size=train_fraction,
+                    random_state=random_state,
+                    stratify=group_labels["label"],
+                )
+                validation_groups, test_groups = train_test_split(
+                    holdout_groups,
+                    train_size=0.5,
+                    random_state=random_state,
+                    stratify=holdout_groups["label"],
+                )
+                return (
+                    indices[groups.isin(train_groups["group"])],
+                    indices[groups.isin(validation_groups["group"])],
+                    indices[groups.isin(test_groups["group"])],
+                    "grouped_source_file",
+                )
+            except ValueError:
+                _logger.warning(
+                    "Not enough source files for a grouped classification split; "
+                    "falling back to a stratified event split."
+                )
+
+    train_idx, holdout_idx = train_test_split(
+        indices,
+        train_size=train_fraction,
+        random_state=random_state,
+        stratify=labels,
+    )
+    validation_idx, test_idx = train_test_split(
+        holdout_idx,
+        train_size=0.5,
+        random_state=random_state,
+        stratify=labels.iloc[holdout_idx],
+    )
+    return train_idx, validation_idx, test_idx, "stratified_event"
 
 
 def _class_zenith_balance_weights(x_train, y_train):
