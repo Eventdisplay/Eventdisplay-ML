@@ -90,6 +90,63 @@ def classification_feature_columns(columns, profile="extended", ignore_ze_bin=Fa
     return selected
 
 
+def regression_feature_columns(columns, profile="extended"):
+    """Select stereo-regression features from a flattened data frame.
+
+    Parameters
+    ----------
+    columns : iterable[str]
+        Columns available in the flattened training or inference data.
+    profile : {"extended", "reduced"}, optional
+        ``extended`` preserves the historical behavior and keeps every
+        non-target column. ``reduced`` keeps only array-level reconstruction
+        quantities and the requested shape summaries for telescope positions
+        0--3.
+
+    Returns
+    -------
+    list[str]
+        Selected columns in the requested, stable order.
+
+    Raises
+    ------
+    ValueError
+        If the profile is unknown or a required reduced-profile column is
+        unavailable.
+    """
+    if profile not in {"extended", "reduced"}:
+        raise ValueError("regression feature profile must be 'extended' or 'reduced'")
+
+    target_names = set(target_features("stereo_analysis"))
+    available = list(columns)
+    if profile == "extended":
+        return [name for name in available if name not in target_names]
+
+    reduced = [
+        "Xoff_weighted_bdt",
+        "Yoff_weighted_bdt",
+        "Xoff_intersect",
+        "Yoff_intersect",
+        "Diff_Xoff",
+        "Diff_Yoff",
+        "DispNImages",
+        "Erec",
+        "ErecS",
+        "EmissionHeight",
+        "Geomagnetic_Angle",
+        "array_footprint",
+        *[f"width_length_{i}" for i in range(4)],
+        *[f"R_core_{i}" for i in range(4)],
+        *[f"loss_{i}" for i in range(4)],
+    ]
+    missing = [name for name in reduced if name not in available]
+    if missing:
+        raise ValueError(
+            "Reduced regression feature profile is missing required columns: " + ", ".join(missing)
+        )
+    return reduced
+
+
 def excluded_features(analysis_type, ntel):
     """
     Features not to be used for training/prediction.

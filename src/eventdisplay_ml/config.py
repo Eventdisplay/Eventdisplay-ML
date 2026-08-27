@@ -38,6 +38,17 @@ def configure_training(analysis_type):
         parser.add_argument(
             "--input_file_list", help=f"List of input mscw files for {analysis_type}."
         )
+    if analysis_type == "stereo_analysis":
+        parser.add_argument(
+            "--feature_profile",
+            choices=("extended", "reduced"),
+            default="extended",
+            help=(
+                "Regression feature set. 'extended' retains all non-target features; "
+                "'reduced' uses array-level quantities and width/length, R_core, "
+                "and loss summaries for telescope positions 0-3."
+            ),
+        )
     if analysis_type == "classification":
         parser.add_argument("--input_signal_file_list", help="List of input signal mscw files.")
         parser.add_argument(
@@ -191,6 +202,7 @@ def configure_training(analysis_type):
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
     if analysis_type == "stereo_analysis":
         _logger.info(f"Minimum images (DispNImages): {model_configs.get('min_images')}")
+        _logger.info(f"Regression feature profile: {model_configs.get('feature_profile')}")
         _logger.info(
             "Regression weighting: energy=inverse-sqrt(count), min_bin_events=%d, "
             "multiplicity=DispNImages**2, max_combined_weight=%.1f, "

@@ -25,6 +25,11 @@ The stereo regression training pipeline uses multi-target XGBoost to predict res
 
 **Targets:** `[Xoff_residual, Yoff_residual, E_residual]` (residuals on direction and energy as reconstruction by the BDT stereo reconstruction method)
 
+By default, regression uses the extended feature set. An optional reduced set can
+be selected with `--feature_profile reduced`; it contains the array-level geometry
+and energy quantities plus `width_length`, `R_core`, and `loss` summaries for
+telescope positions 0--3. The default is unchanged with `--feature_profile extended`.
+
 **Key techniques:**
 
 - **Target standardization:** Targets are mean-centered and scaled to unit variance during training
@@ -41,6 +46,15 @@ eventdisplay-ml-train-xgb-stereo \
     --max_events 100000 \
     --train_test_fraction 0.5 \
     --max_cores 8
+```
+
+For the reduced regression feature set:
+
+```bash
+eventdisplay-ml-train-xgb-stereo \
+    --input_file_list train_files.txt \
+    --model_prefix models/stereo_model_reduced \
+    --feature_profile reduced
 ```
 
 **Output:** Joblib model file containing:
