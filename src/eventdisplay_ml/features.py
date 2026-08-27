@@ -135,7 +135,6 @@ def regression_feature_columns(columns, profile="extended"):
         "EmissionHeight",
         "Geomagnetic_Angle",
         "array_footprint",
-        *[f"width_length_{i}" for i in range(4)],
         *[f"R_core_{i}" for i in range(4)],
         *[f"loss_{i}" for i in range(4)],
     ]

@@ -130,7 +130,6 @@ def test_regression_training_reduced_profile_selects_requested_columns(monkeypat
         "EmissionHeight",
         "Geomagnetic_Angle",
         "array_footprint",
-        *[f"width_length_{i}" for i in range(4)],
         *[f"R_core_{i}" for i in range(4)],
         *[f"loss_{i}" for i in range(4)],
     ]

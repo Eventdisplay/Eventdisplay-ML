@@ -1376,9 +1376,6 @@ def flatten_telescope_variables(
             new_cols[f"loss_dist_{i}"] = df_flat[f"loss_{i}"] * df_flat[f"dist_{i}"]
         if f"size_{i}" in df_flat and f"dist_{i}" in df_flat and keep_size_vars:
             new_cols[f"size_dist2_{i}"] = df_flat[f"size_{i}"] / (df_flat[f"dist_{i}"] ** 2 + 1e-6)
-        if f"width_{i}" in df_flat and f"length_{i}" in df_flat:
-            new_cols[f"width_length_{i}"] = df_flat[f"width_{i}"] / (df_flat[f"length_{i}"] + 1e-6)
-
     df_flat = pd.concat([df_flat, pd.DataFrame(new_cols, index=index)], axis=1)
 
     # inspect ordering and magnitudes before clipping/log10

@@ -88,7 +88,6 @@ def test_reduced_regression_feature_columns_are_stable_and_exact():
         "EmissionHeight",
         "Geomagnetic_Angle",
         "array_footprint",
-        *[f"width_length_{i}" for i in range(4)],
         *[f"R_core_{i}" for i in range(4)],
         *[f"loss_{i}" for i in range(4)],
         "E_residual",
@@ -107,7 +106,6 @@ def test_reduced_regression_feature_columns_are_stable_and_exact():
         "EmissionHeight",
         "Geomagnetic_Angle",
         "array_footprint",
-        *[f"width_length_{i}" for i in range(4)],
         *[f"R_core_{i}" for i in range(4)],
         *[f"loss_{i}" for i in range(4)],
     ]
@@ -129,7 +127,6 @@ def test_reduced_regression_feature_columns_require_all_requested_columns():
                 "EmissionHeight",
                 "Geomagnetic_Angle",
                 "array_footprint",
-                *[f"width_length_{i}" for i in range(4)],
                 *[f"R_core_{i}" for i in range(4)],
                 *[f"loss_{i}" for i in range(3)],
             ],

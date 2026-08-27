@@ -27,8 +27,8 @@ The stereo regression training pipeline uses multi-target XGBoost to predict res
 
 By default, regression uses the extended feature set. An optional reduced set can
 be selected with `--feature_profile reduced`; it contains the array-level geometry
-and energy quantities plus `width_length`, `R_core`, and `loss` summaries for
-telescope positions 0--3. The default is unchanged with `--feature_profile extended`.
+and energy quantities plus `R_core` and `loss` summaries for telescope positions
+0--3. The default is unchanged with `--feature_profile extended`.
 
 **Key techniques:**
 
