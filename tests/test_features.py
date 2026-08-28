@@ -7,6 +7,7 @@ from eventdisplay_ml.features import (
     excluded_features,
     features,
     features_tmva_style,
+    regression_feature_columns,
     target_features,
     telescope_features,
 )
@@ -69,6 +70,71 @@ def test_excluded_features_classification_returns_set():
 def test_excluded_features_unknown_raises():
     with pytest.raises(ValueError, match="Unknown analysis type"):
         excluded_features("mystery", ntel=4)
+
+
+def test_reduced_regression_feature_columns_are_stable_and_exact():
+    columns = [
+        "unrelated",
+        "Xoff_residual",
+        "Xoff_weighted_bdt",
+        "Yoff_weighted_bdt",
+        "Xoff_intersect",
+        "Yoff_intersect",
+        "Diff_Xoff",
+        "Diff_Yoff",
+        "DispNImages",
+        "Erec",
+        "ErecS",
+        "EmissionHeight",
+        "Geomagnetic_Angle",
+        "array_footprint",
+        *[f"width_length_{i}" for i in range(4)],
+        *[f"R_core_{i}" for i in range(4)],
+        *[f"loss_{i}" for i in range(4)],
+        "E_residual",
+    ]
+
+    assert regression_feature_columns(columns, profile="reduced") == [
+        "Xoff_weighted_bdt",
+        "Yoff_weighted_bdt",
+        "Xoff_intersect",
+        "Yoff_intersect",
+        "Diff_Xoff",
+        "Diff_Yoff",
+        "DispNImages",
+        "Erec",
+        "ErecS",
+        "EmissionHeight",
+        "Geomagnetic_Angle",
+        "array_footprint",
+        *[f"width_length_{i}" for i in range(4)],
+        *[f"R_core_{i}" for i in range(4)],
+        *[f"loss_{i}" for i in range(4)],
+    ]
+
+
+def test_reduced_regression_feature_columns_require_all_requested_columns():
+    with pytest.raises(ValueError, match="missing required columns: loss_3"):
+        regression_feature_columns(
+            [
+                "Xoff_weighted_bdt",
+                "Yoff_weighted_bdt",
+                "Xoff_intersect",
+                "Yoff_intersect",
+                "Diff_Xoff",
+                "Diff_Yoff",
+                "DispNImages",
+                "Erec",
+                "ErecS",
+                "EmissionHeight",
+                "Geomagnetic_Angle",
+                "array_footprint",
+                *[f"width_length_{i}" for i in range(4)],
+                *[f"R_core_{i}" for i in range(4)],
+                *[f"loss_{i}" for i in range(3)],
+            ],
+            profile="reduced",
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -114,6 +114,58 @@ def test_regression_training_contract_excludes_targets_and_uses_train_only_scale
     assert result["target_std"] == pytest.approx(expected_std.to_dict(), abs=0.0)
 
 
+def test_regression_training_reduced_profile_selects_requested_columns(monkeypatch):
+    n_events = 240
+    row_number = np.arange(n_events, dtype=float)
+    reduced_columns = [
+        "Xoff_weighted_bdt",
+        "Yoff_weighted_bdt",
+        "Xoff_intersect",
+        "Yoff_intersect",
+        "Diff_Xoff",
+        "Diff_Yoff",
+        "DispNImages",
+        "Erec",
+        "ErecS",
+        "EmissionHeight",
+        "Geomagnetic_Angle",
+        "array_footprint",
+        *[f"width_length_{i}" for i in range(4)],
+        *[f"R_core_{i}" for i in range(4)],
+        *[f"loss_{i}" for i in range(4)],
+    ]
+    data = {column: row_number + offset for offset, column in enumerate(reduced_columns)}
+    data.update(
+        {
+            "Xoff_residual": 1.0 + row_number,
+            "Yoff_residual": 2.0 + row_number,
+            "E_residual": 0.01 + 0.001 * row_number,
+        }
+    )
+    data["ErecS"] = np.full(n_events, 3.0)
+    data["DispNImages"] = np.full(n_events, 2)
+    frame = pd.DataFrame(data)
+    captured_model = CapturingRegressor()
+    monkeypatch.setattr("xgboost.XGBRegressor", lambda **_: captured_model)
+    monkeypatch.setattr("eventdisplay_ml.models.evaluate_regression_model", lambda *_args: {})
+
+    result = models.train_regression(
+        frame,
+        {
+            "targets": ["Xoff_residual", "Yoff_residual", "E_residual"],
+            "feature_profile": "reduced",
+            "train_test_fraction": 0.5,
+            "random_state": 19,
+            "eval_max_events": 0,
+            "diagnostic_max_events": 0,
+            "models": {"xgboost": {"hyper_parameters": {}}},
+        },
+    )
+
+    assert result["features"] == reduced_columns
+    assert result["models"]["xgboost"]["features"] == reduced_columns
+
+
 def test_persisted_regression_model_preserves_feature_order_and_reconstructs_truth(
     tmp_path, monkeypatch
 ):

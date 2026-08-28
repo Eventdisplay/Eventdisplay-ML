@@ -847,9 +847,13 @@ def train_regression(df, model_configs):
     memory_profile = model_configs.get("memory_profile", False)
     utils.log_memory_checkpoint("train_regression:start", df, enabled=memory_profile)
 
-    # Exclude target residuals from features
-    excluded_cols = set(model_configs["targets"])
-    x_cols = [col for col in df.columns if col not in excluded_cols]
+    # Exclude target residuals from features and optionally select a reduced
+    # regression profile.  The default profile preserves the historical
+    # all-non-target feature set.
+    profile = model_configs.get("feature_profile", "extended")
+    x_cols = features.regression_feature_columns(df.columns, profile=profile)
+    excluded_targets = set(model_configs["targets"])
+    x_cols = [col for col in x_cols if col not in excluded_targets]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
     targets = model_configs["targets"]

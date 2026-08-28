@@ -90,6 +90,33 @@ def test_configure_training_stereo_enables_memory_profile(monkeypatch):
     assert result["memory_profile"] is True
 
 
+def test_configure_training_stereo_parses_reduced_feature_profile(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "--model_prefix",
+            "model",
+            "--input_file_list",
+            "inputs.txt",
+            "--feature_profile",
+            "reduced",
+        ],
+    )
+    monkeypatch.setattr(
+        config,
+        "hyper_parameters",
+        lambda *_: {"xgboost": {"hyper_parameters": {}}},
+    )
+    monkeypatch.setattr(config, "target_features", lambda *_: ["target_a"])
+    monkeypatch.setattr(config, "pre_cuts_regression", lambda min_images: f"cut_{min_images}")
+
+    result = config.configure_training("stereo_analysis")
+
+    assert result["feature_profile"] == "reduced"
+
+
 def test_configure_training_classification_parses_tmva_style(monkeypatch, model_parameters_file):
     monkeypatch.setattr(
         sys,
