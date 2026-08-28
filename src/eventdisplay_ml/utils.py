@@ -15,6 +15,11 @@ _logger = logging.getLogger(__name__)
 _profile_start_time = None
 _profile_last_time = None
 
+# Keep command-line regression jobs reproducible when no seed is supplied.  The
+# value is deliberately defined in a dependency-free module so both data
+# loading and model training use the same fallback.
+DEFAULT_REGRESSION_RANDOM_STATE = 42
+
 
 def _max_rss_gb():
     """Return the process peak resident set size in GB."""
