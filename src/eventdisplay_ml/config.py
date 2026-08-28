@@ -83,11 +83,17 @@ def configure_training(analysis_type):
             "(signal/background in classification)."
         ),
     )
+    random_state_default = (
+        utils.DEFAULT_REGRESSION_RANDOM_STATE if analysis_type == "stereo_analysis" else None
+    )
     parser.add_argument(
         "--random_state",
         type=int,
-        help="Random state for train/test split.",
-        default=None,
+        help=(
+            "Random state used for event sampling, train/test splitting, XGBoost, "
+            "and diagnostics. Regression defaults to 42."
+        ),
+        default=random_state_default,
     )
 
     if analysis_type == "classification":

@@ -190,10 +190,12 @@ def test_persisted_regression_model_preserves_feature_order_and_reconstructs_tru
             "features": feature_order,
             "target_mean": target_mean,
             "target_std": target_std,
+            "training_parameters": {"random_state": 17},
         },
         tmp_path / "stereo_model.joblib.gz",
     )
     loaded_models, loaded_parameters = models.load_regression_models(str(model_prefix), "xgboost")
+    assert loaded_parameters["training_parameters"]["random_state"] == 17
 
     # Deliberately not in persisted feature order, and includes a column that
     # must not reach the model.

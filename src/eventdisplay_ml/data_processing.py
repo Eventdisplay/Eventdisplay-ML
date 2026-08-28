@@ -1016,6 +1016,13 @@ def load_training_data(model_configs, file_list, analysis_type):
     classification_mode = analysis_type == "classification"
     max_events = model_configs.get("max_events", None)
     random_state = model_configs.get("random_state", None)
+    if analysis_type == "stereo_analysis" and random_state is None:
+        random_state = utils.DEFAULT_REGRESSION_RANDOM_STATE
+        model_configs["random_state"] = random_state
+        _logger.info(
+            "No regression random_state supplied; using default seed %d",
+            random_state,
+        )
     memory_profile = model_configs.get("memory_profile", False)
 
     _logger.info(f"--- Loading and Flattening Data for {analysis_type} ---")
@@ -1029,6 +1036,11 @@ def load_training_data(model_configs, file_list, analysis_type):
         _logger.info(f"Adding zenith binning: {model_configs.get('zenith_bins_deg', [])}")
 
     input_files = utils.read_input_file_list(file_list)
+    if analysis_type == "stereo_analysis":
+        # Persist the ordered manifest used for training.  With a capped input
+        # sample, changing file order changes the reservoir stream and hence the
+        # selected events even when the seed is unchanged.
+        model_configs["training_input_files"] = list(input_files)
     if classification_mode and not input_files:
         raise ValueError(f"Input file list is empty: {file_list}")
 

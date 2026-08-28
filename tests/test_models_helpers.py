@@ -58,6 +58,26 @@ def test_save_models_writes_expected_joblib(tmp_path):
     assert (tmp_path / "saved.joblib.gz").exists()
 
 
+def test_save_models_persists_regression_training_record(tmp_path, monkeypatch):
+    """Verify the regression record is retained by the Joblib save boundary."""
+    training_record = {
+        "random_state": 42,
+        "random_seeds": {"train_test_split": 42},
+        "models": {"xgboost": {"effective_hyper_parameters": {"max_depth": 5}}},
+    }
+    model_configs = {
+        "model_prefix": str(tmp_path / "saved"),
+        "models": {"xgboost": {"model": "trained-model"}},
+        "training_parameters": training_record,
+    }
+    monkeypatch.setattr(models, "_validate_saved_model", lambda _path: None)
+
+    models.save_models(model_configs)
+
+    saved = joblib.load(tmp_path / "saved.joblib.gz")
+    assert saved["training_parameters"] == training_record
+
+
 def test_save_models_rejects_model_that_fails_validation(tmp_path, monkeypatch):
     model_configs = {
         "model_prefix": str(tmp_path / "invalid"),

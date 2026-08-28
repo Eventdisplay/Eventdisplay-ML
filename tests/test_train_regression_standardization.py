@@ -119,6 +119,35 @@ class TestTargetStandardization:
         for target in cfg["targets"]:
             assert result["target_std"][target] > 0, f"{target} std should not be zero"
 
+    def test_training_record_contains_all_regression_seeds_and_parameters(
+        self, regression_training_df, regression_model_config
+    ):
+        """Persist the effective reproducibility and XGBoost training record."""
+        result = models.train_regression(regression_training_df, regression_model_config)
+
+        record = result["training_parameters"]
+        assert record["random_state"] == 42
+        assert record["random_seeds"] == {
+            "data_sampling": 42,
+            "train_test_split": 42,
+            "validation_sampling": 42,
+            "diagnostic_sampling": 42,
+            "shap_sampling": 42,
+            "xgboost": {
+                "xgboost": {"random_state": 42},
+            },
+        }
+        model_record = record["models"]["xgboost"]
+        assert (
+            model_record["hyper_parameters"]
+            == regression_model_config["models"]["xgboost"]["hyper_parameters"]
+        )
+        assert model_record["effective_hyper_parameters"]["early_stopping_rounds"] == 2
+        assert model_record["effective_hyper_parameters"]["random_state"] == 42
+        assert model_record["xgboost_parameters"]["random_state"] == 42
+        assert record["features"] == result["features"]
+        assert record["targets"] == regression_model_config["targets"]
+
 
 class TestEnergyBinWeighting:
     """Tests for energy-bin weighting (especially zeroing low-count bins)."""
