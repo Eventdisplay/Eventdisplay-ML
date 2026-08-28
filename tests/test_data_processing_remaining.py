@@ -1,6 +1,6 @@
 """Tests for remaining data_processing helper branches."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import awkward as ak
 import numpy as np
@@ -287,11 +287,15 @@ def test_load_training_data_stereo_adds_residuals(monkeypatch, tel_config):
     )
     monkeypatch.setattr(data_processing, "print_variable_statistics", lambda *_: None)
 
-    result = data_processing.load_training_data({"max_cores": 1}, "inputs.txt", "stereo_analysis")
+    model_configs = {"max_cores": 1}
+    with patch("eventdisplay_ml.data_processing.np.random.default_rng") as rng_mock:
+        result = data_processing.load_training_data(model_configs, "inputs.txt", "stereo_analysis")
 
     assert result["Xoff_residual"].tolist() == pytest.approx([0.2, 0.4])
     assert result["Yoff_residual"].tolist() == pytest.approx([0.1, 0.4])
     assert result["E_residual"].tolist() == pytest.approx([np.log10(10.0) - np.log10(5.0), 1.0])
+    assert model_configs["random_state"] == 42
+    rng_mock.assert_called_once_with(42)
 
 
 def test_load_training_data_caps_iterated_chunks(monkeypatch, tel_config):

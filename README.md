@@ -62,7 +62,16 @@ eventdisplay-ml-train-xgb-stereo \
 - XGBoost trained model object
 - Target standardization scalers (mean/std)
 - Feature list and SHAP importance rankings
-- Training metadata (random state, hyperparameters)
+- A frozen regression training record: the seed used for input sampling,
+  train/test splitting, validation/diagnostic/SHAP sampling, and XGBoost;
+  ordered input-file manifest; feature/target configuration; weighting and
+  event-limit settings; configured and effective XGBoost parameters; and the
+  best iteration/score
+
+Regression uses seed `42` when `--random_state` is omitted. The full record is
+stored under `training_parameters` in the Joblib payload and is also returned
+by the regression model loader, so a trained model can be audited without
+reconstructing the command line.
 
 ### Applying Stereo Reconstruction Models
 

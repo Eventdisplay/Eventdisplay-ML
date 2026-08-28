@@ -1,5 +1,6 @@
 """Apply models for regression and classification tasks."""
 
+import copy
 import logging
 import re
 import subprocess
@@ -36,6 +37,13 @@ _MIN_WEIGHTED_ENERGY_BIN_EVENTS = 100
 _MAX_REGRESSION_SAMPLE_WEIGHT = 50.0
 _MODEL_VALIDATION_MEMORY_BYTES = 4 * 1024**3
 _MODEL_VALIDATION_TIMEOUT_SECONDS = 120
+_REGRESSION_RANDOM_SEED_NAMES = (
+    "data_sampling",
+    "train_test_split",
+    "validation_sampling",
+    "diagnostic_sampling",
+    "shap_sampling",
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -359,11 +367,12 @@ def load_regression_models(model_prefix, model_name):
         }
     }
     par = {}
-    for key in ("target_mean", "target_std"):
+    for key in ("target_mean", "target_std", "training_parameters"):
         if key in model_data:
             par[key] = model_data[key]
         else:
-            _logger.warning("Missing '%s' in regression model file: %s", key, model_path)
+            if key in {"target_mean", "target_std"}:
+                _logger.warning("Missing '%s' in regression model file: %s", key, model_path)
 
     _logger.info("Loaded regression model.")
     return models, par
@@ -844,6 +853,17 @@ def train_regression(df, model_configs):
         _logger.warning("Skipping training due to empty data.")
         return None
 
+    # A regression run has several random consumers.  Keep one explicit seed
+    # for all of them and freeze the resulting record in the artifact below.
+    random_state = model_configs.get("random_state")
+    if random_state is None:
+        random_state = utils.DEFAULT_REGRESSION_RANDOM_STATE
+        model_configs["random_state"] = random_state
+        _logger.info(
+            "No regression random_state supplied; using default seed %d",
+            random_state,
+        )
+
     memory_profile = model_configs.get("memory_profile", False)
     utils.log_memory_checkpoint("train_regression:start", df, enabled=memory_profile)
 
@@ -852,16 +872,49 @@ def train_regression(df, model_configs):
     # all-non-target feature set.
     profile = model_configs.get("feature_profile", "extended")
     x_cols = features.regression_feature_columns(df.columns, profile=profile)
+    excluded_targets = set(model_configs["targets"])
+    x_cols = [col for col in x_cols if col not in excluded_targets]
     _logger.info(f"Features ({len(x_cols)}): {', '.join(list(x_cols))}")
     model_configs["features"] = list(x_cols)
     targets = model_configs["targets"]
+    random_seeds = dict.fromkeys(_REGRESSION_RANDOM_SEED_NAMES, random_state)
+    random_seeds["xgboost"] = {}
+    training_parameters = {
+        "analysis_type": "stereo_analysis",
+        "random_state": random_state,
+        "random_seeds": random_seeds,
+        "train_test_fraction": model_configs.get("train_test_fraction", 0.5),
+        "max_events": model_configs.get("max_events"),
+        "eval_max_events": model_configs.get("eval_max_events", 200000),
+        "diagnostic_max_events": model_configs.get("diagnostic_max_events", 100000),
+        "prediction_chunk_size": model_configs.get("prediction_chunk_size", 200000),
+        "feature_profile": profile,
+        "features": list(x_cols),
+        "targets": list(targets),
+        "pre_cuts": model_configs.get("pre_cuts"),
+        "input_file_list": model_configs.get("input_file_list"),
+        "input_files": list(model_configs.get("training_input_files", [])),
+        "weighting": {
+            "energy_weighting": "inverse_sqrt_bin_count",
+            "min_energy_bin_events": _MIN_WEIGHTED_ENERGY_BIN_EVENTS,
+            "multiplicity_weighting": "DispNImages**2",
+            "max_sample_weight": _MAX_REGRESSION_SAMPLE_WEIGHT,
+        },
+        # Keep a frozen copy of any additional top-level training options so
+        # future options are not silently omitted from the audit record.
+        "configuration": copy.deepcopy(
+            {key: value for key, value in model_configs.items() if key != "models"}
+        ),
+        "models": {},
+    }
+    model_configs["training_parameters"] = training_parameters
     utils.log_memory_checkpoint("after feature list creation", df, enabled=memory_profile)
 
     row_indices = np.arange(len(df))
     train_idx, test_idx = train_test_split(
         row_indices,
         train_size=model_configs.get("train_test_fraction", 0.5),
-        random_state=model_configs.get("random_state", None),
+        random_state=random_state,
     )
     utils.log_memory_checkpoint("after index train_test_split", enabled=memory_profile)
 
@@ -921,7 +974,7 @@ def train_regression(df, model_configs):
     eval_idx = _sample_eval_indices(
         test_idx,
         model_configs.get("eval_max_events", 200000),
-        model_configs.get("random_state", None),
+        random_state,
     )
     weights_eval = None
     if weight_config is not None:
@@ -952,7 +1005,12 @@ def train_regression(df, model_configs):
         utils.log_memory_checkpoint("after building XGBoost fit arrays", enabled=memory_profile)
 
         utils.log_memory_checkpoint(f"{name}: before XGBRegressor init", enabled=memory_profile)
-        hyper_parameters = dict(cfg.get("hyper_parameters", {}))
+        configured_hyper_parameters = copy.deepcopy(cfg.get("hyper_parameters", {}))
+        hyper_parameters = dict(configured_hyper_parameters)
+        if random_state is not None:
+            # configure_training applies this override for CLI jobs; applying
+            # it here as well keeps the public train_regression() API aligned.
+            hyper_parameters["random_state"] = random_state
         early_stopping_rounds = hyper_parameters.pop("early_stopping_rounds", None)
         if early_stopping_rounds is not None:
             hyper_parameters["callbacks"] = [
@@ -988,7 +1046,7 @@ def train_regression(df, model_configs):
         diagnostic_train_idx = _sample_eval_indices(
             train_idx,
             model_configs.get("diagnostic_max_events", 100000),
-            model_configs.get("random_state", None),
+            random_state,
         )
         y_train_diagnostic = (
             y_train
@@ -1047,7 +1105,7 @@ def train_regression(df, model_configs):
         shap_idx = _sample_eval_indices(
             test_idx,
             1000,
-            model_configs.get("random_state", None),
+            random_state,
         )
         x_test_shap = df.iloc[shap_idx, df.columns.get_indexer(x_cols)]
         utils.log_memory_checkpoint(f"{name}: before regression evaluation", enabled=memory_profile)
@@ -1061,6 +1119,31 @@ def train_regression(df, model_configs):
         cfg["generalization_metrics"] = generalization_metrics
         cfg["residual_normality_stats"] = residual_normality_stats
         cfg["shap_importance"] = shap_importance  # Store per-target SHAP importance from evaluation
+
+        effective_hyper_parameters = copy.deepcopy(hyper_parameters)
+        if early_stopping_rounds is not None:
+            effective_hyper_parameters["early_stopping_rounds"] = early_stopping_rounds
+        xgboost_parameters = None
+        if hasattr(model, "get_params"):
+            candidate_parameters = model.get_params(deep=False)
+            if isinstance(candidate_parameters, dict):
+                xgboost_parameters = copy.deepcopy(candidate_parameters)
+        if xgboost_parameters is None:
+            xgboost_parameters = copy.deepcopy(effective_hyper_parameters)
+        model_random_state = {
+            key: xgboost_parameters.get(key)
+            for key in ("random_state", "seed")
+            if key in xgboost_parameters
+        }
+        random_seeds["xgboost"][name] = model_random_state
+        training_parameters["models"][name] = {
+            "hyper_parameters": configured_hyper_parameters,
+            "effective_hyper_parameters": effective_hyper_parameters,
+            "xgboost_parameters": xgboost_parameters,
+            "random_seeds": model_random_state,
+            "best_iteration": getattr(model, "best_iteration", None),
+            "best_score": getattr(model, "best_score", None),
+        }
 
     return model_configs
 
