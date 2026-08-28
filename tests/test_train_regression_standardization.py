@@ -1,5 +1,6 @@
 """Tests for target standardization and energy-bin weighting in train_regression()."""
 
+import copy
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -8,7 +9,7 @@ import pytest
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
 
-from eventdisplay_ml import diagnostic_utils, models
+from eventdisplay_ml import diagnostic_utils, models, utils
 
 
 @pytest.fixture
@@ -119,34 +120,83 @@ class TestTargetStandardization:
         for target in cfg["targets"]:
             assert result["target_std"][target] > 0, f"{target} std should not be zero"
 
+    @pytest.mark.parametrize("seed_mode", ["missing", "none"])
     def test_training_record_contains_all_regression_seeds_and_parameters(
-        self, regression_training_df, regression_model_config
+        self, regression_training_df, regression_model_config, seed_mode
     ):
         """Persist the effective reproducibility and XGBoost training record."""
-        result = models.train_regression(regression_training_df, regression_model_config)
+        cfg = copy.deepcopy(regression_model_config)
+        if seed_mode == "missing":
+            cfg.pop("random_state")
+        else:
+            cfg["random_state"] = None
+        cfg["models"]["xgboost"]["hyper_parameters"].pop("random_state")
+        cfg["eval_max_events"] = 10
+        cfg["diagnostic_max_events"] = 10
+
+        class _CapturingRegressor:
+            best_iteration = 0
+            best_score = 0.0
+
+            def __init__(self, **kwargs):
+                self.params = kwargs
+
+            def fit(self, *_args, **_kwargs):
+                return self
+
+            def predict(self, x_values):
+                return np.zeros((len(x_values), len(cfg["targets"])))
+
+            def get_params(self, deep=False):  # noqa: ARG002
+                return self.params
+
+        with (
+            patch("eventdisplay_ml.models.train_test_split", wraps=train_test_split) as split_mock,
+            patch(
+                "eventdisplay_ml.models._sample_eval_indices",
+                wraps=models._sample_eval_indices,
+            ) as sample_mock,
+            patch("xgboost.XGBRegressor", side_effect=_CapturingRegressor) as xgb_mock,
+            patch("eventdisplay_ml.models.evaluate_regression_model", return_value={}),
+        ):
+            result = models.train_regression(regression_training_df, cfg)
 
         record = result["training_parameters"]
-        assert record["random_state"] == 42
+        assert record["random_state"] == utils.DEFAULT_REGRESSION_RANDOM_STATE
         assert record["random_seeds"] == {
-            "data_sampling": 42,
-            "train_test_split": 42,
-            "validation_sampling": 42,
-            "diagnostic_sampling": 42,
-            "shap_sampling": 42,
+            "data_sampling": utils.DEFAULT_REGRESSION_RANDOM_STATE,
+            "train_test_split": utils.DEFAULT_REGRESSION_RANDOM_STATE,
+            "validation_sampling": utils.DEFAULT_REGRESSION_RANDOM_STATE,
+            "diagnostic_sampling": utils.DEFAULT_REGRESSION_RANDOM_STATE,
+            "shap_sampling": utils.DEFAULT_REGRESSION_RANDOM_STATE,
             "xgboost": {
-                "xgboost": {"random_state": 42},
+                "xgboost": {"random_state": utils.DEFAULT_REGRESSION_RANDOM_STATE},
             },
         }
+        assert cfg["random_state"] == utils.DEFAULT_REGRESSION_RANDOM_STATE
+        assert split_mock.call_args.kwargs["random_state"] == utils.DEFAULT_REGRESSION_RANDOM_STATE
+        assert sample_mock.call_count >= 3
+        assert all(
+            call.args[2] == utils.DEFAULT_REGRESSION_RANDOM_STATE for call in sample_mock.call_args_list
+        )
+        assert (
+            xgb_mock.call_args.kwargs["random_state"] == utils.DEFAULT_REGRESSION_RANDOM_STATE
+        )
         model_record = record["models"]["xgboost"]
         assert (
-            model_record["hyper_parameters"]
-            == regression_model_config["models"]["xgboost"]["hyper_parameters"]
+            model_record["hyper_parameters"] == cfg["models"]["xgboost"]["hyper_parameters"]
         )
         assert model_record["effective_hyper_parameters"]["early_stopping_rounds"] == 2
-        assert model_record["effective_hyper_parameters"]["random_state"] == 42
-        assert model_record["xgboost_parameters"]["random_state"] == 42
+        assert (
+            model_record["effective_hyper_parameters"]["random_state"]
+            == utils.DEFAULT_REGRESSION_RANDOM_STATE
+        )
+        assert (
+            model_record["xgboost_parameters"]["random_state"]
+            == utils.DEFAULT_REGRESSION_RANDOM_STATE
+        )
         assert record["features"] == result["features"]
-        assert record["targets"] == regression_model_config["targets"]
+        assert record["targets"] == cfg["targets"]
 
 
 class TestEnergyBinWeighting:

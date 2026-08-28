@@ -90,6 +90,32 @@ def test_configure_training_stereo_enables_memory_profile(monkeypatch):
     assert result["memory_profile"] is True
 
 
+def test_configure_training_stereo_defaults_random_state(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "--model_prefix",
+            "model",
+            "--input_file_list",
+            "inputs.txt",
+        ],
+    )
+    monkeypatch.setattr(
+        config,
+        "hyper_parameters",
+        lambda *_: {"xgboost": {"hyper_parameters": {}}},
+    )
+    monkeypatch.setattr(config, "target_features", lambda *_: ["target_a"])
+    monkeypatch.setattr(config, "pre_cuts_regression", lambda min_images: f"cut_{min_images}")
+
+    result = config.configure_training("stereo_analysis")
+
+    assert result["random_state"] == 42
+    assert result["models"]["xgboost"]["hyper_parameters"]["random_state"] == 42
+
+
 def test_configure_training_stereo_parses_reduced_feature_profile(monkeypatch):
     monkeypatch.setattr(
         sys,
