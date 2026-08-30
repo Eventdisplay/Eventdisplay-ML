@@ -45,8 +45,8 @@ def configure_training(analysis_type):
             default="extended",
             help=(
                 "Regression feature set. 'extended' retains all non-target features; "
-                "'reduced' uses array-level quantities and width/length, R_core, "
-                "and loss summaries for telescope positions 0-3."
+                "'reduced' uses array-level quantities plus R_core and loss summaries "
+                "for telescope positions 0-3."
             ),
         )
     if analysis_type == "classification":

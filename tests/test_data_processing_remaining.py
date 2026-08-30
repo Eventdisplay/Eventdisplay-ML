@@ -152,6 +152,7 @@ def test_flatten_feature_data_drops_size_columns_for_classification(tel_config):
 
     assert "size_0" not in result.columns
     assert "size_dist2_0" not in result.columns
+    assert "width_length_0" not in result.columns
     assert "cosphi_0" in result.columns
     assert "ze_bin" in result.columns
 
