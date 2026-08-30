@@ -360,12 +360,33 @@ def load_regression_models(model_prefix, model_name):
     _logger.info(f"Loading regression model: {model_path}")
 
     model_data = utils.load_joblib(model_path)
-    models = {
-        model_name: {
-            "model": model_data["models"][model_name]["model"],
-            "features": model_data.get("features", []),
+    regression_mode = model_data.get("regression_mode")
+    if regression_mode == "separate_direction_energy":
+        required_models = {"direction", "energy"}
+        missing_models = required_models - set(model_data.get("models", {}))
+        if missing_models:
+            raise KeyError(
+                "Separate direction/energy regression artifact is missing model(s): "
+                f"{', '.join(sorted(missing_models))}."
+            )
+        models = {
+            name: {
+                "model": model_data["models"][name]["model"],
+                "features": model_data["models"][name].get(
+                    "features", model_data.get("features", [])
+                ),
+                "targets": model_data["models"][name].get("targets", []),
+            }
+            for name in ("direction", "energy")
         }
-    }
+    else:
+        models = {
+            model_name: {
+                "model": model_data["models"][model_name]["model"],
+                "features": model_data.get("features", []),
+                "targets": ["Xoff_residual", "Yoff_residual", "E_residual"],
+            }
+        }
     par = {}
     for key in ("target_mean", "target_std", "training_parameters"):
         if key in model_data:
@@ -373,6 +394,9 @@ def load_regression_models(model_prefix, model_name):
         else:
             if key in {"target_mean", "target_std"}:
                 _logger.warning("Missing '%s' in regression model file: %s", key, model_path)
+
+    if regression_mode is not None:
+        par["regression_mode"] = regression_mode
 
     _logger.info("Loaded regression model.")
     return models, par
@@ -416,24 +440,34 @@ def apply_regression_models(df, model_configs):
         preview_rows=model_configs.get("preview_rows", 20),
     )
 
-    def predict(models, target_mean_cfg, target_std_cfg, mask=None):
-        model_data = next(iter(models.values()))
-        model_input = flatten_data.reindex(columns=model_data["features"])
-        if mask is not None:
-            model_input = model_input.loc[mask]
-
+    def predict_one(model_data, target_mean_cfg, target_std_cfg, mask=None):
+        targets = model_data.get("targets", ["Xoff_residual", "Yoff_residual", "E_residual"])
         if not target_mean_cfg or not target_std_cfg:
             raise ValueError(
                 "Missing target standardization parameters (target_mean/target_std). "
                 "Regenerate the regression model or load a model file that includes them."
             )
-        target_mean = np.array(
-            [target_mean_cfg[key] for key in ("Xoff_residual", "Yoff_residual", "E_residual")]
+        target_mean = np.array([target_mean_cfg[key] for key in targets])
+        target_std = np.array([target_std_cfg[key] for key in targets])
+        model_input = flatten_data.reindex(columns=model_data["features"])
+        if mask is not None:
+            model_input = model_input.loc[mask]
+        prediction = np.asarray(model_data["model"].predict(model_input)).reshape(
+            len(model_input), -1
         )
-        target_std = np.array(
-            [target_std_cfg[key] for key in ("Xoff_residual", "Yoff_residual", "E_residual")]
-        )
-        return model_data["model"].predict(model_input) * target_std + target_mean
+        if prediction.shape[1] != len(targets):
+            raise ValueError(
+                f"Regression model predicted {prediction.shape[1]} outputs for {len(targets)} targets: "
+                f"{targets}."
+            )
+        return prediction * target_std + target_mean
+
+    def predict(models, target_mean_cfg, target_std_cfg, mask=None):
+        if set(models) == {"direction", "energy"}:
+            direction = predict_one(models["direction"], target_mean_cfg, target_std_cfg, mask)
+            energy = predict_one(models["energy"], target_mean_cfg, target_std_cfg, mask)
+            return np.column_stack((direction, energy))
+        return predict_one(next(iter(models.values())), target_mean_cfg, target_std_cfg, mask)
 
     model_data = next(iter(model_configs["models"].values()))
     primary_model_input = flatten_data.reindex(columns=model_data["features"])
@@ -465,8 +499,6 @@ def apply_regression_models(df, model_configs):
                 model_configs.get("target_std_high_multiplicity"),
                 high_mask,
             )
-
-    flatten_data = primary_model_input
 
     # Model predicts residuals, so add them to DispBDT baseline
     # Extract DispBDT predictions from the flattened data
@@ -946,19 +978,16 @@ def train_regression(df, model_configs):
     del train_disp_nimages
     utils.log_memory_checkpoint("after sample-weight calculation", enabled=memory_profile)
 
-    # Standardize targets to prevent energy from dominating direction in multi-target learning
-    # Compute mean and std from training data only
+    # Compute target scalers from training data only.  Separate direction and
+    # energy models use the corresponding subsets below.
     target_indices = df.columns.get_indexer(targets)
     y_train = df.iloc[train_idx, target_indices]
-    y_test = df.iloc[test_idx, target_indices]
     y_mean = y_train.mean()
     y_std = y_train.std()
 
     _logger.info("Target standardization (training set):")
     for target in model_configs["targets"]:
         _logger.info(f"  {target}: mean={y_mean[target]:.6f}, std={y_std[target]:.6f}")
-
-    y_train_scaled = (y_train - y_mean) / y_std
 
     # Store scalers for later use during inference
     model_configs["target_mean"] = y_mean.to_dict()
@@ -994,13 +1023,24 @@ def train_regression(df, model_configs):
     _logger.info(f"XGBoost eval_set test events: {len(eval_idx)}")
 
     for name, cfg in model_configs.get("models", {}).items():
+        model_targets = cfg.get("targets", targets)
+        unknown_targets = set(model_targets) - set(targets)
+        if unknown_targets:
+            raise ValueError(f"Model '{name}' has unknown regression targets: {unknown_targets}")
+        model_target_indices = df.columns.get_indexer(model_targets)
+        model_y_train = df.iloc[train_idx, model_target_indices]
+        model_y_test = df.iloc[test_idx, model_target_indices]
+        model_y_mean = model_y_train.mean()
+        model_y_std = model_y_train.std()
+        model_y_train_scaled = (model_y_train - model_y_mean) / model_y_std
+
         _logger.info(f"Training {name}")
         x_train = _feature_array(df, train_idx, x_cols)
-        y_train_scaled_array = y_train_scaled.to_numpy(dtype=np.float32, copy=True)
+        y_train_scaled_array = model_y_train_scaled.to_numpy(dtype=np.float32, copy=True)
         x_eval = _feature_array(df, eval_idx, x_cols)
-        y_eval_scaled_array = ((df.iloc[eval_idx, target_indices] - y_mean) / y_std).to_numpy(
-            dtype=np.float32, copy=True
-        )
+        y_eval_scaled_array = (
+            (df.iloc[eval_idx, model_target_indices] - model_y_mean) / model_y_std
+        ).to_numpy(dtype=np.float32, copy=True)
         eval_set = [(x_eval, y_eval_scaled_array)]
         utils.log_memory_checkpoint("after building XGBoost fit arrays", enabled=memory_profile)
 
@@ -1049,9 +1089,9 @@ def train_regression(df, model_configs):
             random_state,
         )
         y_train_diagnostic = (
-            y_train
+            model_y_train
             if diagnostic_train_idx is train_idx
-            else df.iloc[diagnostic_train_idx, target_indices]
+            else df.iloc[diagnostic_train_idx, model_target_indices]
         )
         _logger.info(
             "Post-training diagnostic training events: %d",
@@ -1062,9 +1102,9 @@ def train_regression(df, model_configs):
             df,
             diagnostic_train_idx,
             x_cols,
-            y_mean,
-            y_std,
-            targets,
+            model_y_mean,
+            model_y_std,
+            model_targets,
             prediction_chunk_size,
         )
         utils.log_memory_checkpoint(
@@ -1078,9 +1118,9 @@ def train_regression(df, model_configs):
             df,
             test_idx,
             x_cols,
-            y_mean,
-            y_std,
-            targets,
+            model_y_mean,
+            model_y_std,
+            model_targets,
             prediction_chunk_size,
         )
         utils.log_memory_checkpoint(
@@ -1091,15 +1131,15 @@ def train_regression(df, model_configs):
         generalization_metrics = diagnostic_utils.compute_generalization_metrics(
             y_train_diagnostic,
             y_train_pred,
-            y_test,
+            model_y_test,
             y_pred,
-            targets,
+            model_targets,
         )
 
         residual_normality_stats = diagnostic_utils.compute_residual_normality_stats(
-            y_test,
+            model_y_test,
             y_pred,
-            targets,
+            model_targets,
         )
 
         shap_idx = _sample_eval_indices(
@@ -1110,12 +1150,20 @@ def train_regression(df, model_configs):
         x_test_shap = df.iloc[shap_idx, df.columns.get_indexer(x_cols)]
         utils.log_memory_checkpoint(f"{name}: before regression evaluation", enabled=memory_profile)
         shap_importance = evaluate_regression_model(
-            model, x_test_shap, y_pred, y_test, df, x_cols, y_test, name
+            model,
+            x_test_shap,
+            y_pred,
+            model_y_test,
+            df,
+            x_cols,
+            model_y_test,
+            name,
         )
         del x_test_shap
         utils.log_memory_checkpoint(f"{name}: after regression evaluation", enabled=memory_profile)
         cfg["model"] = model
         cfg["features"] = x_cols  # Store feature names for later use
+        cfg["targets"] = list(model_targets)
         cfg["generalization_metrics"] = generalization_metrics
         cfg["residual_normality_stats"] = residual_normality_stats
         cfg["shap_importance"] = shap_importance  # Store per-target SHAP importance from evaluation

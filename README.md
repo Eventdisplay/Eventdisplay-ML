@@ -57,6 +57,18 @@ eventdisplay-ml-train-xgb-stereo \
     --feature_profile reduced
 ```
 
+To train separate direction and energy models while keeping one model artifact:
+
+```bash
+eventdisplay-ml-train-xgb-stereo \
+    --input_file_list train_files.txt \
+    --model_prefix models/stereo_model_separate \
+    --separate_direction_energy
+```
+
+The usual stereo-application command detects this artifact automatically and
+combines the direction and energy predictions.
+
 **Output:** Joblib model file containing:
 
 - XGBoost trained model object

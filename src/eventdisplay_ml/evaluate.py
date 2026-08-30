@@ -157,16 +157,23 @@ def evaluate_regression_model(
         if shap_per_energy:
             shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
-    calculate_resolution(
-        y_pred,
-        y_test,
-        df,
-        percentiles=[68, 90, 95],
-        log_e_min=-2,
-        log_e_max=2.5,
-        n_bins=9,
-        name=name,
-    )
+    required_resolution_targets = {"Xoff_residual", "Yoff_residual", "E_residual"}
+    if required_resolution_targets.issubset(y_data.columns):
+        calculate_resolution(
+            y_pred,
+            y_test,
+            df,
+            percentiles=[68, 90, 95],
+            log_e_min=-2,
+            log_e_max=2.5,
+            n_bins=9,
+            name=name,
+        )
+    else:
+        _logger.info(
+            "%s resolution summary is deferred until direction and energy predictions are combined.",
+            name,
+        )
 
     return shap_importance_dict
 

@@ -49,6 +49,14 @@ def configure_training(analysis_type):
                 "and loss summaries for telescope positions 0-3."
             ),
         )
+        parser.add_argument(
+            "--separate_direction_energy",
+            action="store_true",
+            help=(
+                "Train separate direction (Xoff/Yoff residual) and energy "
+                "(E residual) models in one model artifact."
+            ),
+        )
     if analysis_type == "classification":
         parser.add_argument("--input_signal_file_list", help="List of input signal mscw files.")
         parser.add_argument(
@@ -210,6 +218,10 @@ def configure_training(analysis_type):
         _logger.info(f"Minimum images (DispNImages): {model_configs.get('min_images')}")
         _logger.info(f"Regression feature profile: {model_configs.get('feature_profile')}")
         _logger.info(
+            "Separate direction and energy models: %s",
+            model_configs.get("separate_direction_energy"),
+        )
+        _logger.info(
             "Regression weighting: energy=inverse-sqrt(count), min_bin_events=%d, "
             "multiplicity=DispNImages**2, max_combined_weight=%.1f, "
             "validation_weights=training-derived",
@@ -226,6 +238,35 @@ def configure_training(analysis_type):
     model_configs["models"] = hyper_parameters(
         analysis_type, model_configs.get("hyperparameter_config")
     )
+    model_configs["targets"] = target_features(analysis_type)
+    if analysis_type == "stereo_analysis" and model_configs["separate_direction_energy"]:
+        configured_models = model_configs["models"]
+        if set(configured_models) == {"xgboost"}:
+            base_config = configured_models["xgboost"]
+            model_configs["models"] = {
+                "direction": {
+                    **base_config,
+                    "hyper_parameters": dict(base_config.get("hyper_parameters", {})),
+                    "targets": ["Xoff_residual", "Yoff_residual"],
+                },
+                "energy": {
+                    **base_config,
+                    "hyper_parameters": dict(base_config.get("hyper_parameters", {})),
+                    "targets": ["E_residual"],
+                },
+            }
+        elif set(configured_models) != {"direction", "energy"}:
+            raise ValueError(
+                "Separate direction/energy training requires either one 'xgboost' "
+                "configuration or exactly 'direction' and 'energy' configurations."
+            )
+        else:
+            model_configs["models"]["direction"]["targets"] = [
+                "Xoff_residual",
+                "Yoff_residual",
+            ]
+            model_configs["models"]["energy"]["targets"] = ["E_residual"]
+        model_configs["regression_mode"] = "separate_direction_energy"
     for model_name, model_cfg in model_configs["models"].items():
         hyper_params = model_cfg.get("hyper_parameters")
         if hyper_params is None:
@@ -234,8 +275,6 @@ def configure_training(analysis_type):
         hyper_params["n_jobs"] = model_configs["max_cores"]
         if model_configs.get("random_state") is not None:
             hyper_params["random_state"] = model_configs["random_state"]
-    model_configs["targets"] = target_features(analysis_type)
-
     if analysis_type == "stereo_analysis":
         model_configs["pre_cuts"] = pre_cuts_regression(
             min_images=model_configs.get("min_images", 2)

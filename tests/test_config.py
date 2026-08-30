@@ -143,6 +143,48 @@ def test_configure_training_stereo_parses_reduced_feature_profile(monkeypatch):
     assert result["feature_profile"] == "reduced"
 
 
+def test_configure_training_stereo_separates_direction_and_energy(monkeypatch):
+    """The separation flag must create two model configurations with fixed targets."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prog",
+            "--model_prefix",
+            "model",
+            "--input_file_list",
+            "inputs.txt",
+            "--separate_direction_energy",
+        ],
+    )
+    monkeypatch.setattr(
+        config,
+        "hyper_parameters",
+        lambda *_: {"xgboost": {"hyper_parameters": {"max_depth": 5}}},
+    )
+    monkeypatch.setattr(
+        config,
+        "pre_cuts_regression",
+        lambda min_images: f"cut_{min_images}",
+    )
+
+    result = config.configure_training("stereo_analysis")
+
+    assert result["regression_mode"] == "separate_direction_energy"
+    assert result["models"]["direction"]["targets"] == ["Xoff_residual", "Yoff_residual"]
+    assert result["models"]["energy"]["targets"] == ["E_residual"]
+    assert result["models"]["direction"]["hyper_parameters"] == {
+        "max_depth": 5,
+        "n_jobs": 1,
+        "random_state": 42,
+    }
+    assert result["models"]["energy"]["hyper_parameters"] == {
+        "max_depth": 5,
+        "n_jobs": 1,
+        "random_state": 42,
+    }
+
+
 def test_configure_training_classification_parses_tmva_style(monkeypatch, model_parameters_file):
     monkeypatch.setattr(
         sys,
