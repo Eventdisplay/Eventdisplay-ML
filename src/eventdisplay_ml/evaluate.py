@@ -158,7 +158,11 @@ def evaluate_regression_model(
             shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
     required_resolution_targets = {"Xoff_residual", "Yoff_residual", "E_residual"}
-    if required_resolution_targets.issubset(y_data.columns):
+    target_names = set(y_data.columns)
+    is_partial_stereo_model = bool(target_names & required_resolution_targets) and not (
+        required_resolution_targets.issubset(target_names)
+    )
+    if not is_partial_stereo_model:
         calculate_resolution(
             y_pred,
             y_test,
