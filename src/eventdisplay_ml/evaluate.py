@@ -157,16 +157,27 @@ def evaluate_regression_model(
         if shap_per_energy:
             shap_feature_importance_by_energy(model, x_test, df, y_test, y_data.columns)
 
-    calculate_resolution(
-        y_pred,
-        y_test,
-        df,
-        percentiles=[68, 90, 95],
-        log_e_min=-2,
-        log_e_max=2.5,
-        n_bins=9,
-        name=name,
+    required_resolution_targets = {"Xoff_residual", "Yoff_residual", "E_residual"}
+    target_names = set(y_data.columns)
+    is_partial_stereo_model = bool(target_names & required_resolution_targets) and not (
+        required_resolution_targets.issubset(target_names)
     )
+    if not is_partial_stereo_model:
+        calculate_resolution(
+            y_pred,
+            y_test,
+            df,
+            percentiles=[68, 90, 95],
+            log_e_min=-2,
+            log_e_max=2.5,
+            n_bins=9,
+            name=name,
+        )
+    else:
+        _logger.info(
+            "%s resolution summary is deferred until direction and energy predictions are combined.",
+            name,
+        )
 
     return shap_importance_dict
 

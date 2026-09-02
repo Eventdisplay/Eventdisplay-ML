@@ -36,6 +36,17 @@ class CapturingRegressor:
         return np.zeros((len(x_values), 3), dtype=np.float32)
 
 
+class TargetCountRegressor(CapturingRegressor):
+    """Minimal regressor whose prediction width matches one target group."""
+
+    def __init__(self, n_targets):
+        self.n_targets = n_targets
+
+    def predict(self, x_values):
+        """Return zero residuals for the configured target group."""
+        return np.zeros((len(x_values), self.n_targets), dtype=np.float32)
+
+
 class OrderedPredictionRegressor:
     """Serializable predictor whose output exposes the received feature order."""
 
@@ -47,6 +58,22 @@ class OrderedPredictionRegressor:
         beta = x_values.iloc[:, 0].to_numpy(dtype=float)
         alpha = x_values.iloc[:, 1].to_numpy(dtype=float)
         return np.column_stack((beta, alpha, beta - alpha))
+
+
+class DirectionPredictionRegressor:
+    """Return two residuals in a way that exposes direction feature order."""
+
+    def predict(self, x_values):
+        """Return the first two input columns as direction residuals."""
+        return np.column_stack((x_values.iloc[:, 0], x_values.iloc[:, 1]))
+
+
+class EnergyPredictionRegressor:
+    """Return a one-dimensional energy residual to exercise application reshaping."""
+
+    def predict(self, x_values):
+        """Return the first input column as an energy residual."""
+        return x_values.iloc[:, 0].to_numpy(dtype=float)
 
 
 @pytest.fixture
@@ -115,6 +142,7 @@ def test_regression_training_contract_excludes_targets_and_uses_train_only_scale
 
 
 def test_regression_training_reduced_profile_selects_requested_columns(monkeypatch):
+    """The reduced profile must select its documented feature set."""
     n_events = 240
     row_number = np.arange(n_events, dtype=float)
     reduced_columns = [
@@ -163,6 +191,41 @@ def test_regression_training_reduced_profile_selects_requested_columns(monkeypat
 
     assert result["features"] == reduced_columns
     assert result["models"]["xgboost"]["features"] == reduced_columns
+
+
+def test_regression_training_supports_separate_direction_and_energy_models(
+    regression_frame, monkeypatch
+):
+    """Direction and energy target groups must fit and persist independently."""
+    direction_model = TargetCountRegressor(2)
+    energy_model = TargetCountRegressor(1)
+    created_models = [direction_model, energy_model]
+    monkeypatch.setattr("xgboost.XGBRegressor", lambda **_kwargs: created_models.pop(0))
+    monkeypatch.setattr("eventdisplay_ml.models.evaluate_regression_model", lambda *_args: {})
+
+    result = models.train_regression(
+        regression_frame,
+        {
+            "targets": ["Xoff_residual", "Yoff_residual", "E_residual"],
+            "regression_mode": "separate_direction_energy",
+            "train_test_fraction": 0.5,
+            "random_state": 19,
+            "eval_max_events": 0,
+            "diagnostic_max_events": 0,
+            "models": {
+                "direction": {
+                    "targets": ["Xoff_residual", "Yoff_residual"],
+                    "hyper_parameters": {},
+                },
+                "energy": {"targets": ["E_residual"], "hyper_parameters": {}},
+            },
+        },
+    )
+
+    assert result["models"]["direction"]["targets"] == ["Xoff_residual", "Yoff_residual"]
+    assert result["models"]["energy"]["targets"] == ["E_residual"]
+    assert direction_model.y_train.shape[1] == 2
+    assert energy_model.y_train.shape[1] == 1
 
 
 def test_persisted_regression_model_preserves_feature_order_and_reconstructs_truth(
@@ -221,6 +284,54 @@ def test_persisted_regression_model_preserves_feature_order_and_reconstructs_tru
     np.testing.assert_allclose(pred_xoff, [2.7, 6.0])
     np.testing.assert_allclose(pred_yoff, [5.0, 14.0])
     np.testing.assert_allclose(pred_log_energy, [1.15, 2.65])
+
+
+def test_separate_direction_energy_artifact_combines_predictions(tmp_path, monkeypatch):
+    """Application must combine separately trained direction and energy models."""
+    model_prefix = tmp_path / "separate_stereo_model"
+    joblib.dump(
+        {
+            "regression_mode": "separate_direction_energy",
+            "models": {
+                "direction": {
+                    "model": DirectionPredictionRegressor(),
+                    "features": ["direction_beta", "direction_alpha"],
+                    "targets": ["Xoff_residual", "Yoff_residual"],
+                },
+                "energy": {
+                    "model": EnergyPredictionRegressor(),
+                    "features": ["energy_feature"],
+                    "targets": ["E_residual"],
+                },
+            },
+            "target_mean": {"Xoff_residual": 1.0, "Yoff_residual": -2.0, "E_residual": 0.5},
+            "target_std": {"Xoff_residual": 0.5, "Yoff_residual": 2.0, "E_residual": 0.1},
+        },
+        tmp_path / "separate_stereo_model.joblib.gz",
+    )
+    flattened = pd.DataFrame(
+        {
+            "energy_feature": [3.0, 11.0],
+            "Xoff_weighted_bdt": [0.2, -0.5],
+            "ErecS": [10.0, 100.0],
+            "direction_alpha": [4.0, 7.0],
+            "Yoff_weighted_bdt": [-1.0, 2.0],
+            "direction_beta": [3.0, 11.0],
+        }
+    )
+    monkeypatch.setattr(models, "flatten_feature_data", lambda *_args, **_kwargs: flattened)
+    monkeypatch.setattr(models.data_processing, "print_variable_statistics", lambda *_args: None)
+
+    loaded_models, parameters = models.load_regression_models(str(model_prefix), "xgboost")
+    assert parameters["regression_mode"] == "separate_direction_energy"
+
+    pred_xoff, pred_yoff, pred_log_energy = models.apply_regression_models(
+        pd.DataFrame({"event": [1, 2]}), {"models": loaded_models, **parameters}
+    )
+
+    np.testing.assert_allclose(pred_xoff, [2.7, 6.0])
+    np.testing.assert_allclose(pred_yoff, [5.0, 14.0])
+    np.testing.assert_allclose(pred_log_energy, [1.8, 3.6])
 
 
 def test_stereo_output_writer_keeps_nan_energy_rows_and_converts_only_log_energy(monkeypatch):
