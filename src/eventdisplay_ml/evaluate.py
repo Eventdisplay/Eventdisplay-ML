@@ -284,7 +284,7 @@ def calculate_resolution(y_pred, y_test, df, percentiles, log_e_min, log_e_max, 
     results_df["LogE"] = results_df["MCe0"]
     bins = np.linspace(log_e_min, log_e_max, n_bins + 1)
     results_df["E_bin"] = pd.cut(results_df["LogE"], bins=bins, include_lowest=True)
-    results_df.dropna(subset=["E_bin"], inplace=True)
+    results_df = results_df.dropna(subset=["E_bin"])
     g = results_df.groupby("E_bin", observed=False)
     mean_loge_by_bin = g["LogE"].mean().round(3)
 

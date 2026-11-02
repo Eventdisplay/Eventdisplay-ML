@@ -2,14 +2,14 @@
 repos:
 # Ruff
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.16.1
+  rev: v0.17.3
   hooks:
-  - id: ruff
+  - id: ruff-check
     args: ["--fix"]
   - id: ruff-format
 # https://pycqa.github.io/isort/docs/configuration/black_compatibility.html#integration-with-pre-commit
 - repo: https://github.com/pycqa/isort
-  rev: 9.0.0b1
+  rev: 10.0.0b2
   hooks:
   - id: isort
     args: ["--profile", "black", "--filter-files"]

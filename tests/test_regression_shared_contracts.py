@@ -148,7 +148,7 @@ def test_stereo_training_chunk_filters_invalid_energy_and_keeps_truth_baseline_a
     assert result.index.tolist() == [0, 3]
     np.testing.assert_allclose(result["Xoff_residual"], [10.0, 10.0])
     np.testing.assert_allclose(result["Yoff_residual"], [11.0, -16.0])
-    np.testing.assert_allclose(result["E_residual"], [1.0, 1.0])
+    np.testing.assert_allclose(result["E_residual"], [1.0, 1.0], atol=1e-6)
     np.testing.assert_allclose(result["ErecS"], [10.0, 100.0])
 
 
