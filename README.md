@@ -10,7 +10,7 @@ Requires Python 3.12 or newer.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install eventdisplay-ml
 ```
