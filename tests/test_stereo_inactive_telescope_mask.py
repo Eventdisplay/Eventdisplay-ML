@@ -76,3 +76,23 @@ def test_stereo_default_keeps_unused_images():
     assert df.loc[0, ["width_2", "width_3"]].notna().all()
     # The unused 900-size image (telescope 2) sorts first, as before.
     assert np.isclose(df.loc[0, "size_0"], np.log10(900.0))
+
+
+def test_negative_telescope_id_placeholder_is_not_a_telescope():
+    """A -1 placeholder in DispTelList_T must not mark the last telescope as used."""
+    events = _events()
+    events.at[0, "DispTelList_T"] = np.array([1, -1])
+    events["Disp_T"] = [np.array([0.2]), np.array([0.1, 0.2, 0.3, 0.4])]
+    df = flatten_telescope_data_vectorized(
+        events,
+        4,
+        ["size", "width", "R_core", "cosphi", "sinphi", "Disp_T", "tel_active"],
+        "stereo_analysis",
+        training=False,
+        tel_config=TEL_CONFIG,
+        preview_rows=0,
+        mask_unused_images=True,
+    )
+    # Only telescope 1 is used. The -1 placeholder must not activate telescope 3.
+    assert df.loc[0, [f"size_{i}" for i in range(4)]].notna().sum() == 1
+    assert df.loc[0, [f"tel_active_{i}" for i in range(4)]].sum() == 1

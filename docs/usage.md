@@ -57,6 +57,22 @@ eventdisplay-ml-train-xgb-stereo \
     --feature_profile reduced
 ```
 
+To hide the image parameters of telescopes that the DispBDT reconstruction did not
+use (telescopes not in `DispTelList_T`), add `--mask_unused_images`. Their image
+parameters are then set to NaN and they do not take a sorted telescope slot. By
+default these images stay visible to the model (historical behavior). They can
+depend on cleaning, throughput and dead channels, so the option is meant for
+testing robustness to data/MC differences. The setting is stored in the model and
+used automatically by `eventdisplay-ml-apply-xgb-stereo`; models trained without the
+option apply as before.
+
+```bash
+eventdisplay-ml-train-xgb-stereo \
+    --input_file_list train_files.txt \
+    --model_prefix models/stereo_model_masked \
+    --mask_unused_images
+```
+
 To train separate direction and energy models while keeping one model artifact:
 
 ```bash
@@ -99,10 +115,13 @@ The apply pipeline loads trained models and makes predictions:
 
 ```bash
 eventdisplay-ml-apply-xgb-stereo \
-    --input_file_list apply_files.txt \
-    --output_file_list output_files.txt \
+    --input_file mscw_file.root \
+    --output_file mscw_file.xgb_stereo.root \
     --model_prefix models/stereo_model
 ```
+
+The apply command processes one input file per call. It reads the masking setting
+(see `--mask_unused_images` above) from the model.
 
 
 **Output:** ROOT files with `StereoAnalysis` tree containing reconstructed Xoff, Yoff, and log10(E).

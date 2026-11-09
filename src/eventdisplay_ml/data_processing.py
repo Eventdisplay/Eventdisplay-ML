@@ -209,7 +209,8 @@ def _make_tel_active_columns(tel_list_matrix, max_tel_id, n_evt, sort_indices=No
     active_matrix = np.zeros((n_evt, max_tel_id + 1), dtype=np.float32)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-    valid_mask = tel_ids <= max_tel_id
+    # Negative IDs are placeholders for missing entries, not telescopes.
+    valid_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id)
     active_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = 1.0
 
     if sort_indices is not None:
@@ -353,7 +354,7 @@ def _normalize_telescope_variable_to_tel_id_space(data, index_list, max_tel_id, 
     row_indices, col_indices = np.where(~np.isnan(index_list))
     tel_ids = index_list[row_indices, col_indices].astype(int)
     # Filter for valid telescope IDs and valid column indices in data array
-    valid_mask = (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
+    valid_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id) & (col_indices < data.shape[1])
     full_matrix[row_indices[valid_mask], tel_ids[valid_mask]] = data[
         row_indices[valid_mask], col_indices[valid_mask]
     ]
@@ -505,7 +506,8 @@ def flatten_telescope_data_vectorized(
     active_mask = np.zeros((n_evt, max_tel_id + 1), dtype=bool)
     row_indices, col_indices = np.where(~np.isnan(tel_list_matrix))
     tel_ids = tel_list_matrix[row_indices, col_indices].astype(int)
-    valid_tel_mask = tel_ids <= max_tel_id
+    # Negative IDs (e.g. -1) are placeholders for missing entries, not telescopes.
+    valid_tel_mask = (tel_ids >= 0) & (tel_ids <= max_tel_id)
     active_mask[row_indices[valid_tel_mask], tel_ids[valid_tel_mask]] = True
 
     # Pre-load and normalize size to telescope-ID space for sorting
