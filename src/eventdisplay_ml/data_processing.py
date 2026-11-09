@@ -450,6 +450,7 @@ def flatten_telescope_data_vectorized(
     observatory="veritas",
     max_tel_per_type=None,
     preview_rows=20,
+    mask_unused_images=False,
 ):
     """
     Vectorized flattening of telescope array columns.
@@ -477,6 +478,10 @@ def flatten_telescope_data_vectorized(
         Maximum number of telescopes to keep per mirror area type. If None, keep all.
     preview_rows : int, optional
         Number of events to include in the sorting preview log. Set to 0 to disable.
+    mask_unused_images : bool, optional
+        Set the image parameters of telescopes outside ``DispTelList_T`` (images not used by
+        the DispBDT reconstruction) to NaN. Always done for classification. For stereo
+        analysis the default (False) keeps the historical behavior and exposes those images.
 
     Returns
     -------
@@ -484,7 +489,7 @@ def flatten_telescope_data_vectorized(
         Flattened DataFrame with per-telescope columns suffixed by ``_{i}``
     """
     flat_features = {}
-    classification_mode = analysis_type == "classification"
+    mask_unused = analysis_type == "classification" or bool(mask_unused_images)
     tel_list_matrix = _to_dense_array(df["DispTelList_T"])
     n_evt = len(df)
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
@@ -509,8 +514,11 @@ def flatten_telescope_data_vectorized(
     )
     # A telescope absent from DispTelList_T is not a zero-sized image.  Keep it
     # explicitly missing so sorting and the XGBoost missing-value path cannot
-    # learn a detector-slot/observing-condition proxy.
-    if classification_mode:
+    # learn a detector-slot/observing-condition proxy.  Always done for
+    # classification; optional for stereo analysis (mask_unused_images), since images
+    # not used by the DispBDT reconstruction carry sentinel values and depend on
+    # cleaning, throughput and dead channels.
+    if mask_unused:
         size_data = np.where(active_mask, size_data, np.nan)
     size_data = _clip_size_array(size_data)
 
@@ -572,7 +580,7 @@ def flatten_telescope_data_vectorized(
                 data, index_list_for_remapping, max_tel_id, n_evt
             )
 
-        if classification_mode and var != "tel_active":
+        if mask_unused and var != "tel_active":
             data_normalized = np.where(active_mask, data_normalized, np.nan)
 
         # All variables are now in telescope-ID space; apply sorting and flatten uniformly
@@ -749,6 +757,7 @@ def flatten_feature_data(
     observatory="veritas",
     max_tel_per_type=None,
     preview_rows=20,
+    mask_unused_images=False,
 ):
     """
     Get flattened features for events.
@@ -773,6 +782,9 @@ def flatten_feature_data(
         Maximum number of telescopes to keep per mirror area type. If None, keep all.
     preview_rows : int, optional
         Number of events to include in the sorting preview log. Set to 0 to disable.
+    mask_unused_images : bool, optional
+        Mask images not used by the DispBDT reconstruction; see
+        :func:`flatten_telescope_data_vectorized`.
     """
     df_flat = flatten_telescope_data_vectorized(
         group_df,
@@ -784,6 +796,7 @@ def flatten_feature_data(
         observatory=observatory,
         max_tel_per_type=max_tel_per_type,
         preview_rows=preview_rows,
+        mask_unused_images=mask_unused_images,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
     excluded_columns = set(features_module.target_features(analysis_type)) | set(
@@ -820,6 +833,7 @@ def _flatten_training_chunk(
             observatory=model_configs.get("observatory", "veritas"),
             max_tel_per_type=model_configs.get("max_tel_per_type", None),
             preview_rows=model_configs.get("preview_rows", 20),
+            mask_unused_images=model_configs.get("mask_unused_images", False),
         )
     if analysis_type == "classification" and "__source_row" in df.fields:
         df_flat["__source_row"] = _to_numpy_1d(df["__source_row"], np.int64)
