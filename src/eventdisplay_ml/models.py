@@ -438,6 +438,7 @@ def apply_regression_models(df, model_configs):
         tel_config=tel_config,
         observatory=model_configs.get("observatory", "veritas"),
         preview_rows=model_configs.get("preview_rows", 20),
+        mask_unused_images=model_configs.get("mask_unused_images", False),
     )
 
     def predict_one(model_data, target_mean_cfg, target_std_cfg, mask=None):
@@ -921,6 +922,7 @@ def train_regression(df, model_configs):
         "diagnostic_max_events": model_configs.get("diagnostic_max_events", 100000),
         "prediction_chunk_size": model_configs.get("prediction_chunk_size", 200000),
         "feature_profile": profile,
+        "mask_unused_images": bool(model_configs.get("mask_unused_images", False)),
         "features": list(x_cols),
         "targets": list(targets),
         "pre_cuts": model_configs.get("pre_cuts"),

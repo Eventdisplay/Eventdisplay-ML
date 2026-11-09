@@ -191,6 +191,15 @@ def configure_training(analysis_type):
     )
     if analysis_type == "stereo_analysis":
         parser.add_argument(
+            "--mask_unused_images",
+            action="store_true",
+            help=(
+                "Set image parameters of telescopes not used by the DispBDT reconstruction "
+                "(not in DispTelList_T) to NaN. Default: keep them (historical behavior). "
+                "The setting is stored in the model and used again when applying it."
+            ),
+        )
+        parser.add_argument(
             "--min_images",
             type=int,
             help="Minimum number of images (DispNImages) for quality cut (default: 2).",
@@ -216,6 +225,7 @@ def configure_training(analysis_type):
         _logger.info(f"Max telescopes per mirror area type: {model_configs['max_tel_per_type']}")
     if analysis_type == "stereo_analysis":
         _logger.info(f"Minimum images (DispNImages): {model_configs.get('min_images')}")
+        _logger.info(f"Mask unused images: {model_configs.get('mask_unused_images')}")
         _logger.info(f"Regression feature profile: {model_configs.get('feature_profile')}")
         _logger.info(
             "Separate direction and energy models: %s",
@@ -417,6 +427,11 @@ def configure_apply(analysis_type):
     if analysis_type == "stereo_analysis":
         model_configs["target_mean"] = par.get("target_mean")
         model_configs["target_std"] = par.get("target_std")
+        # Models trained before this option existed expose all images.
+        model_configs["mask_unused_images"] = bool(
+            (par.get("training_parameters") or {}).get("mask_unused_images", False)
+        )
+        _logger.info(f"Mask unused images (from model): {model_configs['mask_unused_images']}")
         if model_configs.get("model_prefix_high_multiplicity"):
             model_configs["models_high_multiplicity"], high_par = load_models(
                 analysis_type,
@@ -425,5 +440,13 @@ def configure_apply(analysis_type):
             )
             model_configs["target_mean_high_multiplicity"] = high_par.get("target_mean")
             model_configs["target_std_high_multiplicity"] = high_par.get("target_std")
+            high_mask = bool(
+                (high_par.get("training_parameters") or {}).get("mask_unused_images", False)
+            )
+            if high_mask != model_configs["mask_unused_images"]:
+                raise ValueError(
+                    "Primary and high-multiplicity models were trained with different "
+                    "mask_unused_images settings."
+                )
 
     return model_configs
