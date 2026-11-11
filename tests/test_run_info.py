@@ -126,9 +126,9 @@ def test_format_run_info_uses_runinfo_column_layout():
 
 
 def test_get_run_info_updates_epoch_from_file(monkeypatch, epoch_file):
-    """--updated replaces stored epoch and atmosphere by the epoch file values."""
+    """--updated replaces epoch and atmosphere; major epoch follows the updated epoch."""
     parameters = {
-        "fInstrumentEpoch": "V6_old",
+        "fInstrumentEpoch": "V5",
         "fAtmosphereID": 99,
         "fDBRunType": "",
         "fTelToAnalyze": [0, 1, 3],
@@ -152,7 +152,7 @@ def test_get_run_info_updates_epoch_from_file(monkeypatch, epoch_file):
     monkeypatch.setattr(run_info, "read_mean_elevation", lambda _file: 60.0)
 
     stored = run_info.get_run_info("run.root")
-    assert (stored["epoch"], stored["atmosphere"]) == ("V6_old", "99")
+    assert (stored["epoch"], stored["atmosphere"]) == ("V5", "99")
     assert stored["run_type"] == "no_db_runtype"
     assert stored["telescopes"] == "124"
     assert stored["zenith"] == pytest.approx(30.0)

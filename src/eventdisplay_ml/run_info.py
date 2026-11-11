@@ -71,7 +71,8 @@ def read_run_parameters(root_file):
     Parameters
     ----------
     root_file : uproot.ReadOnlyDirectory
-        Open Eventdisplay mscw, evndisp or anasum-run file.
+        Open Eventdisplay mscw or evndisp file with a top-level ``runparameterV2``
+        (DST files and anasum files, which store it elsewhere, are not supported).
 
     Returns
     -------
@@ -166,6 +167,10 @@ def read_mean_elevation(root_file):
 
     Only telescopes with an elevation above ``MIN_TELESCOPE_ELEVATION`` are used
     (as in ``printRunParameter``). Returns -999 if no telescope qualifies.
+
+    Follows ``printRunParameter``: the first ``telconfig`` entries of ``TelElevation`` are
+    used, i.e. telescope IDs are assumed to be contiguous from 0 (VERITAS). Sparse
+    telescope IDs (CTAO) are not supported.
     """
     n_tel = root_file["telconfig"].num_entries
     tree = root_file["data"]
