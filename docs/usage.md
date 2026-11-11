@@ -126,6 +126,20 @@ The apply command processes one input file per call. It reads the masking settin
 
 **Output:** ROOT files with `StereoAnalysis` tree containing reconstructed Xoff, Yoff, and log10(E).
 
+**Run information:** `eventdisplay-ml-print-run-info` prints the run information needed to
+select the model directory (epoch, atmosphere, run type, telescopes, duration, target,
+zenith angle, wobble offset) in one tab-separated line, in the layout of
+`printRunParameter -runinfo`. It needs no compiled Eventdisplay:
+
+```bash
+eventdisplay-ml-print-run-info mscw_file.root --updated
+```
+
+With `--updated`, epoch and atmosphere are taken from
+`$VERITAS_EVNDISP_AUX_DIR/ParameterFiles/VERITAS.Epochs.runparameter`
+(or `--epoch_file`) instead of the stored values (`printRunParameter updated-runinfo`).
+The command exits with a non-zero status if the run information cannot be read.
+
 ## Gamma/hadron separation using XGBoost
 
 Gamma/hadron separation is performed using XGB Boost classification trees. Features are image parameters and stereo reconstruction parameters provided by Eventdisplay.
