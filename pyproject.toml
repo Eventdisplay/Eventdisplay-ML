@@ -71,6 +71,7 @@ scripts.eventdisplay-ml-diagnostic-shap-summary = "eventdisplay_ml.scripts.diagn
 scripts.eventdisplay-ml-plot-classification-performance-metrics = "eventdisplay_ml.scripts.plot_classification_performance_metrics:main"
 scripts.eventdisplay-ml-plot-classification-gamma-efficiency = "eventdisplay_ml.scripts.plot_classification_gamma_efficiency:main"
 scripts.eventdisplay-ml-plot-training-evaluation = "eventdisplay_ml.scripts.plot_training_evaluation:main"
+scripts.eventdisplay-ml-print-run-info = "eventdisplay_ml.scripts.print_run_info:main"
 scripts.eventdisplay-ml-train-xgb-classify = "eventdisplay_ml.scripts.train_xgb_classify:main"
 scripts.eventdisplay-ml-train-xgb-stereo = "eventdisplay_ml.scripts.train_xgb_stereo:main"
 
