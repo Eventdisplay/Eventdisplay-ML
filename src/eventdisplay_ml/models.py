@@ -439,6 +439,7 @@ def apply_regression_models(df, model_configs):
         observatory=model_configs.get("observatory", "veritas"),
         preview_rows=model_configs.get("preview_rows", 20),
         mask_unused_images=model_configs.get("mask_unused_images", False),
+        smearing=model_configs.get("smearing"),
     )
 
     def predict_one(model_data, target_mean_cfg, target_std_cfg, mask=None):

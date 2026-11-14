@@ -35,6 +35,7 @@ dependencies = [
   "matplotlib",
   "numpy",
   "pandas",
+  "pyyaml",
   "scikit-learn",
   "scipy",
   "tabulate",

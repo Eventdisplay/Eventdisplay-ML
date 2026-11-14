@@ -16,6 +16,7 @@ from eventdisplay_ml.hyper_parameters import (
     pre_cuts_regression,
 )
 from eventdisplay_ml.models import load_models
+from eventdisplay_ml.smearing import load_smearing
 
 _logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def configure_training(analysis_type):
     parser = argparse.ArgumentParser(description=(f"Train XGBoost models for {analysis_type}."))
 
     if analysis_type == "stereo_analysis":
+        parser.add_argument("--smearing_config", help="YAML image-smearing configuration for MC.")
         parser.add_argument(
             "--input_file_list", help=f"List of input mscw files for {analysis_type}."
         )
@@ -207,6 +209,9 @@ def configure_training(analysis_type):
         )
 
     model_configs = vars(parser.parse_args())
+    if model_configs.get("smearing_config"):
+        model_configs["smearing"] = load_smearing(model_configs["smearing_config"])
+        _logger.info("Image smearing: %s", model_configs["smearing"])
 
     _log_runtime_provenance()
     _logger.info(f"--- XGBoost {analysis_type} training ---")
@@ -328,6 +333,9 @@ def configure_apply(analysis_type):
     """Configure model application based on command-line arguments."""
     parser = argparse.ArgumentParser(description=(f"Apply XGBoost models for {analysis_type}."))
 
+    if analysis_type == "stereo_analysis":
+        parser.add_argument("--smearing_config", help="YAML image-smearing configuration for MC.")
+
     parser.add_argument(
         "--input_file",
         required=True,
@@ -402,6 +410,9 @@ def configure_apply(analysis_type):
     )
 
     model_configs = vars(parser.parse_args())
+    if model_configs.get("smearing_config"):
+        model_configs["smearing"] = load_smearing(model_configs["smearing_config"])
+        _logger.info("Image smearing: %s", model_configs["smearing"])
 
     _log_runtime_provenance()
     _logger.info(f"--- XGBoost {analysis_type} evaluation ---")

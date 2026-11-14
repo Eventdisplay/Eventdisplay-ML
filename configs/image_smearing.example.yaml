@@ -1,0 +1,10 @@
+# Exploratory values only; validate against conditional MC/data comparisons.
+seed: 42
+# Probability that an event is smeared; 0.5 mixes nominal and perturbed training events.
+fraction: 0.5
+size: 0.05       # Gaussian sigma in log10(size)
+width: 0.005     # degrees
+length: 0.005    # degrees
+centroid: 0.005  # degrees independently in x and y
+asym: 0.02       # native asymmetry units
+tgrad: 0.2       # native timing-gradient units
