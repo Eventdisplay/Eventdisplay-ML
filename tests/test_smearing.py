@@ -42,3 +42,22 @@ def test_yaml_validation_and_zero_fraction(tmp_path):
     path.write_text("width: -1\n")
     with pytest.raises(ValueError, match="width"):
         load_smearing(path)
+
+
+@pytest.mark.parametrize(
+    ("variable", "stream"), [("size", 0), ("width", 1), ("cen_y", 4), ("tgrad_x", 6)]
+)
+def test_smearing_matches_event_keyed_draws(variable, stream):
+    """The bounded-memory calculation preserves the same event-keyed draws."""
+    events = pd.DataFrame({"runNumber": [17, 18], "eventNumber": [23, 24]})
+    values = np.full((2, 19), 2.0)
+    active = np.ones_like(values, dtype=bool)
+    key = {"cen_y": "centroid", "tgrad_x": "tgrad"}.get(variable, variable)
+    config = {"seed": 42, "fraction": 1.0, key: 0.1}
+    result = smear_images(values, variable, events, active, config)
+    for i, (run, event) in enumerate(zip(events.runNumber, events.eventNumber, strict=True)):
+        rng = np.random.default_rng([42, int(run), 0, int(event), 0])
+        rng.random()
+        noise = rng.standard_normal((7, 19))[stream]
+        expected = 2 * 10 ** (0.1 * noise) if variable == "size" else 2 + 0.1 * noise
+        np.testing.assert_allclose(result[i], expected)

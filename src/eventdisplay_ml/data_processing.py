@@ -17,7 +17,7 @@ from scipy.spatial import ConvexHull, QhullError
 from eventdisplay_ml import features as features_module
 from eventdisplay_ml import utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
-from eventdisplay_ml.smearing import image_draws, smear_images
+from eventdisplay_ml.smearing import smear_images
 
 _logger = logging.getLogger(__name__)
 
@@ -497,15 +497,6 @@ def flatten_telescope_data_vectorized(
     n_evt = len(df)
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
-    if (
-        smearing
-        and smearing.get("fraction", 1)
-        and any(
-            smearing.get(key, 0) for key in ("size", "width", "length", "centroid", "asym", "tgrad")
-        )
-    ):
-        smearing = {**smearing, "_draws": image_draws(df, max_tel_id + 1, smearing["seed"])}
-
     # Index remapping mode for CTAO-style variable-length indexing
     index_list_for_remapping = None  # None = telescope-ID-indexed (VERITAS R_core mode)
     if observatory.lower() == "veritas":
@@ -614,6 +605,8 @@ def flatten_telescope_data_vectorized(
 
         if smearing and var == "size":
             data_normalized = size_data.copy()
+        elif centroid_delta is not None and var in ("cen_x", "cen_y"):
+            data_normalized = centroid_smeared[0 if var == "cen_x" else 1]
         elif smearing and var in ("width", "length", "cen_x", "cen_y", "asym", "tgrad_x"):
             data_normalized = smear_images(data_normalized, var, df, smear_active, smearing)
 
