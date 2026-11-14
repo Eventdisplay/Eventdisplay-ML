@@ -17,6 +17,7 @@ from scipy.spatial import ConvexHull, QhullError
 from eventdisplay_ml import features as features_module
 from eventdisplay_ml import utils
 from eventdisplay_ml.geomag import calculate_geomagnetic_angles
+from eventdisplay_ml.smearing import image_draws, smear_images
 
 _logger = logging.getLogger(__name__)
 
@@ -452,6 +453,7 @@ def flatten_telescope_data_vectorized(
     max_tel_per_type=None,
     preview_rows=20,
     mask_unused_images=False,
+    smearing=None,
 ):
     """
     Vectorized flattening of telescope array columns.
@@ -495,6 +497,15 @@ def flatten_telescope_data_vectorized(
     n_evt = len(df)
     max_tel_id = tel_config["max_tel_id"] if tel_config else (n_tel - 1)
 
+    if (
+        smearing
+        and smearing.get("fraction", 1)
+        and any(
+            smearing.get(key, 0) for key in ("size", "width", "length", "centroid", "asym", "tgrad")
+        )
+    ):
+        smearing = {**smearing, "_draws": image_draws(df, max_tel_id + 1, smearing["seed"])}
+
     # Index remapping mode for CTAO-style variable-length indexing
     index_list_for_remapping = None  # None = telescope-ID-indexed (VERITAS R_core mode)
     if observatory.lower() == "veritas":
@@ -514,6 +525,9 @@ def flatten_telescope_data_vectorized(
     size_data = _normalize_telescope_variable_to_tel_id_space(
         _to_dense_array(df["size"]), index_list_for_remapping, max_tel_id, n_evt
     )
+    if smearing:
+        size_data = smear_images(size_data, "size", df, active_mask, smearing)
+    smear_active = active_mask & np.isfinite(size_data) & (size_data > 0)
     # A telescope absent from DispTelList_T is not a zero-sized image.  Keep it
     # explicitly missing so sorting and the XGBoost missing-value path cannot
     # learn a detector-slot/observing-condition proxy.  Always done for
@@ -523,6 +537,22 @@ def flatten_telescope_data_vectorized(
     if mask_unused:
         size_data = np.where(active_mask, size_data, np.nan)
     size_data = _clip_size_array(size_data)
+
+    centroid_delta = None
+    if smearing and smearing.get("centroid", 0):
+        if not _has_field(df, "cen_x") or not _has_field(df, "cen_y"):
+            raise ValueError("Centroid smearing requires both cen_x and cen_y")
+        centroid_original = [
+            _normalize_telescope_variable_to_tel_id_space(
+                _to_dense_array(df[name]), index_list_for_remapping, max_tel_id, n_evt
+            )
+            for name in ("cen_x", "cen_y")
+        ]
+        centroid_smeared = [
+            smear_images(value, name, df, smear_active, smearing)
+            for value, name in zip(centroid_original, ("cen_x", "cen_y"), strict=True)
+        ]
+        centroid_delta = np.hypot(*centroid_smeared) - np.hypot(*centroid_original)
 
     core_x, core_y = _get_core_arrays(df)
 
@@ -580,6 +610,18 @@ def flatten_telescope_data_vectorized(
             # (None for VERITAS R_core fixed, ImgSel_list for CTAO variable)
             data_normalized = _normalize_telescope_variable_to_tel_id_space(
                 data, index_list_for_remapping, max_tel_id, n_evt
+            )
+
+        if smearing and var == "size":
+            data_normalized = size_data.copy()
+        elif smearing and var in ("width", "length", "cen_x", "cen_y", "asym", "tgrad_x"):
+            data_normalized = smear_images(data_normalized, var, df, smear_active, smearing)
+
+        if var == "dist" and centroid_delta is not None:
+            data_normalized = np.where(
+                np.isfinite(centroid_delta) & smear_active,
+                np.maximum(data_normalized + centroid_delta, 0),
+                data_normalized,
             )
 
         if mask_unused and var != "tel_active":
@@ -760,6 +802,7 @@ def flatten_feature_data(
     max_tel_per_type=None,
     preview_rows=20,
     mask_unused_images=False,
+    smearing=None,
 ):
     """
     Get flattened features for events.
@@ -799,6 +842,7 @@ def flatten_feature_data(
         max_tel_per_type=max_tel_per_type,
         preview_rows=preview_rows,
         mask_unused_images=mask_unused_images,
+        smearing=smearing,
     )
     max_tel_id = tel_config["max_tel_id"] if tel_config else ntel - 1
     excluded_columns = set(features_module.target_features(analysis_type)) | set(
@@ -836,6 +880,7 @@ def _flatten_training_chunk(
             max_tel_per_type=model_configs.get("max_tel_per_type", None),
             preview_rows=model_configs.get("preview_rows", 20),
             mask_unused_images=model_configs.get("mask_unused_images", False),
+            smearing=model_configs.get("smearing"),
         )
     if analysis_type == "classification" and "__source_row" in df.fields:
         df_flat["__source_row"] = _to_numpy_1d(df["__source_row"], np.int64)
@@ -1071,6 +1116,8 @@ def load_training_data(model_configs, file_list, analysis_type):
         ]
     else:
         branch_list = features_module.features(analysis_type, training=True)
+    if model_configs.get("smearing") and analysis_type == "stereo_analysis":
+        branch_list = list(dict.fromkeys([*branch_list, "runNumber", "eventNumber"]))
     _logger.info(f"Branch list: {branch_list}")
     if max_events is not None and max_events > 0:
         max_events_per_file = max_events // len(input_files)

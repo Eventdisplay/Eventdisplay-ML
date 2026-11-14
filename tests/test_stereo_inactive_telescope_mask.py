@@ -96,3 +96,49 @@ def test_negative_telescope_id_placeholder_is_not_a_telescope():
     # Only telescope 1 is used. The -1 placeholder must not activate telescope 3.
     assert df.loc[0, [f"size_{i}" for i in range(4)]].notna().sum() == 1
     assert df.loc[0, [f"tel_active_{i}" for i in range(4)]].sum() == 1
+
+
+def test_smearing_is_consistent_between_training_and_inference_flattening():
+    """Smearing uses the same telescope ordering and features in both modes."""
+    events = _events()
+    events["runNumber"] = [1, 1]
+    events["eventNumber"] = [11, 12]
+    config = {"seed": 123, "fraction": 1.0, "size": 0.1, "width": 0.01}
+    args = {
+        "df": events,
+        "n_tel": 4,
+        "features": ["size", "width", "dist", "tel_active"],
+        "analysis_type": "stereo_analysis",
+        "tel_config": TEL_CONFIG,
+        "preview_rows": 0,
+        "smearing": config,
+    }
+    train = flatten_telescope_data_vectorized(**args, training=True)
+    apply = flatten_telescope_data_vectorized(**args, training=False)
+    for col in ("size_0", "width_0", "size_dist2_0"):
+        np.testing.assert_allclose(train[col], apply[col], equal_nan=True)
+    baseline = flatten_telescope_data_vectorized(**{**args, "smearing": None}, training=False)
+    assert not np.allclose(train["size_0"], baseline["size_0"])
+
+
+def test_centroid_smearing_updates_distance():
+    """The camera distance follows the perturbed image centroid."""
+    events = _events()
+    events["runNumber"] = [1, 1]
+    events["eventNumber"] = [11, 12]
+    events["cen_x"] = [np.full(4, 0.3), np.full(4, 0.3)]
+    events["cen_y"] = [np.full(4, 0.4), np.full(4, 0.4)]
+    events["dist"] = [np.full(4, 0.5), np.full(4, 0.5)]
+    flat = flatten_telescope_data_vectorized(
+        events,
+        4,
+        ["size", "cen_x", "cen_y", "dist"],
+        "stereo_analysis",
+        training=False,
+        tel_config=TEL_CONFIG,
+        preview_rows=0,
+        smearing={"seed": 1, "fraction": 1.0, "centroid": 0.01},
+    )
+    np.testing.assert_allclose(
+        flat["dist_0"], np.hypot(flat["cen_x_0"], flat["cen_y_0"]), rtol=1e-6
+    )

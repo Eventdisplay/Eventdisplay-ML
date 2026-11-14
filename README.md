@@ -47,3 +47,23 @@ pytest tests
 See [Usage](docs/usage.md) for training, application, and validation examples.
 For citations, see the [Zenodo record](https://doi.org/10.5281/zenodo.18117884)
 and [CITATION.cff](CITATION.cff).
+
+### Optional stereo image smearing
+
+`eventdisplay-ml-train-xgb-stereo` and `eventdisplay-ml-apply-xgb-stereo` accept
+`--smearing_config configs/image_smearing.example.yaml`. Use this only on MC.
+Smearing is disabled when the option is omitted. YAML values are Gaussian
+standard deviations; `fraction` chooses the fraction of events perturbed, so 0.5
+mixes nominal and perturbed events. Use `fraction: 1` to perturb all events.
+The sample values are exploratory, not calibrated. Training settings are stored
+in model training metadata; application requires an explicit configuration and
+logs its resolved values. Run/event identifiers must be present and unique per
+physical event. Repeated identifiers receive identical perturbations, independent
+of chunk size. Use a different seed to vary the realization.
+
+The perturbations act on active, valid telescope images before size sorting and
+feature transformations. The centroid shift updates camera distance by the
+change in centroid radius; size-dependent ML features are recalculated. Existing
+DispBDT, event-level reconstruction and event selections are not rerun. Thus
+this is an approximation, not a replacement for image cleaning or a full
+Eventdisplay reconstruction. Keep inference on observational data unsmeared.
